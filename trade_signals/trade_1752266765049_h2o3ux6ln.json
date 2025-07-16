@@ -1,0 +1,22 @@
+{
+  "timestamp": "2025-07-11T20:46:05.049Z",
+  "signal": {
+    "symbol": "XAUUSD",
+    "action": "SELL",
+    "entryZone": {
+      "min": 3345,
+      "max": 3351
+    },
+    "stopLoss": 3367,
+    "targets": [
+      1,
+      2,
+      3255.439
+    ],
+    "reason": "® Rising Wedge Pattern (Bearish) # Strong Resistance Zone &® Expecting sharp drop after retest",
+    "plan": "Wait for entry in the selling zone and sell with proper SL"
+  },
+  "status": "pending",
+  "id": "trade_1752266765049_h2o3ux6ln",
+  "volume": 0.1
+}

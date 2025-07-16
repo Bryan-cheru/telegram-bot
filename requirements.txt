@@ -1,0 +1,3 @@
+# Python requirements for MT5 server
+MetaTrader5>=5.0.5120
+pyzmq>=27.0.0
