@@ -160,18 +160,62 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       const riskAmount = accountInfo.balance * (parseFloat(process.env.RISK_PERCENTAGE || '2') / 100);
       const maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
       
-      // Calculate lot size (simplified calculation)
+      // Calculate lot size with proper minimum volume
       let volume = Math.min(maxTradeSize, riskAmount / 1000);
-      volume = Math.round(volume * 100) / 100; // Round to 2 decimal places
+      volume = Math.max(0.01, Math.round(volume * 100) / 100); // Ensure minimum 0.01 lots
 
-      // If multiple targets, split volume
-      const volumePerTarget = Math.round((volume / signal.targets.length) * 100) / 100;
+      // If multiple targets, split volume but ensure each is at least 0.01
+      let volumePerTarget = Math.max(0.01, Math.round((volume / signal.targets.length) * 100) / 100);
+      
+      logger.info('📊 Volume calculation:', {
+        balance: accountInfo.balance,
+        riskAmount: riskAmount,
+        totalVolume: volume,
+        volumePerTarget: volumePerTarget,
+        targets: signal.targets.length
+      });
+
+      // Get symbol specification to validate volume
+      const symbolSpec = await this.connection.getSymbolSpecification(signal.symbol);
+      const minVolume = symbolSpec.minVolume || 0.01;
+      const volumeStep = symbolSpec.volumeStep || 0.01;
+      
+      // Adjust volume to meet symbol requirements
+      volumePerTarget = Math.max(minVolume, volumePerTarget);
+      volumePerTarget = Math.round(volumePerTarget / volumeStep) * volumeStep;
+      
+      logger.info('📋 Symbol specification:', {
+        symbol: signal.symbol,
+        minVolume: minVolume,
+        volumeStep: volumeStep,
+        adjustedVolumePerTarget: volumePerTarget
+      });
 
       const results: (MetaTraderTradeResponse & { error?: string })[] = [];
       
       // Execute trades for each target
       for (let i = 0; i < signal.targets.length; i++) {
         const target = signal.targets[i];
+        
+        // Check if stop loss is too close to target (minimum 10 points for forex)
+        const minDistance = 0.0010; // 10 points for EURUSD
+        const distanceToTarget = Math.abs(signal.stopLoss - target);
+        
+        if (distanceToTarget < minDistance) {
+          logger.warn(`⚠️ Skipping target ${i + 1}: Stop loss too close to target`, {
+            target: target,
+            stopLoss: signal.stopLoss,
+            distance: distanceToTarget,
+            required: minDistance
+          });
+          results.push({ 
+            numericCode: 10016,
+            stringCode: 'TRADE_RETCODE_INVALID_STOPS',
+            message: `Stop loss too close to target ${i + 1}`,
+            error: 'Stop loss too close to target'
+          });
+          continue;
+        }
         
         try {
           let result;
