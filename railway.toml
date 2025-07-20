@@ -1,0 +1,20 @@
+# Railway Configuration
+# This file tells Railway how to build and deploy your app
+
+[build]
+builder = "NIXPACKS"
+
+[build.env]
+NODE_VERSION = "18"
+
+[deploy]
+healthcheckPath = "/health"
+restartPolicyType = "ON_FAILURE"
+
+[env]
+# These will be set in Railway dashboard
+# TELEGRAM_BOT_TOKEN=
+# METAAPI_TOKEN=
+# METAAPI_ACCOUNT_ID=
+# TELEGRAM_CHANNEL_ID=
+# TEST_MODE=false

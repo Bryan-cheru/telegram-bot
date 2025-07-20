@@ -1,0 +1,44 @@
+# Railway Deployment Ignore
+# Files and directories that should not be deployed to Railway
+
+# Development files
+*.log
+*.tmp
+*.temp
+
+# Local environment
+.env.local
+.env.development
+
+# Test files
+test/
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
+# Documentation (except essential guides)
+*.md
+!README.md
+!RAILWAY_SETUP.md
+
+# Development dependencies
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local MT5 files (not needed on cloud)
+MT5_Files/
+*.mq5
+*.ex5
+
+# Local trade signals
+trade_signals/
+
+# Unnecessary files
+tsconfig.json
+jest.config.js
+nodemon.json
