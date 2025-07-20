@@ -59,18 +59,38 @@ export class TradeParser {
       const stopLoss = parseFloat(stopLossMatch[1]);
       logger.info(`Found stop loss: ${stopLoss}`);
       
-      // Extract targets - more flexible patterns
-      const targetMatches = cleanText.match(/(?:Target\s*\d+|Final\s*Target)[:\s]*(\d+(?:\.\d+)?)/gi);
+      // Extract targets - improved pattern matching
       const targets: number[] = [];
       
-      if (targetMatches) {
-        targetMatches.forEach(match => {
-          // Extract the price value after the colon or space
-          const targetValue = match.match(/[:\s](\d+(?:\.\d+)?)/);
-          if (targetValue) {
-            targets.push(parseFloat(targetValue[1]));
-          }
-        });
+      // First try to match "Target 1: 3312.430" pattern
+      const target1Match = cleanText.match(/Target\s*1[:\s]*(\d+(?:\.\d+)?)/i);
+      if (target1Match) {
+        targets.push(parseFloat(target1Match[1]));
+      }
+      
+      // Then try to match "Target 2: 3295.385" pattern
+      const target2Match = cleanText.match(/Target\s*2[:\s]*(\d+(?:\.\d+)?)/i);
+      if (target2Match) {
+        targets.push(parseFloat(target2Match[1]));
+      }
+      
+      // Finally try to match "Final Target: 3255.439" pattern
+      const finalTargetMatch = cleanText.match(/Final\s*Target[:\s]*(\d+(?:\.\d+)?)/i);
+      if (finalTargetMatch) {
+        targets.push(parseFloat(finalTargetMatch[1]));
+      }
+      
+      // Fallback: try generic target pattern if none found above
+      if (targets.length === 0) {
+        const genericTargetMatches = cleanText.match(/(?:TP|Target)[:\s]*(\d{4}(?:\.\d+)?)/gi);
+        if (genericTargetMatches) {
+          genericTargetMatches.forEach(match => {
+            const targetValue = match.match(/(?:TP|Target)[:\s]*(\d{4}(?:\.\d+)?)/i);
+            if (targetValue && targetValue[1]) {
+              targets.push(parseFloat(targetValue[1]));
+            }
+          });
+        }
       }
       
       if (targets.length === 0) {
@@ -81,13 +101,29 @@ export class TradeParser {
       
       logger.info(`Found ${targets.length} targets:`, targets);
       
-      // Extract reason
-      const reasonMatch = cleanText.match(/Reason[:\s]*([^.]+)/i);
-      const reason = reasonMatch ? reasonMatch[1].trim() : undefined;
+      // Extract reason - improved to handle multi-line content
+      let reason: string | undefined;
+      const reasonMatch = cleanText.match(/Reason[:\s]*(.+?)(?:Plan|$)/i);
+      if (reasonMatch) {
+        // Clean up the reason text - remove bullet points and extra symbols
+        reason = reasonMatch[1]
+          .replace(/[®◄🔷#&]/g, ' ') // Remove special symbols
+          .replace(/\s+/g, ' ') // Normalize spaces
+          .trim();
+      }
       
-      // Extract plan
-      const planMatch = cleanText.match(/Plan[:\s]*([^.]+)/i);
-      const plan = planMatch ? planMatch[1].trim() : undefined;
+      // Extract plan - improved to handle multi-line content and filter noise
+      let plan: string | undefined;
+      const planMatch = cleanText.match(/Plan[:\s]*(.+)/i);
+      if (planMatch) {
+        plan = planMatch[1]
+          .replace(/[®◄🔷#&©]/g, ' ') // Remove special symbols
+          .replace(/\d+:\d+\s*(AM|PM)/gi, '') // Remove timestamps like "9:24 AM"
+          .replace(/\d+\.\d+K/gi, '') // Remove view counts like "1.5K"
+          .replace(/NN\s*vi\s*\d+\s*\)\s*\d+\s*v\s*:/gi, '') // Remove UI noise patterns
+          .replace(/\s+/g, ' ') // Normalize spaces
+          .trim();
+      }
       
       const tradeSignal: TradeSignal = {
         symbol,

@@ -2,6 +2,8 @@ import { Telegraf } from 'telegraf';
 import { MessageHandler } from './handlers/messageHandler';
 import { PhotoHandler } from './handlers/photoHandler';
 import { FileTradeExecutor } from '../mt5/fileTradeExecutor';
+import { MetaApiTradeExecutor } from '../mt5/metaApiTradeExecutor';
+import { SimulationTradeExecutor } from '../mt5/simulationTradeExecutor';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
@@ -14,7 +16,31 @@ export class TelegramBot {
 
   constructor() {
     this.bot = new Telegraf(config.botToken);
-    this.tradeExecutor = new FileTradeExecutor();
+    
+    // Choose trade executor based on configuration
+    switch (config.tradingMode.toLowerCase()) {
+      case 'metaapi':
+        if (config.metaApi.token && config.metaApi.accountId) {
+          logger.info('🌐 Using MetaAPI for trade execution');
+          this.tradeExecutor = new MetaApiTradeExecutor();
+        } else {
+          logger.warn('⚠️  MetaAPI mode selected but credentials missing, falling back to simulation');
+          this.tradeExecutor = new SimulationTradeExecutor();
+        }
+        break;
+      
+      case 'simulation':
+        logger.info('🎮 Using Simulation mode for trade execution');
+        this.tradeExecutor = new SimulationTradeExecutor();
+        break;
+      
+      case 'file':
+      default:
+        logger.info('📁 Using File-based trade executor');
+        this.tradeExecutor = new FileTradeExecutor();
+        break;
+    }
+    
     this.messageHandler = new MessageHandler();
     this.photoHandler = new PhotoHandler(this.tradeExecutor);
     

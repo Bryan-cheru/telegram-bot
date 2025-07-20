@@ -10,21 +10,28 @@
     "watch": "tsc -w",
     "setup": "node bot-setup.js"
   },
-  "keywords": ["telegram", "bot", "trading", "mt5", "ocr"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "trading",
+    "mt5",
+    "ocr"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "telegraf": "^4.15.4",
-    "tesseract.js": "^5.0.4",
-    "sharp": "^0.32.6",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
+    "metaapi.cloud-sdk": "^29.2.0",
+    "sharp": "^0.32.6",
+    "telegraf": "^4.15.4",
+    "tesseract.js": "^5.0.4",
     "winston": "^3.11.0",
     "zeromq": "^6.0.0-beta.20"
   },
   "devDependencies": {
     "@types/node": "^20.10.4",
-    "typescript": "^5.3.3",
-    "ts-node": "^10.9.1"
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.3"
   }
 }
