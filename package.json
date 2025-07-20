@@ -8,7 +8,10 @@
     "dev": "ts-node src/app.ts",
     "build": "tsc",
     "watch": "tsc -w",
-    "setup": "node bot-setup.js"
+    "setup": "node bot-setup.js",
+    "railway:build": "npm run build",
+    "railway:start": "npm run start",
+    "health-check": "curl -f http://localhost:3000/health || exit 1"
   },
   "keywords": [
     "telegram",
