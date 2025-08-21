@@ -5,24 +5,24 @@ import { logger } from '../../utils/logger';
 export class MessageHandler {
   async handleStart(ctx: Context): Promise<void> {
     const welcomeMessage = `
-🤖 **Telegram Trading Bot**
+🤖 Telegram Trading Bot
 
 Welcome! This bot automatically processes trading screenshots and executes trades on MT5.
 
-**Features:**
+Features:
 • 📷 Image OCR processing
 • 📊 Trade signal parsing
 • 🔄 Automatic MT5 execution
 • 🎯 Multi-target support
 • 🛑 Risk management
 
-**Usage:**
+Usage:
 Simply send trading screenshots to the configured channel, and the bot will:
 1. Extract text from the image
 2. Parse trade information
 3. Execute trades on MT5 automatically
 
-**Status:** ${config.botToken ? '✅ Configured' : '❌ Not configured'}
+Status: ${config.botToken ? '✅ Configured' : '❌ Not configured'}
     `;
     
     await ctx.reply(welcomeMessage);
@@ -31,18 +31,18 @@ Simply send trading screenshots to the configured channel, and the bot will:
 
   async handleHelp(ctx: Context): Promise<void> {
     const helpMessage = `
-📖 **Help & Commands**
+📖 Help & Commands
 
-**/start** - Welcome message and bot status
-**/help** - This help message
-**/status** - Check bot and MT5 connection status
+/start - Welcome message and bot status
+/help - This help message
+/status - Check bot and MT5 connection status
 
-**Supported Image Formats:**
+Supported Image Formats:
 • Trading screenshots with text
 • Clear, readable text preferred
 • Supports standard trade signal formats
 
-**Required Information in Images:**
+Required Information in Images:
 • Symbol (e.g., #XAUUSD)
 • Buy/Sell action
 • Entry zone
@@ -50,12 +50,12 @@ Simply send trading screenshots to the configured channel, and the bot will:
 • Target prices
 • Optional: Reason and plan
 
-**Example Format:**
-\`#XAUUSD Sell Setup
+Example Format:
+#XAUUSD Sell Setup
 Selling Zone: 3345 - 3351
 Stop Loss: 3367
 Target 1: 3312.430
-Target 2: 3295.385\`
+Target 2: 3295.385
     `;
     
     await ctx.reply(helpMessage);
@@ -68,16 +68,17 @@ Target 2: 3295.385\`
       const botConfigured = config.botToken && config.allowedChannelId;
       
       const statusMessage = `
-🔍 **Bot Status**
+🔍 Bot Status
 
-**Configuration:**
+Configuration:
 • Bot Token: ${config.botToken ? '✅ Set' : '❌ Missing'}
 • Channel ID: ${config.allowedChannelId ? '✅ Set' : '❌ Missing'}
-• MT5 Host: ${config.mt5.host}:${config.mt5.port}
+• MetaAPI Token: ${config.metaApi.token ? '✅ Set' : '❌ Missing'}
+• MetaAPI Account: ${config.metaApi.accountId ? '✅ Set' : '❌ Missing'}
 
-**Status:** ${botConfigured ? '✅ Ready' : '❌ Configuration incomplete'}
+Status: ${botConfigured ? '✅ Ready' : '❌ Configuration incomplete'}
 
-**Settings:**
+Settings:
 • Max Trade Size: ${config.trading.maxTradeSize}
 • Risk Percentage: ${config.trading.riskPercentage}%
       `;
