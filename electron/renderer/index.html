@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Trading Bot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <h1>🤖 Telegram Trading Bot</h1>
+                    <span class="version" id="app-version">v1.0.0</span>
+                </div>
+                <div class="header-actions">
+                    <button id="settings-btn" class="btn btn-secondary">⚙️ Settings</button>
+                    <div class="bot-status">
+                        <span class="status-label">Bot Status:</span>
+                        <span id="bot-status" class="status-indicator stopped">Stopped</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-tab="dashboard">📊 Dashboard</button>
+            <button class="nav-tab" data-tab="trades">💹 Trades</button>
+            <button class="nav-tab" data-tab="accounts">� Accounts</button>
+            <button class="nav-tab" data-tab="logs">� Logs</button>
+            <button class="nav-tab" data-tab="settings">⚙️ Settings</button>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Tab -->
+            <div id="dashboard" class="tab-content active">
+                <div class="dashboard-grid">
+                    <!-- Bot Control Panel -->
+                    <div class="card">
+                        <h3>🎮 Bot Control</h3>
+                        <div class="control-buttons">
+                            <button id="start-bot" class="btn btn-success">▶️ Start Bot</button>
+                            <button id="stop-bot" class="btn btn-danger">⏹️ Stop Bot</button>
+                            <button id="restart-bot" class="btn btn-warning">🔄 Restart Bot</button>
+                        </div>
+                        <div class="bot-info">
+                            <div class="info-item">
+                                <span class="label">Process ID:</span>
+                                <span id="bot-pid">Not running</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">Uptime:</span>
+                                <span id="bot-uptime">00:00:00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Connection Status -->
+                    <div class="card">
+                        <h3>🌐 Connection Status</h3>
+                        <div class="connection-status">
+                            <div class="status-item">
+                                <span class="status-dot telegram"></span>
+                                <span>Telegram Bot</span>
+                                <span class="status-text" id="telegram-status">Disconnected</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-dot metaapi"></span>
+                                <span>MetaAPI</span>
+                                <span class="status-text" id="metaapi-status">Disconnected</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-dot health"></span>
+                                <span>Health Server</span>
+                                <span class="status-text" id="health-status">Disconnected</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Statistics -->
+                    <div class="card">
+                        <h3>📈 Statistics</h3>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-number" id="total-trades">0</span>
+                                <span class="stat-label">Total Trades</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-number" id="successful-trades">0</span>
+                                <span class="stat-label">Successful</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-number" id="failed-trades">0</span>
+                                <span class="stat-label">Failed</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-number" id="success-rate">0%</span>
+                                <span class="stat-label">Success Rate</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity -->
+                    <div class="card full-width">
+                        <h3>🕒 Recent Activity</h3>
+                        <div id="recent-activity" class="activity-list">
+                            <div class="activity-item">
+                                <span class="activity-time">Loading...</span>
+                                <span class="activity-message">Initializing dashboard...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div id="logs" class="tab-content">
+                <div class="logs-container">
+                    <div class="logs-header">
+                        <h3>📝 Bot Logs</h3>
+                        <div class="logs-actions">
+                            <button id="clear-logs" class="btn btn-secondary">🗑️ Clear Logs</button>
+                            <button id="export-logs" class="btn btn-secondary">💾 Export Logs</button>
+                        </div>
+                    </div>
+                    <div id="logs-content" class="logs-content">
+                        <div class="log-entry info">
+                            <span class="log-time">Loading...</span>
+                            <span class="log-message">Initializing log viewer...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trades Tab -->
+            <div id="trades" class="tab-content">
+                <div class="trades-container">
+                    <div class="trades-header">
+                        <h3>💹 Trade History</h3>
+                        <div class="trades-filters">
+                            <select id="trade-filter">
+                                <option value="all">All Trades</option>
+                                <option value="successful">Successful</option>
+                                <option value="failed">Failed</option>
+                                <option value="pending">Pending</option>
+                            </select>
+                            <button id="refresh-trades" class="btn btn-secondary">🔄 Refresh</button>
+                        </div>
+                    </div>
+                    <div id="trades-table" class="trades-table">
+                        <div class="trade-item">
+                            <div class="trade-info">Loading trade history...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Accounts Tab -->
+            <div id="accounts" class="tab-content">
+                <div class="accounts-container">
+                    <div class="accounts-header">
+                        <h3>👥 MetaAPI Accounts</h3>
+                        <div class="accounts-actions">
+                            <select id="account-strategy" class="account-strategy-selector">
+                                <option value="round_robin">Round Robin</option>
+                                <option value="all">All Accounts</option>
+                                <option value="weighted">Weighted</option>
+                            </select>
+                            <button id="refresh-accounts" class="btn btn-secondary">🔄 Refresh</button>
+                        </div>
+                    </div>
+                    <div id="accounts-grid" class="accounts-grid">
+                        <div class="account-card">
+                            <div class="account-info">Loading accounts...</div>
+                        </div>
+                    </div>
+                    <div class="accounts-summary">
+                        <div class="summary-item">
+                            <span class="summary-label">Total Accounts:</span>
+                            <span id="total-accounts" class="summary-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Connected:</span>
+                            <span id="connected-accounts" class="summary-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Strategy:</span>
+                            <span id="current-strategy" class="summary-value">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="settings" class="tab-content">
+                <div class="settings-container">
+                    <h3>⚙️ Bot Configuration</h3>
+                    <form id="settings-form" class="settings-form">
+                        <div class="settings-section">
+                            <h4>🤖 Telegram Configuration</h4>
+                            <div class="form-group">
+                                <label for="telegram-token">Bot Token:</label>
+                                <input type="password" id="telegram-token" name="TELEGRAM_BOT_TOKEN" placeholder="Enter your Telegram bot token">
+                            </div>
+                            <div class="form-group">
+                                <label for="telegram-channel">Channel ID:</label>
+                                <input type="text" id="telegram-channel" name="TELEGRAM_CHANNEL_ID" placeholder="Enter your Telegram channel ID">
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>🌐 MetaAPI Configuration</h4>
+                            <div class="form-group">
+                                <label for="metaapi-token">MetaAPI Token:</label>
+                                <input type="password" id="metaapi-token" name="METAAPI_TOKEN" placeholder="Enter your MetaAPI token">
+                            </div>
+                            <div class="form-group">
+                                <label for="metaapi-account">Account ID:</label>
+                                <input type="text" id="metaapi-account" name="METAAPI_ACCOUNT_ID" placeholder="Enter your MetaAPI account ID">
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>📊 Trading Settings</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="max-trade-size">Max Trade Size:</label>
+                                    <input type="number" id="max-trade-size" name="MAX_TRADE_SIZE" step="0.01" placeholder="0.1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="risk-percentage">Risk Percentage:</label>
+                                    <input type="number" id="risk-percentage" name="RISK_PERCENTAGE" step="0.1" placeholder="2">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="test-mode" name="TEST_MODE">
+                                        Test Mode (No real trades)
+                                    </label>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="demo-mode" name="DEMO_MODE">
+                                        Demo Mode
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>🔧 Advanced Settings</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="log-level">Log Level:</label>
+                                    <select id="log-level" name="LOG_LEVEL">
+                                        <option value="error">Error</option>
+                                        <option value="warn">Warning</option>
+                                        <option value="info">Info</option>
+                                        <option value="debug">Debug</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="enable-order-manager" name="ENABLE_MT5_ORDER_MANAGER">
+                                        Enable MT5 Order Manager
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-actions">
+                            <button type="submit" class="btn btn-primary">💾 Save Configuration</button>
+                            <button type="button" id="load-config" class="btn btn-secondary">📂 Load Configuration</button>
+                            <button type="button" id="reset-config" class="btn btn-danger">🔄 Reset to Defaults</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
