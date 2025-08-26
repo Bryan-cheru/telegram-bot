@@ -78,18 +78,30 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       logger.info('🔗 Waiting for broker connection...');
       await this.account.waitConnected();
 
-      // Get RPC connection
-      this.connection = this.account.getRPCConnection();
+      // Get Streaming connection (recommended for trading)
+      this.connection = this.account.getStreamingConnection();
       await this.connection.connect();
 
-      // Wait for synchronization
+      // Wait for synchronization - CRITICAL for trading
       logger.info('🔄 Synchronizing with terminal...');
       await this.connection.waitSynchronized();
 
       logger.info('✅ MetaAPI connected successfully!');
       return true;
 
-    } catch (error) {
+    } catch (error: any) {
+      // Handle specific MetaAPI errors
+      if (error?.details) {
+        if (error.details.code === 'E_SRV_NOT_FOUND') {
+          logger.error('❌ Server file not found. Check server name or use provisioning profile.');
+        } else if (error.details === 'E_AUTH') {
+          logger.error('❌ Authentication failed. Check login and password.');
+        } else if (error.details === 'E_SERVER_TIMEZONE') {
+          logger.error('❌ Server timezone detection failed. Try again later.');
+        } else if (error.details.code === 'E_RESOURCE_SLOTS') {
+          logger.error('❌ Insufficient resource slots for account.');
+        }
+      }
       logger.error('❌ Failed to connect to MetaAPI:', error);
       return false;
     }
@@ -125,17 +137,37 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         throw new Error('Not connected to MetaAPI');
       }
 
-      const accountInfo = await this.connection.getAccountInformation();
-      logger.info('💰 Account Info:', {
-        balance: accountInfo.balance,
-        equity: accountInfo.equity,
-        margin: accountInfo.margin,
-        freeMargin: accountInfo.freeMargin,
-        currency: accountInfo.currency
-      });
+      // Use streaming connection's terminal state for account info
+      const terminalState = this.connection.terminalState;
+      
+      // Wait for terminal state to be synchronized
+      if (!terminalState.connected || !terminalState.connectedToBroker) {
+        logger.warn('Terminal state not fully synchronized, getting account info via RPC...');
+        // Fallback to RPC connection for account info
+        const rpcConnection = this.account?.getRPCConnection();
+        if (rpcConnection) {
+          await rpcConnection.connect();
+          await rpcConnection.waitSynchronized();
+          const accountInfo = await rpcConnection.getAccountInformation();
+          await rpcConnection.close();
+          return accountInfo;
+        }
+      }
+
+      const accountInfo = terminalState.accountInformation;
+      
+      if (accountInfo) {
+        logger.info('💰 Account Info:', {
+          balance: accountInfo.balance,
+          equity: accountInfo.equity,
+          margin: accountInfo.margin,
+          freeMargin: accountInfo.freeMargin,
+          currency: accountInfo.currency
+        });
+      }
 
       return accountInfo;
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Error getting account info:', error);
       throw error;
     }
@@ -147,10 +179,18 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         throw new Error('Not connected to MetaAPI');
       }
 
+      // Ensure terminal state is synchronized before trading
+      const terminalState = this.connection.terminalState;
+      if (!terminalState.connected || !terminalState.connectedToBroker) {
+        logger.warn('⚠️ Terminal not fully synchronized, waiting...');
+        await this.connection.waitSynchronized();
+      }
+
       logger.info('🚀 Executing trade via MetaAPI:', {
         symbol: signal.symbol,
         action: signal.action,
-        targets: signal.targets.length
+        targets: signal.targets.length,
+        synchronized: terminalState.connected && terminalState.connectedToBroker
       });
 
       // Get account info for position sizing
@@ -221,26 +261,26 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
           let result;
           
           if (signal.action === 'BUY') {
-            // Market Buy Order
+            // Market Buy Order - MetaAPI standard format
             result = await this.connection.createMarketBuyOrder(
               signal.symbol,
               volumePerTarget,
               signal.stopLoss,
               target,
               {
-                comment: `Bot-${Date.now()}-TP${i + 1}`,
+                comment: `TelegramBot-${Date.now()}`,
                 magic: 123456
               }
             );
           } else {
-            // Market Sell Order
+            // Market Sell Order - MetaAPI standard format
             result = await this.connection.createMarketSellOrder(
               signal.symbol,
               volumePerTarget,
               signal.stopLoss,
               target,
               {
-                comment: `Bot-${Date.now()}-TP${i + 1}`,
+                comment: `TelegramBot-${Date.now()}`,
                 magic: 123456
               }
             );
@@ -250,16 +290,25 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
           
           logger.info(`✅ Trade ${i + 1}/${signal.targets.length} executed:`, {
             orderId: result.orderId,
+            stringCode: result.stringCode,
             volume: volumePerTarget,
             target: target
           });
 
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          logger.error(`❌ Failed to execute trade ${i + 1}:`, error);
+        } catch (error: any) {
+          const errorMessage = error?.message || 'Unknown error';
+          const stringCode = error?.stringCode || 'ERROR';
+          
+          logger.error(`❌ Failed to execute trade ${i + 1}:`, {
+            error: errorMessage,
+            stringCode: stringCode,
+            symbol: signal.symbol,
+            volume: volumePerTarget
+          });
+          
           results.push({ 
-            numericCode: -1,
-            stringCode: 'ERROR',
+            numericCode: error?.numericCode || -1,
+            stringCode: stringCode,
             message: errorMessage,
             error: errorMessage
           });
@@ -313,9 +362,26 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         throw new Error('Not connected to MetaAPI');
       }
 
-      const positions = await this.connection.getPositions();
-      return positions;
-    } catch (error) {
+      // Use streaming connection's terminal state for positions
+      const terminalState = this.connection.terminalState;
+      
+      if (terminalState.connected && terminalState.connectedToBroker) {
+        return terminalState.positions || [];
+      } else {
+        // Fallback to RPC connection
+        logger.warn('Using RPC fallback for positions...');
+        const rpcConnection = this.account?.getRPCConnection();
+        if (rpcConnection) {
+          await rpcConnection.connect();
+          await rpcConnection.waitSynchronized();
+          const positions = await rpcConnection.getPositions();
+          await rpcConnection.close();
+          return positions;
+        }
+      }
+
+      return [];
+    } catch (error: any) {
       logger.error('Error getting open positions:', error);
       return [];
     }
@@ -327,11 +393,19 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         throw new Error('Not connected to MetaAPI');
       }
 
+      // Use streaming connection for position closing
       const result = await this.connection.closePosition(positionId);
-      logger.info('✅ Position closed:', result);
+      logger.info('✅ Position closed:', {
+        positionId: positionId,
+        resultCode: result.stringCode
+      });
       return true;
-    } catch (error) {
-      logger.error('❌ Error closing position:', error);
+    } catch (error: any) {
+      logger.error('❌ Error closing position:', {
+        positionId: positionId,
+        error: error.message,
+        stringCode: error.stringCode
+      });
       return false;
     }
   }
