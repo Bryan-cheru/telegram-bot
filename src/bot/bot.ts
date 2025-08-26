@@ -1,9 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { MessageHandler } from './handlers/messageHandler';
 import { PhotoHandler } from './handlers/photoHandler';
-import { FileTradeExecutor } from '../mt5/fileTradeExecutor';
 import { MetaApiTradeExecutor } from '../mt5/metaApiTradeExecutor';
-import { TestTradeExecutor } from '../mt5/testTradeExecutor';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
@@ -17,17 +15,9 @@ export class TelegramBot {
   constructor() {
     this.bot = new Telegraf(config.botToken);
     
-    // Choose trade executor based on configuration
-    if (process.env.TEST_MODE === 'true') {
-      logger.info('🧪 Using Test Trade Executor (MetaAPI Simulation)');
-      this.tradeExecutor = new TestTradeExecutor();
-    } else if (config.metaApi.token && config.metaApi.accountId) {
-      logger.info('🌐 Using MetaAPI for trade execution');
-      this.tradeExecutor = new MetaApiTradeExecutor();
-    } else {
-      logger.info('📁 Using File-based trade executor (MetaAPI not configured)');
-      this.tradeExecutor = new FileTradeExecutor();
-    }
+    // Using MetaAPI for trade execution
+    logger.info('🌐 Using MetaAPI for trade execution');
+    this.tradeExecutor = new MetaApiTradeExecutor();
     
     this.messageHandler = new MessageHandler();
     this.photoHandler = new PhotoHandler(this.tradeExecutor);

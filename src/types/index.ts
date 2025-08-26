@@ -41,20 +41,3 @@ export interface MetaTraderTradeResponse {
   orderId?: string;
   positionId?: number;
 }
-
-export interface MT5TradeRequest {
-  symbol: string;
-  action: 'BUY' | 'SELL';
-  volume: number;
-  price?: number;
-  sl?: number;
-  tp?: number;
-  comment?: string;
-}
-
-export interface MT5Response {
-  success: boolean;
-  ticket?: number;
-  error?: string;
-  retcode?: number;
-}

@@ -73,7 +73,8 @@ Target 2: 3295.385\`
 **Configuration:**
 • Bot Token: ${config.botToken ? '✅ Set' : '❌ Missing'}
 • Channel ID: ${config.allowedChannelId ? '✅ Set' : '❌ Missing'}
-• MT5 Host: ${config.mt5.host}:${config.mt5.port}
+• MetaAPI Token: ${config.metaApi.token ? '✅ Set' : '❌ Missing'}
+• MetaAPI Account: ${config.metaApi.accountId ? '✅ Set' : '❌ Missing'}
 
 **Status:** ${botConfigured ? '✅ Ready' : '❌ Configuration incomplete'}
 

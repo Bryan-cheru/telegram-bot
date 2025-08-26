@@ -30,8 +30,7 @@
     "sharp": "^0.32.6",
     "telegraf": "^4.15.4",
     "tesseract.js": "^5.0.4",
-    "winston": "^3.11.0",
-    "zeromq": "^6.0.0-beta.20"
+    "winston": "^3.11.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.4",

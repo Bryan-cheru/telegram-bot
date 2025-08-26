@@ -165,8 +165,7 @@ src/
 │   ├── textExtractor.ts         # OCR functionality
 │   └── tradeParser.ts           # Trade signal parsing
 ├── mt5/
-│   ├── connection.ts            # MT5 connection management
-│   └── tradeExecutor.ts         # Trade execution logic
+│   └── metaApiTradeExecutor.ts  # MetaAPI trade execution
 ├── types/
 │   └── index.ts                 # TypeScript type definitions
 ├── utils/
@@ -180,8 +179,8 @@ src/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BOT_TOKEN` | Telegram bot token from @BotFather | Required |
-| `MT5_HOST` | MT5 server host | localhost |
-| `MT5_PORT` | MT5 server port | 18812 |
+| `METAAPI_TOKEN` | MetaAPI token for cloud trading | Required |
+| `METAAPI_ACCOUNT_ID` | MetaAPI account ID | Required |
 | `ALLOWED_CHANNEL_ID` | Channel ID where bot operates | Required |
 | `MAX_TRADE_SIZE` | Maximum position size | 0.1 |
 | `RISK_PERCENTAGE` | Risk percentage per trade | 2 |
