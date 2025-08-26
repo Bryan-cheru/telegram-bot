@@ -72,29 +72,57 @@ export class TradeParser {
       /(\w+)\s+(BUY|SELL)[\s\n]+(?:ENTRY|ENTER)[\s:]*(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)[\s\n]+(?:SL|STOPLOSS|STOP LOSS)[\s:]*(\d+\.?\d*)[\s\n]+(?:TP|TARGET|TARGETS)[\s:]*([\d.,\s\n]+)/gi,
       
       // Pattern 3: Compact format
-      /(\w+)\s+(BUY|SELL)\s+(\d+\.?\d*)-(\d+\.?\d*)\s+SL(\d+\.?\d*)\s+TP([\d.,\s]+)/gi
+      /(\w+)\s+(BUY|SELL)\s+(\d+\.?\d*)-(\d+\.?\d*)\s+SL(\d+\.?\d*)\s+TP([\d.,\s]+)/gi,
+
+      // Pattern 4: Caption format with trading setup text (NEW)
+      /#?(\w+)[\s\S]*?(BUY|SELL|Buying|Selling)[\s\S]*?(?:zone|levels?|area)[\s\S]*?\(?(\d+\.?\d*)[\s–-]+(\d+\.?\d*)\)?[\s\S]*?(?:SL|Stop|stop)[\s:]?(\d+\.?\d*)[\s\S]*?(?:TP|Target|targets?)[\s:]?([\d.\s\/,]+)/gi,
+      
+      // Pattern 5: Gold/XAUUSD specific format with detailed description
+      /(?:#?XAUUSD|Gold)[\s\S]*?(Selling|Buying|SELL|BUY)[\s\S]*?(?:zone|resistance|support)[\s\S]*?\(?(\d+)[\s–-]+(\d+)\)?[\s\S]*?(?:SL|❌\s*SL)[\s:]?(\d+)[\s\S]*?(?:TP|🏹\s*TP)[\s:]*(\d+(?:\s*\/\s*\d+)?)/gi,
+      
+      // Pattern 6: Extract explicit entry zone with parentheses
+      /(?:#?XAUUSD|Gold|EURUSD|GBPUSD)[\s\S]*?(Selling|Buying|SELL|BUY)[\s\S]*?\((\d+)[\s–-]+(\d+)\)[\s\S]*?(?:SL|❌\s*SL)[\s:]?(\d+)[\s\S]*?(?:TP|🏹\s*TP)[\s:]*(\d+(?:\s*\/\s*\d+)?)/gi
     ];
 
     for (const pattern of patterns) {
       const match = pattern.exec(text);
       if (match) {
-        const [, symbol, action, entryMin, entryMax, stopLoss, targetsStr] = match;
+        let [, symbol, action, entryMin, entryMax, stopLoss, targetsStr] = match;
+        
+        // Handle Gold -> XAUUSD conversion
+        if (symbol.toUpperCase() === 'GOLD') {
+          symbol = 'XAUUSD';
+        }
+        
+        // Normalize action
+        if (action.toLowerCase().includes('sell')) {
+          action = 'SELL';
+        } else if (action.toLowerCase().includes('buy')) {
+          action = 'BUY';
+        }
         
         if (this.isValidSymbol(symbol)) {
           const targets = this.parseTargets(targetsStr);
           
-          return {
-            symbol: symbol.toUpperCase(),
-            action: action.toUpperCase() as TradeAction,
-            entryZone: {
-              min: parseFloat(entryMin),
-              max: parseFloat(entryMax)
-            },
-            stopLoss: parseFloat(stopLoss),
-            targets,
-            reason: this.extractReason(text),
-            plan: this.extractPlan(text)
-          };
+          // Validate that we have reasonable price levels
+          const entryMinNum = parseFloat(entryMin);
+          const entryMaxNum = parseFloat(entryMax);
+          const stopLossNum = parseFloat(stopLoss);
+          
+          if (entryMinNum > 0 && entryMaxNum > 0 && stopLossNum > 0 && targets.length > 0) {
+            return {
+              symbol: symbol.toUpperCase(),
+              action: action.toUpperCase() as TradeAction,
+              entryZone: {
+                min: entryMinNum,
+                max: entryMaxNum
+              },
+              stopLoss: stopLossNum,
+              targets,
+              reason: this.extractReason(text),
+              plan: this.extractPlan(text)
+            };
+          }
         }
       }
     }
@@ -343,7 +371,9 @@ export class TradeParser {
   }
 
   private parseTargets(targetsStr: string): number[] {
+    // Handle various target formats: "3357 / 3344", "2430,2420", "2430 2420", etc.
     return targetsStr
+      .replace(/\s*\/\s*/g, ',') // Convert "/" to comma
       .split(/[,\s\n]+/)
       .map(t => parseFloat(t.trim()))
       .filter(t => !isNaN(t) && t > 0);

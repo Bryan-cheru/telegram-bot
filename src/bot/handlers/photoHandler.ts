@@ -69,20 +69,41 @@ export class PhotoHandler {
       const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
       const imageBuffer = Buffer.from(response.data);
 
-      // Extract text from image
-      const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
-      logger.info('Extracted text from image:', extractedText);
-
-      // Check for caption text (when image is sent with accompanying text)
-      let combinedText = extractedText;
+      // Check for caption text first (when image is sent with accompanying text)
+      let combinedText = '';
+      let usesCaptionOnly = false;
+      
       if (message.caption && message.caption.trim().length > 0) {
         logger.info('Caption text found:', message.caption);
-        // Combine caption with OCR text for more comprehensive analysis
-        combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${extractedText}`;
-        logger.info('Using combined text (caption + OCR) for enhanced parsing');
+        
+        // Check if caption contains clear trading information (entry, stop loss, targets)
+        const captionHasTradingInfo = /(?:SL|Stop|Target|TP|Entry|Zone|Buy|Sell|XAUUSD|Gold|EUR|GBP|USD)/gi.test(message.caption);
+        
+        if (captionHasTradingInfo) {
+          logger.info('Caption contains clear trading information - prioritizing caption over OCR');
+          combinedText = message.caption;
+          usesCaptionOnly = true;
+        } else {
+          // Extract text from image if caption doesn't have clear trading info
+          const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
+          logger.info('Extracted text from image:', extractedText);
+          combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${extractedText}`;
+          logger.info('Using combined text (caption + OCR) for enhanced parsing');
+        }
+      } else {
+        // No caption, extract text from image
+        const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
+        logger.info('Extracted text from image:', extractedText);
+        combinedText = extractedText;
       }
 
-      // Parse trade signal from the combined text (caption + OCR or just OCR)
+      // Parse trade signal from the text
+      logger.info('🔍 Parsing trade signal from text:', { 
+        textLength: combinedText.length, 
+        usesCaptionOnly,
+        preview: combinedText.substring(0, 200) + (combinedText.length > 200 ? '...' : '')
+      });
+      
       const tradeSignal = this.tradeParser.parseTradeSignal(combinedText);
       
       if (!tradeSignal) {
