@@ -2,6 +2,17 @@ import { TradeSignal, TradeAction } from '../types';
 import { logger } from '../utils/logger';
 
 /**
+ * Enhanced parsing result with confidence and validation
+ */
+export interface EnhancedParseResult {
+  signal: TradeSignal | null;
+  confidence: number;
+  isValid: boolean;
+  method?: string;
+  reasoning?: string;
+}
+
+/**
  * Enhanced Trade Parser with improved accuracy and multiple signal format support
  */
 export class EnhancedTradeParser {
@@ -27,13 +38,14 @@ export class EnhancedTradeParser {
   private readonly CONFIDENCE_THRESHOLDS = {
     HIGH: 0.8,
     MEDIUM: 0.6,
-    LOW: 0.4
+    LOW: 0.4,
+    MINIMUM: 0.3
   };
 
   /**
    * Enhanced parsing with confidence scoring
    */
-  parseTradeSignalWithConfidence(text: string, caption?: string): { signal: TradeSignal | null; confidence: number; method: string } {
+  parseTradeSignalWithConfidence(text: string, caption?: string): EnhancedParseResult {
     try {
       const fullText = caption ? `${text}\n${caption}` : text;
       const normalizedText = this.normalizeText(fullText);
@@ -51,6 +63,7 @@ export class EnhancedTradeParser {
         const signal = parseMethod.method();
         if (signal && this.validateSignalLogic(signal)) {
           const confidence = this.calculateConfidence(signal, normalizedText) * parseMethod.confidence;
+          const isValid = confidence > this.CONFIDENCE_THRESHOLDS.MINIMUM;
           
           logger.info(`✅ Parsed signal using ${parseMethod.name}`, {
             confidence: confidence.toFixed(2),
@@ -58,16 +71,34 @@ export class EnhancedTradeParser {
             action: signal.action
           });
 
-          return { signal, confidence, method: parseMethod.name };
+          return { 
+            signal, 
+            confidence, 
+            isValid,
+            method: parseMethod.name,
+            reasoning: `Parsed using ${parseMethod.name} with ${(confidence * 100).toFixed(1)}% confidence`
+          };
         }
       }
 
       logger.warn('❌ No valid trade signal could be parsed');
-      return { signal: null, confidence: 0, method: 'none' };
+      return { 
+        signal: null, 
+        confidence: 0, 
+        isValid: false,
+        method: 'none',
+        reasoning: 'No valid signal pattern detected in text'
+      };
 
     } catch (error) {
       logger.error('Error in enhanced trade parsing:', error);
-      return { signal: null, confidence: 0, method: 'error' };
+      return { 
+        signal: null, 
+        confidence: 0, 
+        isValid: false,
+        method: 'error',
+        reasoning: `Parsing error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
     }
   }
 
