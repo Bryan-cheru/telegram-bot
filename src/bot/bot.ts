@@ -44,6 +44,9 @@ export class TelegramBot {
     // Photo handler
     this.bot.on('photo', (ctx) => this.photoHandler.handlePhoto(ctx));
 
+    // Text message handler for trading signals
+    this.bot.on('text', (ctx) => this.handleTextMessage(ctx));
+
     // Handle channel posts specifically (channels work differently than groups)
     this.bot.on('channel_post', (ctx) => {
       logger.info(`Channel post received from ${ctx.chat?.id} (${ctx.chat?.title})`);
@@ -53,8 +56,13 @@ export class TelegramBot {
         // Debug: Log what's in the channel post
         logger.info(`Channel post content type: ${JSON.stringify(Object.keys(ctx.channelPost))}`);
         
+        // Handle text in channel posts
+        if (ctx.channelPost && 'text' in ctx.channelPost && ctx.channelPost.text) {
+          logger.info('Text detected in channel post');
+          this.handleTextMessage(ctx);
+        }
         // Handle photos in channel posts
-        if (ctx.channelPost && 'photo' in ctx.channelPost && ctx.channelPost.photo) {
+        else if (ctx.channelPost && 'photo' in ctx.channelPost && ctx.channelPost.photo) {
           logger.info('Photo detected in channel post');
           this.photoHandler.handlePhoto(ctx);
         } 
@@ -92,6 +100,79 @@ export class TelegramBot {
     });
 
     logger.info('Bot handlers configured');
+  }
+
+  private async handleTextMessage(ctx: any): Promise<void> {
+    try {
+      // Check if message is from allowed channel
+      if (ctx.chat?.id.toString() !== config.allowedChannelId) {
+        logger.warn(`Text message received from unauthorized channel: ${ctx.chat?.id}`);
+        return;
+      }
+
+      // Get the text from either message or channelPost
+      const message = (ctx.message || ctx.channelPost) as any;
+      const text = message?.text;
+      
+      if (!text) {
+        logger.warn('No text found in message');
+        return;
+      }
+
+      // Check if text contains trading signal keywords
+      const tradingKeywords = ['#XAUUSD', '#EURUSD', '#GBPUSD', 'Sell:', 'Buy:', 'Target', 'Update'];
+      const containsTradingSignal = tradingKeywords.some(keyword => 
+        text.toLowerCase().includes(keyword.toLowerCase())
+      );
+
+      if (!containsTradingSignal) {
+        logger.info('Text message does not contain trading signal keywords, skipping');
+        return;
+      }
+
+      logger.info('Processing text message for trading signal:', text);
+
+      // Use the same trade parser to parse text signals
+      const { TradeParser } = await import('../ocr/tradeParser');
+      const tradeParser = new TradeParser();
+      
+      const tradeSignal = tradeParser.parseTradeSignal(text);
+      
+      if (!tradeSignal) {
+        logger.warn('No valid trade signal found in text message');
+        return;
+      }
+
+      // Validate trade signal
+      if (!tradeParser.validateTradeSignal(tradeSignal)) {
+        logger.warn('Invalid trade signal in text message:', tradeSignal);
+        return;
+      }
+
+      // Log the detected signal
+      const signalInfo = `Symbol: ${tradeSignal.symbol}, Action: ${tradeSignal.action}, Entry: ${tradeSignal.entryZone.min}-${tradeSignal.entryZone.max}, Targets: ${tradeSignal.targets.join(', ')}`;
+      logger.info('Trade signal detected from text:', signalInfo);
+
+      // Execute trade
+      try {
+        const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+        
+        if (result.success) {
+          const successMessage = result.signalId 
+            ? `✅ Text signal processed! Signal ID: ${result.signalId}`
+            : `✅ Trade executed from text signal!`;
+          logger.info(successMessage);
+        } else {
+          const errorMessage = `❌ Trade execution failed: ${result.error || result.message}`;
+          logger.error(errorMessage);
+        }
+      } catch (error) {
+        logger.error('Trade execution error from text signal:', error);
+      }
+
+    } catch (error) {
+      logger.error('Error handling text message:', error);
+    }
   }
 
   async start(): Promise<void> {

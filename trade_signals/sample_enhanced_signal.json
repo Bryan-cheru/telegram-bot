@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-08-23T12:00:00.000Z",
+  "signal": {
+    "symbol": "XAUUSD",
+    "action": "SELL",
+    "entryZone": {
+      "min": 3344,
+      "max": 3349
+    },
+    "stopLoss": 3355,
+    "targets": [
+      3329,
+      3313
+    ],
+    "reason": "Last week's gold signal is still valid. Market is holding the channel",
+    "plan": "Wait for entry in the selling zone and sell with proper SL. Market is tricky, but patience and consistency are key."
+  },
+  "status": "pending",
+  "id": "trade_1692793200000_xauusd_sell",
+  "volume": 0.1
+}

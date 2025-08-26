@@ -71,10 +71,19 @@ export class PhotoHandler {
 
       // Extract text from image
       const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
-      logger.info('Extracted text:', extractedText);
+      logger.info('Extracted text from image:', extractedText);
 
-      // Parse trade signal
-      const tradeSignal = this.tradeParser.parseTradeSignal(extractedText);
+      // Check for caption text (when image is sent with accompanying text)
+      let combinedText = extractedText;
+      if (message.caption && message.caption.trim().length > 0) {
+        logger.info('Caption text found:', message.caption);
+        // Combine caption with OCR text for more comprehensive analysis
+        combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${extractedText}`;
+        logger.info('Using combined text (caption + OCR) for enhanced parsing');
+      }
+
+      // Parse trade signal from the combined text (caption + OCR or just OCR)
+      const tradeSignal = this.tradeParser.parseTradeSignal(combinedText);
       
       if (!tradeSignal) {
         logger.warn('No valid trade signal found in image');
@@ -97,9 +106,11 @@ export class PhotoHandler {
 
       // Send confirmation message
       const confirmationMessage = this.formatTradeSignal(tradeSignal);
+      const processingInfo = message.caption ? ' (processed caption + image text)' : ' (processed image text only)';
+      
       // For channel posts, we might want to send to a specific chat or log only
       if (ctx.channelPost) {
-        logger.info('Trade signal detected from channel post:', confirmationMessage);
+        logger.info(`Trade signal detected from channel post${processingInfo}:`, confirmationMessage);
         // You could send this to a specific admin chat if needed
         // await ctx.telegram.sendMessage(adminChatId, confirmationMessage);
       } else {

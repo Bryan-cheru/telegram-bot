@@ -10,6 +10,9 @@ A sophisticated Telegram bot that automatically processes trading screenshots, e
 - 🎯 **Multi-Target Support**: Handles multiple take-profit levels
 - 🛑 **Risk Management**: Built-in position sizing and risk controls
 - 📝 **Comprehensive Logging**: Detailed logging for monitoring and debugging
+- 🔗 **Combined Text + Image Processing**: Handles photos with captions for enhanced analysis (NEW!)
+- 📊 **Chart Setup Analysis**: Creates trade setups from pure chart screenshots (NEW!)
+- 🧠 **Multi-Format Intelligence**: Adapts to any signal format automatically (NEW!)
 
 ## Prerequisites
 
@@ -68,10 +71,29 @@ A sophisticated Telegram bot that automatically processes trading screenshots, e
    - Execute trades on MT5
    - Send confirmation messages
 
-## Supported Trade Signal Format
+## Supported Trade Signal Formats
 
-The bot can parse screenshots with the following format:
+The bot intelligently parses multiple signal formats with advanced OCR and text processing:
 
+### Format 1: Compact Emoji Format
+```
+#XAUUSD Update ⏺ Sell: 3344 – 3349 🏹 Target 1: 3329 | 🏹 Final: 3313
+```
+
+### Format 2: Detailed Analysis Format
+```
+#XAUUSD (Update) Selling Setup 📊
+
+Gold has tested the upper resistance zone (3379–3384) where selling pressure is expected. 
+From this zone, a possible downside move towards the 3357–3344 levels can be seen.
+
+⚠️ This setup is a bit risky due to recent volatility, so make sure to trade with proper money management.
+
+❌ SL: 3393
+🏹 TP: 3357 / 3344
+```
+
+### Format 3: Traditional Format
 ```
 #XAUUSD (Updates) Sell Setup
 
@@ -87,6 +109,38 @@ Reason:
 Rising Wedge Pattern (Bearish)
 Strong Resistance Zone
 Expecting sharp drop after retest.
+```
+
+### Format 4: Chart Setup Analysis (NEW! 📊)
+```
+EURUSD 4h OANDA
+1.17572
+1.16011  
+1.15989
+```
+*Automatically detects key levels and creates trade setups from pure chart screenshots*
+
+**Chart Setup Features:**
+- 🔍 **Smart Level Detection**: Identifies support/resistance from price levels
+- 🎯 **Bias Analysis**: Determines BUY/SELL bias from current price position
+- 📊 **Range Calculation**: Calculates risk/reward from key levels
+- 🤖 **Auto Entry Zones**: Creates neutral entry zones for manual decision
+- 🎨 **Context Awareness**: Detects bearish/bullish clues from chart annotations
+
+### Format 5: Combined Text + Image (ENHANCED! 🔗)
+**Photo with Caption:**
+```
+Caption: "📊 EURUSD Analysis - Looking for SELL on resistance test"
+Image: [Chart with levels 1.17572, 1.16011, 1.15989]
+```
+*Bot combines caption context with chart levels for enhanced analysis*
+
+**Combined Processing Features:**
+- 🔗 **Intelligent Fusion**: Merges text analysis with visual chart data
+- 🧠 **Context Enhancement**: Uses caption to understand trader's bias
+- 📊 **Visual Confirmation**: Chart levels validate or enhance text signals  
+- 💡 **Best of Both**: Gets precision from charts + context from text
+- 🎯 **Real-World Usage**: Handles how traders actually share analysis
 
 Plan: Wait for entry in the selling zone
 and sell with proper SL.
