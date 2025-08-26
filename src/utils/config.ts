@@ -21,11 +21,25 @@ export const config = {
 
 export const validateConfig = (): boolean => {
   const required = [
-    config.botToken,
-    config.allowedChannelId,
-    config.metaApi.token,
-    config.metaApi.accountId
+    { name: 'BOT_TOKEN', value: config.botToken },
+    { name: 'ALLOWED_CHANNEL_ID', value: config.allowedChannelId },
+    { name: 'METAAPI_TOKEN', value: config.metaApi.token },
+    { name: 'METAAPI_ACCOUNT_ID', value: config.metaApi.accountId }
   ];
   
-  return required.every(value => value && value.length > 0);
+  const missing = required.filter(field => !field.value || field.value.length === 0);
+  
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:');
+    missing.forEach(field => {
+      console.error(`   - ${field.name}: ${field.value ? 'empty' : 'not set'}`);
+    });
+    console.error('');
+    console.error('💡 Please check your .env file and ensure all required fields are set.');
+    console.error('   See .env.example for reference or SETUP_INSTRUCTIONS_FOR_CLIENT.md for help.');
+    return false;
+  }
+  
+  console.log('✅ All required environment variables are set');
+  return true;
 };

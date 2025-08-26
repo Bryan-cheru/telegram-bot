@@ -215,10 +215,29 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         targets: signal.targets.length
       });
 
-      // Get symbol specification to validate volume
-      const symbolSpec = await this.connection.getSymbolSpecification(signal.symbol);
-      const minVolume = symbolSpec.minVolume || 0.01;
-      const volumeStep = symbolSpec.volumeStep || 0.01;
+      // Get symbol specification from terminal state or use defaults
+      let symbolSpec;
+      try {
+        const terminalState = this.connection.terminalState;
+        symbolSpec = terminalState.specification(signal.symbol);
+        
+        if (!symbolSpec) {
+          // Fallback to RPC connection for symbol specification
+          const rpcConnection = this.account?.getRPCConnection();
+          if (rpcConnection) {
+            await rpcConnection.connect();
+            await rpcConnection.waitSynchronized();
+            symbolSpec = await rpcConnection.getSymbolSpecification(signal.symbol);
+            await rpcConnection.close();
+          }
+        }
+      } catch (error: any) {
+        logger.warn('Could not get symbol specification, using defaults:', error.message);
+        symbolSpec = null;
+      }
+
+      const minVolume = symbolSpec?.minVolume || 0.01;
+      const volumeStep = symbolSpec?.volumeStep || 0.01;
       
       // Adjust volume to meet symbol requirements
       volumePerTarget = Math.max(minVolume, volumePerTarget);
