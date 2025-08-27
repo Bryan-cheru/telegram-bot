@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Trading Bot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>🤖 Telegram Trading Bot</h1>
+                <div class="status-indicator">
+                    <span id="bot-status" class="status offline">●</span>
+                    <span id="status-text">Offline</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="start-btn" class="btn btn-success">Start Bot</button>
+                <button id="stop-btn" class="btn btn-danger">Stop Bot</button>
+                <button id="restart-btn" class="btn btn-warning">Restart</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <nav class="nav">
+                    <button class="nav-item active" data-tab="dashboard">
+                        📊 Dashboard
+                    </button>
+                    <button class="nav-item" data-tab="logs">
+                        📋 Logs
+                    </button>
+                    <button class="nav-item" data-tab="trades">
+                        💹 Trades
+                    </button>
+                    <button class="nav-item" data-tab="settings">
+                        ⚙️ Settings
+                    </button>
+                    <button class="nav-item" data-tab="help">
+                        ❓ Help
+                    </button>
+                </nav>
+            </aside>
+
+            <!-- Content Area -->
+            <section class="content">
+                <!-- Dashboard Tab -->
+                <div id="dashboard" class="tab-content active">
+                    <div class="cards">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Bot Status</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="status-details">
+                                    <div class="status-item">
+                                        <span class="label">State:</span>
+                                        <span id="detailed-status" class="value">Offline</span>
+                                    </div>
+                                    <div class="status-item">
+                                        <span class="label">Uptime:</span>
+                                        <span id="uptime" class="value">00:00:00</span>
+                                    </div>
+                                    <div class="status-item">
+                                        <span class="label">Last Activity:</span>
+                                        <span id="last-activity" class="value">Never</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Configuration</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="config-status" id="config-status">
+                                    <div class="config-item">
+                                        <span class="label">Bot Token:</span>
+                                        <span class="value" id="token-status">❌ Not Set</span>
+                                    </div>
+                                    <div class="config-item">
+                                        <span class="label">MetaAPI Token:</span>
+                                        <span class="value" id="metaapi-status">❌ Not Set</span>
+                                    </div>
+                                    <div class="config-item">
+                                        <span class="label">Account ID:</span>
+                                        <span class="value" id="account-status">❌ Not Set</span>
+                                    </div>
+                                    <div class="config-item">
+                                        <span class="label">Channel ID:</span>
+                                        <span class="value" id="channel-status">❌ Not Set</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Today's Statistics</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="stats-grid">
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="trades-today">0</div>
+                                        <div class="stat-label">Trades Today</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="success-rate">0%</div>
+                                        <div class="stat-label">Success Rate</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="total-profit">$0.00</div>
+                                        <div class="stat-label">Total P&L</div>
+                                    </div>
+                                    <div class="stat-item">
+                                        <div class="stat-value" id="signals-processed">0</div>
+                                        <div class="stat-label">Signals Processed</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Recent Activity</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="recent-activity" class="activity-list">
+                                <div class="activity-item">
+                                    <span class="activity-time">--:--</span>
+                                    <span class="activity-message">Bot is offline</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Tab -->
+                <div id="logs" class="tab-content">
+                    <div class="card full-height">
+                        <div class="card-header">
+                            <h3>Real-time Logs</h3>
+                            <div class="card-actions">
+                                <button id="clear-logs" class="btn btn-sm">Clear</button>
+                                <button id="refresh-logs" class="btn btn-sm">Refresh</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="log-container" class="log-container">
+                                <div class="log-entry info">
+                                    <span class="log-time">[--:--:--]</span>
+                                    <span class="log-level">[INFO]</span>
+                                    <span class="log-message">Application started</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trades Tab -->
+                <div id="trades" class="tab-content">
+                    <div class="card full-height">
+                        <div class="card-header">
+                            <h3>Trade History</h3>
+                            <div class="card-actions">
+                                <select id="trade-filter">
+                                    <option value="all">All Trades</option>
+                                    <option value="today">Today</option>
+                                    <option value="week">This Week</option>
+                                    <option value="month">This Month</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="trades-table" class="trades-table">
+                                <div class="trade-row header">
+                                    <div class="trade-cell">Time</div>
+                                    <div class="trade-cell">Symbol</div>
+                                    <div class="trade-cell">Type</div>
+                                    <div class="trade-cell">Volume</div>
+                                    <div class="trade-cell">Entry</div>
+                                    <div class="trade-cell">Exit</div>
+                                    <div class="trade-cell">P&L</div>
+                                    <div class="trade-cell">Status</div>
+                                </div>
+                                <div class="no-trades">
+                                    <p>No trades recorded yet</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Tab -->
+                <div id="settings" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Bot Configuration</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="settings-form">
+                                <div class="form-group">
+                                    <label>Trading Mode</label>
+                                    <select id="trading-mode">
+                                        <option value="metaapi">MetaAPI (Cloud)</option>
+                                        <option value="simulation">Simulation</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>Max Trade Size</label>
+                                    <input type="number" id="max-trade-size" step="0.01" min="0.01" value="0.1">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>Risk Percentage</label>
+                                    <input type="number" id="risk-percentage" step="0.1" min="0.1" max="10" value="2">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>Log Level</label>
+                                    <select id="log-level">
+                                        <option value="error">Error</option>
+                                        <option value="warn">Warning</option>
+                                        <option value="info">Info</option>
+                                        <option value="debug">Debug</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-actions">
+                                    <button id="save-settings" class="btn btn-success">Save Settings</button>
+                                    <button id="reset-settings" class="btn btn-danger">Reset to Default</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Environment Status</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="env-status">
+                                <div class="env-item">
+                                    <span class="label">Bot Token:</span>
+                                    <span class="value" id="env-token-status">Loading...</span>
+                                </div>
+                                <div class="env-item">
+                                    <span class="label">MetaAPI Token:</span>
+                                    <span class="value" id="env-metaapi-status">Loading...</span>
+                                </div>
+                                <div class="env-item">
+                                    <span class="label">Account ID:</span>
+                                    <span class="value" id="env-account-status">Loading...</span>
+                                </div>
+                                <div class="env-item">
+                                    <span class="label">Channel ID:</span>
+                                    <span class="value" id="env-channel-status">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Help Tab -->
+                <div id="help" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Getting Started</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="help-content">
+                                <h4>🚀 Quick Setup</h4>
+                                <ol>
+                                    <li>Configure your environment variables in the <code>.env</code> file</li>
+                                    <li>Set up your Telegram bot token from @BotFather</li>
+                                    <li>Configure MetaAPI token and account ID</li>
+                                    <li>Add the bot to your trading signals channel</li>
+                                    <li>Click "Start Bot" to begin trading</li>
+                                </ol>
+                                
+                                <h4>📊 Features</h4>
+                                <ul>
+                                    <li><strong>Universal Chart Parsing:</strong> Supports all forex pairs, indices, and commodities</li>
+                                    <li><strong>Visual Zone Detection:</strong> Grey zones = Entry, Red zones = Targets</li>
+                                    <li><strong>Risk Management:</strong> Adaptive stop losses and position sizing</li>
+                                    <li><strong>Real-time Monitoring:</strong> Live logs and trade statistics</li>
+                                    <li><strong>Cloud Trading:</strong> MetaAPI integration for remote execution</li>
+                                </ul>
+                                
+                                <h4>⚙️ Supported Instruments</h4>
+                                <ul>
+                                    <li><strong>Forex Pairs:</strong> All 6-letter pairs (EURUSD, GBPUSD, etc.)</li>
+                                    <li><strong>Indices:</strong> NAS100, US30, SPX500, etc.</li>
+                                    <li><strong>Commodities:</strong> XAUUSD (Gold), XAGUSD (Silver), Oil, etc.</li>
+                                </ul>
+                                
+                                <h4>🛡️ Safety Features</h4>
+                                <ul>
+                                    <li>Multi-layer result filtering to prevent false trades</li>
+                                    <li>Position size limits and risk percentage controls</li>
+                                    <li>Channel-specific signal processing</li>
+                                    <li>Comprehensive error handling and logging</li>
+                                </ul>
+                                
+                                <h4>💡 Tips</h4>
+                                <ul>
+                                    <li>Start with simulation mode to test the bot</li>
+                                    <li>Use small position sizes when starting</li>
+                                    <li>Monitor the logs regularly for any issues</li>
+                                    <li>Ensure your MetaAPI account is properly funded</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
