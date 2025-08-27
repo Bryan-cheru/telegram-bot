@@ -76,6 +76,12 @@ export class PhotoHandler {
       if (message.caption && message.caption.trim().length > 0) {
         logger.info('Caption text found:', message.caption);
         
+        // Early check: If caption indicates this is a result/update message, skip everything
+        if (this.tradeParser.isResultOrUpdateMessage(message.caption)) {
+          logger.info('🚫 Caption indicates result/update message - skipping image processing and trade parsing');
+          return;
+        }
+        
         // Check if caption contains clear trading information (entry, stop loss, targets)
         const captionHasTradingInfo = /(?:SL|Stop|Target|TP|Entry|Zone|Buy|Sell|XAUUSD|Gold|EUR|GBP|USD)/gi.test(message.caption);
         
@@ -87,6 +93,13 @@ export class PhotoHandler {
           // Extract text from image if caption doesn't have clear trading info
           const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
           logger.info('Extracted text from image:', extractedText);
+          
+          // Check if OCR text indicates result/update message
+          if (this.tradeParser.isResultOrUpdateMessage(extractedText)) {
+            logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
+            return;
+          }
+          
           combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${extractedText}`;
           logger.info('Using combined text (caption + OCR) for enhanced parsing');
         }
@@ -94,6 +107,13 @@ export class PhotoHandler {
         // No caption, extract text from image
         const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
         logger.info('Extracted text from image:', extractedText);
+        
+        // Check if OCR text indicates result/update message
+        if (this.tradeParser.isResultOrUpdateMessage(extractedText)) {
+          logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
+          return;
+        }
+        
         combinedText = extractedText;
       }
 
