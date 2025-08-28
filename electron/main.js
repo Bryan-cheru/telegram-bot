@@ -1,12 +1,46 @@
 const { app, BrowserWindow, ipcMain, Menu, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 
 // Keep a global reference of the window object
 let mainWindow;
 let botProcess = null;
 let isQuitting = false;
+
+// Get proper logs directory
+function getLogsDirectory() {
+  let logsDir;
+  
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    // Portable version - use same directory as executable
+    logsDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'logs');
+  } else if (process.platform === 'win32') {
+    // Windows - use AppData
+    logsDir = path.join(os.homedir(), 'AppData', 'Roaming', 'Telegram Trading Bot', 'logs');
+  } else {
+    // Other platforms
+    logsDir = path.join(os.homedir(), '.telegram-trading-bot', 'logs');
+  }
+  
+  // Create directory if it doesn't exist
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+  } catch (error) {
+    // If we can't create in user data, fallback to temp
+    console.warn('Could not create logs directory in user data, using temp:', error);
+    logsDir = path.join(os.tmpdir(), 'telegram-trading-bot-logs');
+    try {
+      fs.mkdirSync(logsDir, { recursive: true });
+    } catch (tempError) {
+      console.error('Could not create temp logs directory:', tempError);
+      logsDir = os.tmpdir(); // Fallback to just temp directory
+    }
+  }
+  
+  return logsDir;
+}
 
 function createWindow() {
   // Create the browser window
@@ -267,7 +301,8 @@ ipcMain.handle('get-bot-status', () => {
 });
 
 ipcMain.handle('read-logs', () => {
-  const logsPath = path.join(__dirname, '..', 'logs', 'combined.log');
+  const logsDirectory = getLogsDirectory();
+  const logsPath = path.join(logsDirectory, 'combined.log');
   try {
     if (fs.existsSync(logsPath)) {
       const logs = fs.readFileSync(logsPath, 'utf8');
@@ -275,6 +310,7 @@ ipcMain.handle('read-logs', () => {
     }
     return [];
   } catch (error) {
+    console.error('Error reading logs:', error);
     return [];
   }
 });

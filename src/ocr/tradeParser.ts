@@ -1,5 +1,6 @@
 import { TradeSignal, TradeAction } from '../types';
 import { logger } from '../utils/logger';
+import { PositionSizeCalculator, PositionSizingConfig, PositionCalculation } from '../utils/positionSizing';
 
 export class TradeParser {
   private readonly FOREX_PAIRS = [
@@ -138,14 +139,61 @@ export class TradeParser {
       
       // Enhanced symbol detection with # prefix support for multiple instruments
       const symbolPatterns = [
-        // Caption-based symbols with # prefix (ALWAYS check caption first)
-        caption && caption.match(/#(NAS100|NASDAQ|US100)/i) ? ['NAS100', caption.match(/#(NAS100|NASDAQ|US100)/i)![1]] : null,
-        caption && caption.match(/#(XAUUSD|Gold|XAU)/i) ? ['XAUUSD', caption.match(/#(XAUUSD|Gold|XAU)/i)![1]] : null,
-        // Generic forex pair detector - captures ANY 6-letter forex pair like #GBPCAD, #EURGBP, etc.
-        caption && caption.match(/#([A-Z]{6})/i) ? [caption.match(/#([A-Z]{6})/i)![1].toUpperCase(), caption.match(/#([A-Z]{6})/i)![1]] : null,
-        // Text-based fallbacks
+        // =================== CAPTION-BASED SYMBOLS (Priority Detection) ===================
+        
+        // Major Indices
+        caption && caption.match(/#(NAS100|NASDAQ|US100|NDX)/i) ? ['NAS100', caption.match(/#(NAS100|NASDAQ|US100|NDX)/i)![1]] : null,
+        caption && caption.match(/#(SPX500|SPY|S&P500|SP500)/i) ? ['SPX500', caption.match(/#(SPX500|SPY|S&P500|SP500)/i)![1]] : null,
+        caption && caption.match(/#(DJ30|DJI|DOWJONES|DOW)/i) ? ['DJ30', caption.match(/#(DJ30|DJI|DOWJONES|DOW)/i)![1]] : null,
+        caption && caption.match(/#(DAX40|DAX|GER40)/i) ? ['DAX40', caption.match(/#(DAX40|DAX|GER40)/i)![1]] : null,
+        caption && caption.match(/#(FTSE100|UK100|UKX)/i) ? ['FTSE100', caption.match(/#(FTSE100|UK100|UKX)/i)![1]] : null,
+        caption && caption.match(/#(AUS200|ASX200)/i) ? ['AUS200', caption.match(/#(AUS200|ASX200)/i)![1]] : null,
+        caption && caption.match(/#(JPN225|NKY|NIKKEI)/i) ? ['JPN225', caption.match(/#(JPN225|NKY|NIKKEI)/i)![1]] : null,
+        
+        // Metals & Commodities
+        caption && caption.match(/#(XAUUSD|Gold|XAU|GOLD)/i) ? ['XAUUSD', caption.match(/#(XAUUSD|Gold|XAU|GOLD)/i)![1]] : null,
+        caption && caption.match(/#(XAGUSD|Silver|XAG|SILVER)/i) ? ['XAGUSD', caption.match(/#(XAGUSD|Silver|XAG|SILVER)/i)![1]] : null,
+        caption && caption.match(/#(XPTUSD|Platinum|XPT)/i) ? ['XPTUSD', caption.match(/#(XPTUSD|Platinum|XPT)/i)![1]] : null,
+        caption && caption.match(/#(XPDUSD|Palladium|XPD)/i) ? ['XPDUSD', caption.match(/#(XPDUSD|Palladium|XPD)/i)![1]] : null,
+        caption && caption.match(/#(USOIL|WTI|CRUDE|CL)/i) ? ['USOIL', caption.match(/#(USOIL|WTI|CRUDE|CL)/i)![1]] : null,
+        caption && caption.match(/#(UKOIL|BRENT|BRN)/i) ? ['UKOIL', caption.match(/#(UKOIL|BRENT|BRN)/i)![1]] : null,
+        caption && caption.match(/#(NGAS|NATGAS|NG)/i) ? ['NGAS', caption.match(/#(NGAS|NATGAS|NG)/i)![1]] : null,
+        
+        // Cryptocurrencies (if supported by broker)
+        caption && caption.match(/#(BTCUSD|Bitcoin|BTC)/i) ? ['BTCUSD', caption.match(/#(BTCUSD|Bitcoin|BTC)/i)![1]] : null,
+        caption && caption.match(/#(ETHUSD|Ethereum|ETH)/i) ? ['ETHUSD', caption.match(/#(ETHUSD|Ethereum|ETH)/i)![1]] : null,
+        caption && caption.match(/#(LTCUSD|Litecoin|LTC)/i) ? ['LTCUSD', caption.match(/#(LTCUSD|Litecoin|LTC)/i)![1]] : null,
+        
+        // Major Forex Pairs
+        caption && caption.match(/#(EURUSD|EUR\/USD)/i) ? ['EURUSD', caption.match(/#(EURUSD|EUR\/USD)/i)![1]] : null,
+        caption && caption.match(/#(GBPUSD|GBP\/USD|Cable)/i) ? ['GBPUSD', caption.match(/#(GBPUSD|GBP\/USD|Cable)/i)![1]] : null,
+        caption && caption.match(/#(USDJPY|USD\/JPY)/i) ? ['USDJPY', caption.match(/#(USDJPY|USD\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(USDCHF|USD\/CHF|Swissy)/i) ? ['USDCHF', caption.match(/#(USDCHF|USD\/CHF|Swissy)/i)![1]] : null,
+        caption && caption.match(/#(AUDUSD|AUD\/USD|Aussie)/i) ? ['AUDUSD', caption.match(/#(AUDUSD|AUD\/USD|Aussie)/i)![1]] : null,
+        caption && caption.match(/#(USDCAD|USD\/CAD|Loonie)/i) ? ['USDCAD', caption.match(/#(USDCAD|USD\/CAD|Loonie)/i)![1]] : null,
+        caption && caption.match(/#(NZDUSD|NZD\/USD|Kiwi)/i) ? ['NZDUSD', caption.match(/#(NZDUSD|NZD\/USD|Kiwi)/i)![1]] : null,
+        
+        // Minor & Exotic Forex Pairs
+        caption && caption.match(/#(EURGBP|EUR\/GBP)/i) ? ['EURGBP', caption.match(/#(EURGBP|EUR\/GBP)/i)![1]] : null,
+        caption && caption.match(/#(EURJPY|EUR\/JPY)/i) ? ['EURJPY', caption.match(/#(EURJPY|EUR\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(GBPJPY|GBP\/JPY)/i) ? ['GBPJPY', caption.match(/#(GBPJPY|GBP\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(GBPCAD|GBP\/CAD)/i) ? ['GBPCAD', caption.match(/#(GBPCAD|GBP\/CAD)/i)![1]] : null,
+        caption && caption.match(/#(AUDCAD|AUD\/CAD)/i) ? ['AUDCAD', caption.match(/#(AUDCAD|AUD\/CAD)/i)![1]] : null,
+        caption && caption.match(/#(AUDJPY|AUD\/JPY)/i) ? ['AUDJPY', caption.match(/#(AUDJPY|AUD\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(CADJPY|CAD\/JPY)/i) ? ['CADJPY', caption.match(/#(CADJPY|CAD\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(CHFJPY|CHF\/JPY)/i) ? ['CHFJPY', caption.match(/#(CHFJPY|CHF\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(EURNZD|EUR\/NZD)/i) ? ['EURNZD', caption.match(/#(EURNZD|EUR\/NZD)/i)![1]] : null,
+        caption && caption.match(/#(NZDCAD|NZD\/CAD)/i) ? ['NZDCAD', caption.match(/#(NZDCAD|NZD\/CAD)/i)![1]] : null,
+        caption && caption.match(/#(NZDJPY|NZD\/JPY)/i) ? ['NZDJPY', caption.match(/#(NZDJPY|NZD\/JPY)/i)![1]] : null,
+        
+        // Generic pattern for ANY trading symbol with # prefix (catches futures, exotic pairs, etc.)
+        caption && caption.match(/#([A-Z]{3,8})/i) ? [caption.match(/#([A-Z]{3,8})/i)![1].toUpperCase(), caption.match(/#([A-Z]{3,8})/i)![1]] : null,
+        
+        // =================== TEXT-BASED FALLBACKS ===================
         text.match(/#?(XAUUSD|Gold|XAU\/USD)/i) ? ['XAUUSD', text.match(/#?(XAUUSD|Gold|XAU\/USD)/i)![1]] : null,
-        text.match(/#?(NAS100|NASDAQ|US100)/i) ? ['NAS100', text.match(/#?(NAS100|NASDAQ|US100)/i)![1]] : null
+        text.match(/#?(NAS100|NASDAQ|US100)/i) ? ['NAS100', text.match(/#?(NAS100|NASDAQ|US100)/i)![1]] : null,
+        text.match(/#?(SPX500|SPY|S&P500)/i) ? ['SPX500', text.match(/#?(SPX500|SPY|S&P500)/i)![1]] : null,
+        text.match(/#?(BTCUSD|Bitcoin|BTC)/i) ? ['BTCUSD', text.match(/#?(BTCUSD|Bitcoin|BTC)/i)![1]] : null
       ].filter(Boolean);
       
       let symbol: string | null = null;
@@ -154,13 +202,26 @@ export class TradeParser {
         symbol = symbolPatterns[0]![0]; // Get the standardized symbol
         logger.info(`📈 Symbol detected: ${symbol} from pattern: ${symbolPatterns[0]![1]}`);
       } else {
-        // Smart fallback based on price ranges
-        const hasGoldPrices = /\b\d{4}\.\d{2,3}\b/.test(text); // 3000+ range
-        const hasNasPrices = /\b\d{5}\.\d{1,2}\b/.test(text); // 10000+ range
-        const hasForexPrices = /\b[01]\.\d{4,5}\b/.test(text); // 0.x or 1.x range
+        // Smart fallback based on price ranges and patterns
+        const hasBitcoinPrices = /\b[4-9]\d{4}\.\d{1,2}\b/.test(text);        // 40000-99999 range (Bitcoin)
+        const hasNasPrices = /\b[1-2]\d{4}\.\d{1,2}\b/.test(text);            // 10000-29999 range (NAS100)  
+        const hasSpxPrices = /\b[3-6]\d{3}\.\d{1,2}\b/.test(text);            // 3000-6999 range (SPX500)
+        const hasGoldPrices = /\b[1-3]\d{3}\.\d{2,3}\b/.test(text);           // 1000-3999 range (Gold)
+        const hasSilverPrices = /\b[1-5]\d\.\d{2,3}\b/.test(text);            // 10-59 range (Silver)
+        const hasOilPrices = /\b[3-9]\d\.\d{2}\b/.test(text);                 // 30-99 range (Oil)
+        const hasForexPrices = /\b[01]\.\d{4,5}\b/.test(text);                // 0.x or 1.x range (Forex)
+        const hasJpyPrices = /\b1[0-5]\d\.\d{2,3}\b/.test(text);              // 100-159 range (JPY pairs)
+        const hasEthPrices = /\b[1-4]\d{3}\.\d{1,2}\b/.test(text);            // 1000-4999 range (Ethereum)
         
-        if (hasNasPrices) symbol = 'NAS100';
+        // Price-based symbol detection (most specific first)
+        if (hasBitcoinPrices && text.toLowerCase().includes('btc')) symbol = 'BTCUSD';
+        else if (hasEthPrices && text.toLowerCase().includes('eth')) symbol = 'ETHUSD';
+        else if (hasNasPrices) symbol = 'NAS100';
+        else if (hasSpxPrices) symbol = 'SPX500'; 
         else if (hasGoldPrices) symbol = 'XAUUSD';
+        else if (hasSilverPrices) symbol = 'XAGUSD';
+        else if (hasOilPrices) symbol = 'USOIL';
+        else if (hasJpyPrices) symbol = 'USDJPY';
         else if (hasForexPrices) symbol = 'EURUSD'; // Default forex
       }
       
@@ -179,17 +240,12 @@ export class TradeParser {
       if (visualData && visualData.zones.length > 0) {
         logger.info('📊 Using visual chart data (highlighted zones detected)');
         
-        // Find entry zones (grey highlights) and targets (red highlights)
+        // Find entry zones (grey highlights) - ONLY what we need for 1:1 RR
         const entryZones = visualData.zones.filter(z => 
           z.name.toLowerCase().includes('selling') || 
           z.name.toLowerCase().includes('buying') ||
           z.name.toLowerCase().includes('entry')
         );
-        
-        const targets = visualData.zones.filter(z => 
-          z.name.toLowerCase().includes('target') ||
-          z.name.toLowerCase().includes('tp')
-        ).map(t => t.value).sort((a, b) => a - b);
         
         // Determine action based on entry zones or price context
         if (entryZones.length > 0) {
@@ -197,54 +253,63 @@ export class TradeParser {
           const action = entryZone.name.toLowerCase().includes('selling') ? 'SELL' : 'BUY';
           const slDistance = this.getStopLossDistance(symbol);
           
-          // Filter targets based on direction (no price validation - just use zones and targets from chart)
-          const validTargets = action === 'SELL' ? 
-            targets.filter(t => t < entryZone.min) : 
-            targets.filter(t => t > entryZone.max);
+          // Calculate 1:1 risk-reward targets based on stop loss distance
+          const entryMid = (entryZone.min + entryZone.max) / 2;
+          const stopLoss = action === 'SELL' ? entryZone.max + slDistance : entryZone.min - slDistance;
+          const target1 = action === 'SELL' ? entryMid - slDistance : entryMid + slDistance;
+          const calculatedTargets = [target1];
           
           return {
             symbol: symbol || 'XAUUSD',
             action,
             entryZone: { min: entryZone.min, max: entryZone.max },
-            stopLoss: action === 'SELL' ? entryZone.max + slDistance : entryZone.min - slDistance,
-            targets: validTargets,
-            reason: 'VISUAL CHART HIGHLIGHTED ZONES',
-            plan: `${action} SETUP FROM GREY ENTRY ZONE & RED TARGETS`
+            stopLoss,
+            targets: calculatedTargets,
+            reason: 'VISUAL CHART HIGHLIGHTED ZONES (1:1 RATIO)',
+            plan: `${action} SETUP FROM GREY ENTRY ZONE WITH 1:1 RISK-REWARD`
           };
         }
         
-        // Fallback: Use any detected zones and infer direction
-        if (targets.length > 0) {
-          const avgTarget = targets.reduce((sum, t) => sum + t, 0) / targets.length;
+        // Fallback: Use any detected zones and infer direction from price levels
+        if (visualData.zones.length > 0) {
           const allValues = visualData.zones.map(z => z.value).sort((a, b) => a - b);
-          const entryValue = allValues[0]; // Assume first price is entry
-          const action = avgTarget < entryValue ? 'SELL' : 'BUY';
+          const entryValue = allValues[Math.floor(allValues.length / 2)]; // Use middle value as entry
+          
+          // Infer direction from caption keywords or default to BUY
+          const action = caption && /sell|short|bearish|down/i.test(caption) ? 'SELL' : 'BUY';
           const slDistance = this.getStopLossDistance(symbol);
+          const stopLoss = action === 'SELL' ? entryValue + slDistance : entryValue - slDistance;
+          const target1 = action === 'SELL' ? entryValue - slDistance : entryValue + slDistance;
           
           return {
             symbol: symbol || 'XAUUSD',
             action,
             entryZone: { min: entryValue - 2, max: entryValue + 2 },
-            stopLoss: action === 'SELL' ? entryValue + slDistance : entryValue - slDistance,
-            targets,
-            reason: 'VISUAL CHART AUTO-DETECTED',
-            plan: `${action} SETUP FROM CHART ANALYSIS`
+            stopLoss,
+            targets: [target1],
+            reason: 'VISUAL CHART AUTO-DETECTED (1:1 RATIO)',
+            plan: `${action} SETUP FROM CHART ANALYSIS WITH 1:1 RISK-REWARD`
           };
         }
       }
       
-      // Secondary: Use caption data if visual parsing didn't work
-      if (captionData && captionData.action && captionData.entryZone && captionData.targets.length > 0) {
+      // Secondary: Use caption data if visual parsing didn't work  
+      if (captionData && captionData.action && captionData.entryZone) {
         logger.info('📝 Falling back to caption-based setup data');
+        const entryMid = (captionData.entryZone.min + captionData.entryZone.max) / 2;
+        const slDistance = this.getStopLossDistance(symbol);
+        const stopLoss = captionData.stopLoss || (captionData.action === 'BUY' ? 
+          captionData.entryZone.min - slDistance : captionData.entryZone.max + slDistance);
+        const target1 = captionData.action === 'BUY' ? entryMid + slDistance : entryMid - slDistance;
+        
         return {
           symbol: symbol || 'XAUUSD',
           action: captionData.action,
           entryZone: captionData.entryZone,
-          stopLoss: captionData.stopLoss || (captionData.action === 'BUY' ? 
-            captionData.entryZone.min - 20 : captionData.entryZone.max + 20),
-          targets: captionData.targets,
-          reason: caption?.substring(0, 100) || 'VISUAL CHART SIGNAL',
-          plan: `${captionData.action} SETUP FROM CAPTION`
+          stopLoss,
+          targets: [target1],
+          reason: (caption?.substring(0, 100) || 'VISUAL CHART SIGNAL') + ' (1:1 RATIO)',
+          plan: `${captionData.action} SETUP FROM CAPTION WITH 1:1 RISK-REWARD`
         };
       }
       
@@ -259,27 +324,64 @@ export class TradeParser {
    * Get appropriate stop loss distance for different instruments
    */
   private getStopLossDistance(symbol: string): number {
-    switch (symbol) {
-      case 'NAS100':
-      case 'NASDAQ':
-      case 'US100':
-        return 50;  // 50 points for NAS100
-      case 'XAUUSD':
-      case 'GOLD':
-        return 15;  // 15 dollars for Gold
-      case 'EURUSD':
-      case 'GBPUSD':
-      case 'GBPCAD':
-      case 'EURGBP':
-      case 'EURNZD':
-        return 0.0020;  // 20 pips for forex pairs
-      default:
-        // For any other forex pair (6 letters), use forex pip distance
-        if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
-          return 0.0020;  // 20 pips for all forex pairs
-        }
-        return 15;  // Default fallback
+    // =================== INDICES ===================
+    if (['NAS100', 'NASDAQ', 'US100', 'NDX'].includes(symbol)) return 50;   // NAS100: 50 points
+    if (['SPX500', 'SPY', 'S&P500', 'SP500'].includes(symbol)) return 20;   // S&P500: 20 points  
+    if (['DJ30', 'DJI', 'DOWJONES', 'DOW'].includes(symbol)) return 100;    // Dow Jones: 100 points
+    if (['DAX40', 'DAX', 'GER40'].includes(symbol)) return 50;              // DAX: 50 points
+    if (['FTSE100', 'UK100', 'UKX'].includes(symbol)) return 30;            // FTSE: 30 points
+    if (['AUS200', 'ASX200'].includes(symbol)) return 25;                   // ASX200: 25 points
+    if (['JPN225', 'NKY', 'NIKKEI'].includes(symbol)) return 100;           // Nikkei: 100 points
+    
+    // =================== METALS & COMMODITIES ===================
+    if (['XAUUSD', 'GOLD', 'XAU'].includes(symbol)) return 15;              // Gold: $15
+    if (['XAGUSD', 'SILVER', 'XAG'].includes(symbol)) return 0.50;          // Silver: $0.50
+    if (['XPTUSD', 'PLATINUM', 'XPT'].includes(symbol)) return 25;          // Platinum: $25
+    if (['XPDUSD', 'PALLADIUM', 'XPD'].includes(symbol)) return 50;         // Palladium: $50
+    if (['USOIL', 'WTI', 'CRUDE', 'CL'].includes(symbol)) return 1.0;       // Crude Oil: $1.00
+    if (['UKOIL', 'BRENT', 'BRN'].includes(symbol)) return 1.0;             // Brent Oil: $1.00
+    if (['NGAS', 'NATGAS', 'NG'].includes(symbol)) return 0.10;             // Natural Gas: $0.10
+    
+    // =================== CRYPTOCURRENCIES ===================
+    if (['BTCUSD', 'BITCOIN', 'BTC'].includes(symbol)) return 500;          // Bitcoin: $500
+    if (['ETHUSD', 'ETHEREUM', 'ETH'].includes(symbol)) return 50;          // Ethereum: $50  
+    if (['LTCUSD', 'LITECOIN', 'LTC'].includes(symbol)) return 10;          // Litecoin: $10
+    
+    // =================== MAJOR FOREX PAIRS ===================
+    if (['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD'].includes(symbol)) return 0.0020;  // 20 pips
+    if (['USDCHF', 'USDCAD', 'USDJPY'].includes(symbol)) return 0.0020;            // 20 pips (JPY adjusted automatically)
+    
+    // =================== MINOR & CROSS PAIRS ===================
+    if (['EURGBP', 'EURCHF', 'EURAUD', 'EURNZD', 'EURCAD'].includes(symbol)) return 0.0025;  // 25 pips
+    if (['GBPCHF', 'GBPAUD', 'GBPNZD', 'GBPCAD', 'GBPJPY'].includes(symbol)) return 0.0030;  // 30 pips
+    if (['AUDCHF', 'AUDNZD', 'AUDCAD', 'AUDJPY'].includes(symbol)) return 0.0025;            // 25 pips
+    if (['NZDCHF', 'NZDCAD', 'NZDJPY'].includes(symbol)) return 0.0025;                      // 25 pips
+    if (['CADCHF', 'CADJPY'].includes(symbol)) return 0.0025;                                // 25 pips
+    if (['CHFJPY'].includes(symbol)) return 0.0025;                                          // 25 pips
+    
+    // =================== JPY PAIRS (Special handling) ===================
+    if (symbol.includes('JPY')) {
+      return 0.20;  // 20 pips for JPY pairs (different decimal places)
     }
+    
+    // =================== SMART FALLBACKS ===================
+    // Generic forex pair (6 letters)
+    if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
+      return 0.0020;  // 20 pips for any forex pair
+    }
+    
+    // Generic futures/commodities (3-5 letters)
+    if (symbol.length >= 3 && symbol.length <= 5 && /^[A-Z]+$/.test(symbol)) {
+      return 10;  // 10 points for futures/commodities
+    }
+    
+    // Generic crypto pattern (ends with USD)
+    if (symbol.endsWith('USD') && symbol.length > 6) {
+      return 50;  // $50 for crypto pairs
+    }
+    
+    // Default fallback
+    return 15;
   }
 
   /**
@@ -375,9 +477,9 @@ export class TradeParser {
   }
 
   /**
-   * Extract setup data from caption text
+   * Extract setup data from caption text - simplified for 1:1 RR (no targets needed)
    */
-  private extractCaptionSetupData(caption: string): { action: TradeAction, entryZone: {min: number, max: number}, stopLoss?: number, targets: number[] } | null {
+  private extractCaptionSetupData(caption: string): { action: TradeAction, entryZone: {min: number, max: number}, stopLoss?: number } | null {
     // Pattern for buying/selling setup in caption
     const setupMatch = caption.match(/(bullish|bearish|buying|selling)\s+(?:setup|zone)/i);
     if (!setupMatch) return null;
@@ -391,16 +493,6 @@ export class TradeParser {
     const entryMin = Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2]));
     const entryMax = Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2]));
     
-    // Extract targets: "target lies around 3380" or "targets at 3380, 3390"
-    const targets: number[] = [];
-    const targetMatches = caption.match(/target[s]?\s+(?:lies?\s+)?(?:around\s+)?(\d+\.?\d*)/gi);
-    if (targetMatches) {
-      targetMatches.forEach(match => {
-        const value = parseFloat(match.match(/(\d+\.?\d*)$/)?.[1] || '0');
-        if (value > 0) targets.push(value);
-      });
-    }
-    
     // Extract stop loss: "stop loss placed below 3338" or "SL below 3338"
     let stopLoss: number | undefined;
     const slMatch = caption.match(/(?:stop\s+loss|SL)\s+(?:placed\s+)?(?:below|above)\s+(\d+\.?\d*)/i);
@@ -408,7 +500,7 @@ export class TradeParser {
       stopLoss = parseFloat(slMatch[1]);
     }
     
-    return targets.length > 0 ? { action, entryZone: { min: entryMin, max: entryMax }, stopLoss, targets } : null;
+    return { action, entryZone: { min: entryMin, max: entryMax }, stopLoss };
   }
 
   /**
@@ -511,24 +603,34 @@ export class TradeParser {
     const action = this.determineBias(text, prices);
     
     if (action === 'BUY') {
-      // For buy: entry around middle, SL at bottom, TP at top
+      // For buy: entry around middle, calculate 1:1 risk-reward
       const entryZone = this.createEntryZone(prices[Math.floor(prices.length / 2)]);
+      const entryMid = (entryZone.min + entryZone.max) / 2;
+      const stopLoss = prices[prices.length - 1] - 10; // Below lowest level
+      const slDistance = Math.abs(entryMid - stopLoss);
+      const target1 = entryMid + slDistance; // 1:1 risk-reward
+      
       return {
         symbol,
         action,
         entryZone,
-        stopLoss: prices[prices.length - 1] - 10, // Below lowest level
-        targets: [prices[0], prices[1]].filter(p => p > entryZone.max),
+        stopLoss,
+        targets: [target1],
       };
     } else {
-      // For sell: entry around middle-high, SL at top, TP at bottom
+      // For sell: entry around middle-high, calculate 1:1 risk-reward
       const entryZone = this.createEntryZone(prices[1] || prices[0]);
+      const entryMid = (entryZone.min + entryZone.max) / 2;
+      const stopLoss = prices[0] + 10; // Above highest level
+      const slDistance = Math.abs(stopLoss - entryMid);
+      const target1 = entryMid - slDistance; // 1:1 risk-reward
+      
       return {
         symbol,
         action,
         entryZone,
-        stopLoss: prices[0] + 10, // Above highest level
-        targets: [prices[prices.length - 1], prices[prices.length - 2]].filter(p => p < entryZone.min),
+        stopLoss,
+        targets: [target1],
       };
     }
   }
@@ -564,15 +666,18 @@ export class TradeParser {
 
     const sortedPrices = [...prices].sort((a, b) => a - b);
     const midPrice = sortedPrices[Math.floor(sortedPrices.length / 2)];
+    const entryZone = this.createEntryZone(midPrice);
+    const entryMid = (entryZone.min + entryZone.max) / 2;
+    const stopLoss = action === 'BUY' ? sortedPrices[0] - 5 : sortedPrices[sortedPrices.length - 1] + 5;
+    const slDistance = Math.abs(entryMid - stopLoss);
+    const target1 = action === 'BUY' ? entryMid + slDistance : entryMid - slDistance;
     
     return {
       symbol,
       action,
-      entryZone: this.createEntryZone(midPrice),
-      stopLoss: action === 'BUY' ? sortedPrices[0] - 5 : sortedPrices[sortedPrices.length - 1] + 5,
-      targets: action === 'BUY' 
-        ? sortedPrices.slice(-2) 
-        : sortedPrices.slice(0, 2),
+      entryZone,
+      stopLoss,
+      targets: [target1],
       reason: this.extractReason(text),
       plan: this.extractPlan(text)
     };
@@ -602,17 +707,21 @@ export class TradeParser {
     let targets: number[];
 
     if (action === 'BUY') {
-      // For BUY: lower prices are entry, middle/high are targets, lowest might be SL
+      // For BUY: calculate 1:1 risk-reward
       const entryPrices = sortedPrices.slice(0, 2);
       entryZone = { min: entryPrices[0], max: entryPrices[1] || entryPrices[0] + 5 };
       stopLoss = Math.min(...sortedPrices) - 10;
-      targets = sortedPrices.slice(2);
+      const entryMid = (entryZone.min + entryZone.max) / 2;
+      const slDistance = Math.abs(entryMid - stopLoss);
+      targets = [entryMid + slDistance];
     } else {
-      // For SELL: higher prices are entry, lower are targets
+      // For SELL: calculate 1:1 risk-reward
       const entryPrices = sortedPrices.slice(-2);
       entryZone = { min: entryPrices[0], max: entryPrices[1] || entryPrices[0] + 5 };
       stopLoss = Math.max(...sortedPrices) + 10;
-      targets = sortedPrices.slice(0, -2);
+      const entryMid = (entryZone.min + entryZone.max) / 2;
+      const slDistance = Math.abs(stopLoss - entryMid);
+      targets = [entryMid - slDistance];
     }
 
     return {
@@ -620,7 +729,7 @@ export class TradeParser {
       action,
       entryZone,
       stopLoss,
-      targets: targets.length > 0 ? targets : [action === 'BUY' ? entryZone.max + 50 : entryZone.min - 50]
+      targets
     };
   }
 
@@ -651,17 +760,20 @@ export class TradeParser {
     const sortedPrices = [...prices].sort((a, b) => a - b);
     const midIndex = Math.floor(sortedPrices.length / 2);
     const entryPrice = sortedPrices[midIndex];
+    const entryZone = this.createEntryZone(entryPrice);
+    const entryMid = (entryZone.min + entryZone.max) / 2;
+    const stopLoss = action === 'BUY' 
+      ? sortedPrices[0] - 20 
+      : sortedPrices[sortedPrices.length - 1] + 20;
+    const slDistance = Math.abs(entryMid - stopLoss);
+    const target1 = action === 'BUY' ? entryMid + slDistance : entryMid - slDistance;
 
     return {
       symbol,
       action,
-      entryZone: this.createEntryZone(entryPrice),
-      stopLoss: action === 'BUY' 
-        ? sortedPrices[0] - 20 
-        : sortedPrices[sortedPrices.length - 1] + 20,
-      targets: action === 'BUY'
-        ? sortedPrices.slice(midIndex + 1)
-        : sortedPrices.slice(0, midIndex)
+      entryZone,
+      stopLoss,
+      targets: [target1]
     };
   }
 

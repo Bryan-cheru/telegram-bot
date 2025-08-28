@@ -2,20 +2,50 @@ import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
 import { logger } from '../utils/logger';
 
+export interface OCRResult {
+  text: string;
+  confidence: number;
+  words: Array<{
+    text: string;
+    confidence: number;
+    bbox: { x0: number; y0: number; x1: number; y1: number; };
+  }>;
+}
+
 export class TextExtractor {
-  async extractTextFromImage(imageBuffer: Buffer): Promise<string> {
+  async extractTextFromImage(imageBuffer: Buffer): Promise<OCRResult> {
     try {
       // Preprocess image for better OCR results
       const processedImage = await this.preprocessImage(imageBuffer);
       
-      // Use Tesseract for OCR with optimized settings for trading signals
-      const { data: { text } } = await Tesseract.recognize(processedImage, 'eng', {
-        logger: m => logger.debug('OCR Progress:', m)
+      // Use Tesseract for OCR with confidence data
+      const { data } = await Tesseract.recognize(processedImage, 'eng', {
+        logger: m => logger.debug('OCR Progress:', m),
+        tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
+        tessedit_char_whitelist: '0123456789.,ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#/:-+=() \n'
       });
       
-      logger.info('Text extracted successfully');
-      logger.debug('Raw extracted text:', text);
-      return text.trim();
+      // Calculate average confidence from all words
+      const validWords = data.words.filter(w => w.confidence > 0);
+      const averageConfidence = validWords.length > 0 
+        ? validWords.reduce((sum, w) => sum + w.confidence, 0) / validWords.length / 100
+        : 0;
+      
+      // Filter low-confidence words for better text quality
+      const highConfidenceWords = data.words.filter(w => w.confidence >= 30);
+      
+      logger.info(`OCR completed with ${(averageConfidence * 100).toFixed(1)}% average confidence`);
+      logger.info(`Processed ${data.words.length} words, ${highConfidenceWords.length} high-confidence`);
+      
+      return {
+        text: data.text.trim(),
+        confidence: averageConfidence,
+        words: data.words.map(w => ({
+          text: w.text,
+          confidence: w.confidence / 100,
+          bbox: w.bbox
+        }))
+      };
     } catch (error) {
       logger.error('Error extracting text from image:', error);
       throw error;

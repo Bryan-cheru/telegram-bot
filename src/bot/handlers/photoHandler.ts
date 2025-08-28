@@ -91,30 +91,48 @@ export class PhotoHandler {
           usesCaptionOnly = true;
         } else {
           // Extract text from image if caption doesn't have clear trading info
-          const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
-          logger.info('Extracted text from image:', extractedText);
+          const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
+          
+          // Validate OCR confidence
+          if (ocrResult.confidence < 0.6) {
+            logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
+            await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: 60%\n\n💡 Please send a clearer, higher-resolution image.`);
+            return;
+          }
+          
+          logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
+          logger.info('Extracted text from image:', ocrResult.text);
           
           // Check if OCR text indicates result/update message
-          if (this.tradeParser.isResultOrUpdateMessage(extractedText)) {
+          if (this.tradeParser.isResultOrUpdateMessage(ocrResult.text)) {
             logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
             return;
           }
           
-          combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${extractedText}`;
+          combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${ocrResult.text}`;
           logger.info('Using combined text (caption + OCR) for enhanced parsing');
         }
       } else {
         // No caption, extract text from image
-        const extractedText = await this.textExtractor.extractTextFromImage(imageBuffer);
-        logger.info('Extracted text from image:', extractedText);
+        const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
         
-        // Check if OCR text indicates result/update message
-        if (this.tradeParser.isResultOrUpdateMessage(extractedText)) {
-          logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
+        // Validate OCR confidence
+        if (ocrResult.confidence < 0.6) {
+          logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
+          await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: 60%\n\n💡 Please send a clearer, higher-resolution image.`);
           return;
         }
         
-        combinedText = extractedText;
+        logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
+        logger.info('Extracted text from image:', ocrResult.text);
+        
+        // Check if OCR text indicates result/update message
+        if (this.tradeParser.isResultOrUpdateMessage(ocrResult.text)) {
+          logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
+          return;
+        }
+
+        combinedText = ocrResult.text;
       }
 
       // Parse trade signal from the text
