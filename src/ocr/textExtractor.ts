@@ -21,8 +21,6 @@ export class TextExtractor {
       // Use Tesseract for OCR with confidence data
       const { data } = await Tesseract.recognize(processedImage, 'eng', {
         logger: m => logger.debug('OCR Progress:', m),
-        tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
-        tessedit_char_whitelist: '0123456789.,ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#/:-+=() \n'
       });
       
       // Calculate average confidence from all words

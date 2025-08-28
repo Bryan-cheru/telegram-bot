@@ -9,6 +9,13 @@ export interface TradeSignal {
   targets: number[];
   reason?: string;
   plan?: string;
+  positionSizing?: {
+    lotSize: number;
+    riskAmount: number;
+    riskPercentage: number;
+    accountEquity: number;
+    reasoning: string;
+  };
 }
 
 export type TradeAction = 'BUY' | 'SELL';

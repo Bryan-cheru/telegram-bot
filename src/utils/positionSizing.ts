@@ -1,10 +1,17 @@
 import { logger } from '../utils/logger';
 
 export interface PositionSizingConfig {
-  maxRiskPercentage: number; // e.g., 2 = 2% of account
-  maxPositionSize: number;   // Maximum lot size regardless of account size
-  minPositionSize: number;   // Minimum lot size
+  maxRiskPercentage?: number; // e.g., 2 = 2% of account
+  maxPositionSize?: number;   // Maximum lot size regardless of account size
+  minPositionSize?: number;   // Minimum lot size
   accountEquity?: number;    // If not provided, will fetch from MetaAPI
+}
+
+interface InternalConfig {
+  maxRiskPercentage: number;
+  maxPositionSize: number;
+  minPositionSize: number;
+  accountEquity?: number;
 }
 
 export interface PositionCalculation {
@@ -16,14 +23,14 @@ export interface PositionCalculation {
 }
 
 export class PositionSizeCalculator {
-  private config: PositionSizingConfig;
+  private config: InternalConfig;
 
-  constructor(config: PositionSizingConfig) {
+  constructor(config: PositionSizingConfig = {}) {
     this.config = {
-      maxRiskPercentage: 2, // Default 2%
-      maxPositionSize: 10,   // Default max 10 lots
-      minPositionSize: 0.01, // Default min 0.01 lots
-      ...config
+      maxRiskPercentage: config.maxRiskPercentage ?? 2, // Default 2%
+      maxPositionSize: config.maxPositionSize ?? 10,   // Default max 10 lots
+      minPositionSize: config.minPositionSize ?? 0.01, // Default min 0.01 lots
+      accountEquity: config.accountEquity
     };
   }
 
@@ -222,7 +229,7 @@ export class PositionSizeCalculator {
   /**
    * Get current configuration
    */
-  getConfig(): PositionSizingConfig {
+  getConfig(): InternalConfig {
     return { ...this.config };
   }
 }

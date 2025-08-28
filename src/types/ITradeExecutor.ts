@@ -9,5 +9,6 @@ export interface ITradeExecutor {
     ticket?: number;
     signalId?: string;
   }>;
+  getAccountEquity?(): Promise<number>; // Optional method for position sizing
   closeConnection(): Promise<void>;
 }

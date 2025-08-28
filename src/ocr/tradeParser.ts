@@ -17,6 +17,16 @@ export class TradeParser {
     'US30', 'NAS100', 'SPX500', 'UK100', 'GER30', 'FRA40', 'JPN225'
   ];
 
+  private positionSizeCalculator: PositionSizeCalculator;
+
+  constructor(positionSizingConfig?: PositionSizingConfig) {
+    this.positionSizeCalculator = new PositionSizeCalculator(positionSizingConfig || {
+      maxRiskPercentage: 2,
+      maxPositionSize: 10,
+      minPositionSize: 0.01
+    });
+  }
+
   /**
    * Main method to parse trade signals from extracted text
    */
@@ -893,6 +903,59 @@ export class TradeParser {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Add position sizing calculations to a trade signal
+   */
+  addPositionSizing(signal: TradeSignal, accountEquity: number): TradeSignal {
+    try {
+      if (!signal || accountEquity <= 0) {
+        logger.warn('Invalid signal or account equity for position sizing');
+        return signal;
+      }
+
+      const entryMid = (signal.entryZone.min + signal.entryZone.max) / 2;
+      
+      const calculation = this.positionSizeCalculator.calculatePositionSize(
+        accountEquity,
+        entryMid,
+        signal.stopLoss,
+        signal.symbol
+      );
+
+      // Add position sizing to signal
+      signal.positionSizing = {
+        lotSize: calculation.lotSize,
+        riskAmount: calculation.riskAmount,
+        riskPercentage: calculation.riskPercentage,
+        accountEquity,
+        reasoning: calculation.reasoning
+      };
+
+      logger.info(`💰 Position sizing calculated for ${signal.symbol}:`);
+      logger.info(`   Lot Size: ${calculation.lotSize}`);
+      logger.info(`   Risk: $${calculation.riskAmount.toFixed(2)} (${calculation.riskPercentage.toFixed(2)}%)`);
+
+      return signal;
+    } catch (error) {
+      logger.error('Failed to add position sizing:', error);
+      return signal;
+    }
+  }
+
+  /**
+   * Update position sizing configuration
+   */
+  updatePositionSizingConfig(config: Partial<PositionSizingConfig>): void {
+    this.positionSizeCalculator.updateConfig(config);
+  }
+
+  /**
+   * Get current position sizing configuration
+   */
+  getPositionSizingConfig(): PositionSizingConfig {
+    return this.positionSizeCalculator.getConfig();
   }
 
   private validateSignal(signal: TradeSignal): boolean {

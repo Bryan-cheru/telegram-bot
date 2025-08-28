@@ -5,6 +5,7 @@ import { TradeParser } from '../../ocr/tradeParser';
 import { ITradeExecutor } from '../../types/ITradeExecutor';
 import { config } from '../../utils/config';
 import { logger } from '../../utils/logger';
+import { InputValidator } from '../../utils/inputValidation';
 import axios from 'axios';
 
 export class PhotoHandler {
@@ -126,6 +127,20 @@ export class PhotoHandler {
         logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
         logger.info('Extracted text from image:', ocrResult.text);
         
+        // Validate extracted text quality
+        const textValidation = InputValidator.validateExtractedText(ocrResult.text);
+        if (!textValidation.isValid) {
+          logger.warn('❌ Text validation failed:', textValidation.errors);
+          if (!ctx.channelPost) {
+            await ctx.reply(`❌ Extracted text quality issues:\n${textValidation.errors.join('\n')}`);
+          }
+          return;
+        }
+        
+        if (textValidation.warnings.length > 0) {
+          logger.warn('⚠️ Text validation warnings:', textValidation.warnings);
+        }
+        
         // Check if OCR text indicates result/update message
         if (this.tradeParser.isResultOrUpdateMessage(ocrResult.text)) {
           logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
@@ -153,18 +168,62 @@ export class PhotoHandler {
         return;
       }
 
-      // Validate trade signal
-      if (!this.tradeParser.validateTradeSignal(tradeSignal)) {
-        logger.warn('Invalid trade signal:', tradeSignal);
+      // Comprehensive validation of trade signal
+      const validationResult = InputValidator.validateTradeSignal(tradeSignal);
+      
+      if (!validationResult.isValid) {
+        logger.warn('❌ Trade signal validation failed:', validationResult.errors);
         // Only reply if it's not a channel post
         if (!ctx.channelPost) {
-          await ctx.reply('❌ Invalid trade signal detected');
+          await ctx.reply(`❌ Invalid trade signal detected:\n${validationResult.errors.join('\n')}`);
         }
         return;
       }
+      
+      // Log any validation warnings
+      if (validationResult.warnings.length > 0) {
+        logger.warn('⚠️ Trade signal validation warnings:', validationResult.warnings);
+      }
+      
+      // Use sanitized data from validation
+      const sanitizedSignal = validationResult.sanitizedData || tradeSignal;
+
+      // Add position sizing calculations
+      try {
+        let accountEquity = 10000; // Default fallback
+        
+        // Try to get actual account equity if available
+        if (this.tradeExecutor.getAccountEquity) {
+          try {
+            accountEquity = await this.tradeExecutor.getAccountEquity();
+            
+            // Validate account equity
+            const equityValidation = InputValidator.validateAccountEquity(accountEquity);
+            if (!equityValidation.isValid) {
+              logger.warn('❌ Invalid account equity:', equityValidation.errors);
+              accountEquity = 10000; // Use fallback
+            } else if (equityValidation.warnings.length > 0) {
+              logger.warn('⚠️ Account equity warnings:', equityValidation.warnings);
+            }
+            
+            logger.info(`💰 Retrieved account equity: $${accountEquity.toLocaleString()}`);
+          } catch (error) {
+            logger.warn('Failed to get account equity, using default:', error);
+          }
+        } else {
+          logger.info('💰 Trade executor does not support equity retrieval, using default $10,000');
+        }
+        
+        // Calculate position sizing
+        this.tradeParser.addPositionSizing(sanitizedSignal, accountEquity);
+        
+      } catch (error) {
+        logger.error('Failed to calculate position sizing:', error);
+        // Continue without position sizing - the trade executor should handle this
+      }
 
       // Send confirmation message
-      const confirmationMessage = this.formatTradeSignal(tradeSignal);
+      const confirmationMessage = this.formatTradeSignal(sanitizedSignal);
       const processingInfo = message.caption ? ' (processed caption + image text)' : ' (processed image text only)';
       
       // For channel posts, we might want to send to a specific chat or log only
@@ -178,7 +237,7 @@ export class PhotoHandler {
 
       // Execute trade
       try {
-        const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+        const result = await this.tradeExecutor.executeTradeSignal(sanitizedSignal);
         
         if (result.success) {
           const successMessage = result.signalId 
@@ -225,14 +284,27 @@ export class PhotoHandler {
   }
 
   private formatTradeSignal(signal: any): string {
-    return `🔍 **Trade Signal Detected**\n\n` +
+    let message = `🔍 **Trade Signal Detected**\n\n` +
            `📈 Symbol: ${signal.symbol}\n` +
            `📊 Action: ${signal.action}\n` +
            `🎯 Entry Zone: ${signal.entryZone.min} - ${signal.entryZone.max}\n` +
            `🛑 Stop Loss: ${signal.stopLoss}\n` +
-           `🏆 Targets: ${signal.targets.join(', ')}\n` +
-           `${signal.reason ? `💡 Reason: ${signal.reason}\n` : ''}` +
-           `${signal.plan ? `📋 Plan: ${signal.plan}\n` : ''}\n` +
-           `⏳ Executing trade...`;
+           `🏆 Targets: ${signal.targets.join(', ')}\n`;
+           
+    // Add position sizing information if available
+    if (signal.positionSizing) {
+      const ps = signal.positionSizing;
+      message += `\n💰 **Position Sizing**\n` +
+                 `📊 Lot Size: ${ps.lotSize}\n` +
+                 `💵 Risk Amount: $${ps.riskAmount.toFixed(2)}\n` +
+                 `📊 Risk Percentage: ${ps.riskPercentage.toFixed(2)}%\n` +
+                 `💼 Account Equity: $${ps.accountEquity.toLocaleString()}\n`;
+    }
+           
+    message += `${signal.reason ? `💡 Reason: ${signal.reason}\n` : ''}` +
+               `${signal.plan ? `📋 Plan: ${signal.plan}\n` : ''}\n` +
+               `⏳ Executing trade...`;
+               
+    return message;
   }
 }
