@@ -7,7 +7,7 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../dashboard/public')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Store for real-time data
 let botLogs: any[] = [];
@@ -24,7 +24,7 @@ let botStatus = {
 
 // Dashboard routes
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../dashboard/public/index.html'));
+  res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
 // API endpoints

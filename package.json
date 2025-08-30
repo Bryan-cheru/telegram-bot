@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node dist/app.js",
     "dev": "ts-node src/app.ts",
-    "build": "tsc",
+    "build": "tsc && npm run copy-dashboard",
+    "copy-dashboard": "node -e \"const fs=require('fs'),path=require('path'); const src='src/dashboard/public', dest='dist/dashboard/public'; fs.mkdirSync(path.dirname(dest), {recursive:true}); fs.cpSync(src, dest, {recursive:true}); console.log('Dashboard files copied to dist');\"",
     "postinstall": "npm run build",
     "build:win": "npm run build && electron-builder --win --publish never",
     "watch": "tsc -w",
