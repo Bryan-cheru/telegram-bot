@@ -4,6 +4,16 @@ import { logger } from './utils/logger';
 import * as http from 'http';
 import dashboardApp, { updateBotStatus, addLog } from './dashboard/server';
 
+// Global error handlers to prevent unhandled rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', { promise, reason });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
 // Combined server for health check and dashboard
 const createServer = (): http.Server => {
   const server = http.createServer((req, res) => {
@@ -95,9 +105,9 @@ async function main(): Promise<void> {
   }
 }
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+// Start the application
+main().catch(error => {
+  logger.error('Application startup failed:', error);
   process.exit(1);
 });
 
