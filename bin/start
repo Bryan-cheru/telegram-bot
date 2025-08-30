@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+
+// Render.com startup script
+console.log('🚀 Starting Telegram Trading Bot on Render...');
+
+// Change to the correct directory and start the app
+const { spawn } = require('child_process');
+const path = require('path');
+
+// Make sure we're in the right directory
+process.chdir(path.join(__dirname, '..'));
+
+// Start the application
+const app = spawn('node', ['dist/app.js'], {
+  stdio: 'inherit',
+  env: process.env
+});
+
+app.on('close', (code) => {
+  console.log(`App process exited with code ${code}`);
+  process.exit(code);
+});
+
+app.on('error', (err) => {
+  console.error('Failed to start app:', err);
+  process.exit(1);
+});

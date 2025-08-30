@@ -11,6 +11,7 @@
     "build:win": "npm run build && electron-builder --win --publish never",
     "watch": "tsc -w",
     "setup": "node bot-setup.js",
+    "dashboard": "npm run build && npm start",
     "railway:build": "npm run build",
     "railway:start": "npm run start",
     "health-check": "curl -f http://localhost:3000/health || exit 1",
@@ -29,8 +30,10 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@types/express": "^5.0.3",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
+    "express": "^5.1.0",
     "jshint": "^2.13.6",
     "metaapi.cloud-sdk": "^29.2.0",
     "sharp": "^0.32.6",
