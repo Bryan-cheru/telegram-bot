@@ -24,7 +24,26 @@ let botStatus = {
 
 // Dashboard routes
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/index.html'));
+  const htmlPath = path.join(__dirname, 'public/index.html');
+  console.log('Dashboard - Looking for HTML at:', htmlPath);
+  
+  // Check if file exists
+  if (fs.existsSync(htmlPath)) {
+    res.sendFile(htmlPath);
+  } else {
+    console.error('Dashboard - HTML file not found at:', htmlPath);
+    res.status(404).send(`
+      <html>
+        <head><title>Dashboard Loading...</title></head>
+        <body>
+          <h1>Dashboard is starting up...</h1>
+          <p>HTML file not found at: ${htmlPath}</p>
+          <p>Please wait while the service restarts.</p>
+          <script>setTimeout(() => location.reload(), 5000);</script>
+        </body>
+      </html>
+    `);
+  }
 });
 
 // API endpoints

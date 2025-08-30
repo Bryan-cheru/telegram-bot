@@ -452,15 +452,39 @@
                 });
                 
                 if (response.ok) {
-                    alert('Configuration updated successfully!');
+                    showNotification('✅ Configuration updated successfully!');
                     refreshData();
                 } else {
                     const error = await response.json();
-                    alert(`Error: ${error.error}`);
+                    showNotification(`❌ Error: ${error.error}`);
                 }
             } catch (error) {
-                alert(`Failed to update configuration: ${error.message}`);
+                showNotification(`❌ Failed to update configuration: ${error.message}`);
             }
+        }
+        
+        function showNotification(message) {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #28a745;
+                color: white;
+                padding: 12px 20px;
+                border-radius: 5px;
+                z-index: 10000;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                font-weight: bold;
+            `;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
         }
         
         async function clearLogs() {
@@ -469,7 +493,7 @@
                     await fetch('/api/logs', { method: 'DELETE' });
                     refreshData();
                 } catch (error) {
-                    alert(`Failed to clear logs: ${error.message}`);
+                    showNotification(`❌ Failed to clear logs: ${error.message}`);
                 }
             }
         }
