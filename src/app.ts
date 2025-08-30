@@ -4,6 +4,9 @@ import { logger } from './utils/logger';
 import * as http from 'http';
 import dashboardApp, { updateBotStatus, addLog } from './dashboard/server';
 
+// Prevent double initialization
+let isInitialized = false;
+
 // Global error handlers to prevent unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', { promise, reason });
@@ -33,6 +36,20 @@ const createServer = (): http.Server => {
   });
   
   const port = process.env.PORT || 3000;
+  
+  server.on('error', (error: any) => {
+    if (error.code === 'EADDRINUSE') {
+      logger.error(`Port ${port} is already in use. Trying port ${Number(port) + 1}...`);
+      server.listen(Number(port) + 1, () => {
+        logger.info(`Server running on port ${Number(port) + 1}`);
+        logger.info(`Dashboard available at: http://localhost:${Number(port) + 1}`);
+        addLog({ level: 'info', message: `Server started on port ${Number(port) + 1}` });
+      });
+    } else {
+      logger.error('Server error:', error);
+    }
+  });
+  
   server.listen(port, () => {
     logger.info(`Server running on port ${port}`);
     logger.info(`Dashboard available at: http://localhost:${port}`);
@@ -43,6 +60,12 @@ const createServer = (): http.Server => {
 };
 
 async function main(): Promise<void> {
+  if (isInitialized) {
+    logger.warn('Application already initialized, skipping...');
+    return;
+  }
+  isInitialized = true;
+  
   try {
     logger.info('Starting Telegram Trading Bot...');
     
