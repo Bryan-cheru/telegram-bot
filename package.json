@@ -1,21 +1,22 @@
 {
   "name": "telegram-trading-bot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Telegram bot that processes trading screenshots and executes trades on MT5",
-  "main": "dist/app.js",
+  "main": "electron/main-simple.js",
   "scripts": {
     "start": "node dist/app.js",
     "dev": "ts-node src/app.ts",
     "build": "tsc",
+    "build:win": "npm run build && electron-builder --win --publish never",
     "watch": "tsc -w",
     "setup": "node bot-setup.js",
     "railway:build": "npm run build",
     "railway:start": "npm run start",
     "health-check": "curl -f http://localhost:3000/health || exit 1",
-    "electron": "electron electron/main.js",
-    "electron:dev": "npm run build && electron electron/main.js",
-    "electron:build": "npm run build && electron-builder",
-    "electron:dist": "npm run build && electron-builder --win --x64"
+    "electron": "npm run build && electron electron/main-simple.js",
+    "electron:dev": "npm run build && electron electron/main-simple.js --dev",
+    "app:build": "npm run build && electron-builder --win --publish never",
+    "app:dist": "npm run app:build"
   },
   "keywords": [
     "telegram",
@@ -46,7 +47,6 @@
   "build": {
     "appId": "com.telegrambot.tradingbot",
     "productName": "Telegram Trading Bot",
-    "copyright": "Copyright © 2025 Telegram Trading Bot",
     "directories": {
       "output": "dist-electron"
     },
@@ -55,35 +55,22 @@
       "electron/**/*",
       "node_modules/**/*",
       "package.json",
-      ".env.example",
-      "README.md",
-      "SETUP.md",
-      "DESKTOP_APP_GUIDE.md"
+      ".env",
+      "*.md"
+    ],
+    "asarUnpack": [
+      "dist/**/*",
+      ".env",
+      "node_modules/**/*"
     ],
     "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        },
-        {
-          "target": "portable",
-          "arch": ["x64"]
-        }
-      ],
-      "requestedExecutionLevel": "asInvoker",
-      "publisherName": "Telegram Trading Bot"
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "allowElevation": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Telegram Trading Bot"
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "createStartMenuShortcut": true
     }
   }
 }

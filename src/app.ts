@@ -1,5 +1,5 @@
 import { TelegramBot } from './bot/bot';
-import { config, validateConfig } from './utils/config';
+import { config, validateConfig, debugConfig } from './utils/config-simple';
 import { logger } from './utils/logger';
 import * as http from 'http';
 
@@ -34,6 +34,9 @@ async function main(): Promise<void> {
     
     // Start health check server for Railway
     const healthServer = createHealthServer();
+    
+    // Debug configuration before validation
+    debugConfig();
     
     // Validate configuration
     if (!validateConfig()) {

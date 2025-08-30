@@ -1,15 +1,5 @@
-import dotenv from 'dotenv';
-import path from 'path';
-
-// Only load dotenv if environment variables aren't already set (e.g., in Electron)
-if (!process.env.BOT_TOKEN && !process.env.ELECTRON_IS_RUNNING) {
-  // For standalone Node.js execution
-  dotenv.config();
-} else if (process.env.ELECTRON_IS_RUNNING && !process.env.BOT_TOKEN) {
-  // For Electron execution, try to load from the correct path
-  const envPath = path.join(process.cwd(), '.env');
-  dotenv.config({ path: envPath });
-}
+// Simple configuration loader without dotenv dependency
+// Uses environment variables directly, which should be pre-loaded by Electron
 
 export const config = {
   botToken: process.env.BOT_TOKEN || '',
@@ -41,15 +31,12 @@ export const validateConfig = (): boolean => {
   if (missing.length > 0) {
     console.error('❌ Missing required environment variables:');
     missing.forEach(field => {
-      console.error(`   - ${field.name}: ${field.value ? 'empty' : 'not set'}`);
+      console.error(`   ${field.name}: ${field.value ? 'empty' : 'not set'}`);
     });
-    console.error('');
-    console.error('💡 Please check your .env file and ensure all required fields are set.');
-    console.error('   See .env.example for reference or SETUP_INSTRUCTIONS_FOR_CLIENT.md for help.');
     return false;
   }
   
-  console.log('✅ All required environment variables are set');
+  console.log('✅ All required environment variables are configured');
   return true;
 };
 

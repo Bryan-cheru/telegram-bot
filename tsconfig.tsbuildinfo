@@ -1,1 +1,0 @@
-{"root":["./src/app.ts","./src/bot/bot.ts","./src/bot/handlers/messagehandler.ts","./src/bot/handlers/photohandler.ts","./src/mt5/metaapitradeexecutor.ts","./src/ocr/textextractor.ts","./src/ocr/tradeparser-fixed.ts","./src/ocr/tradeparser.ts","./src/types/itradeexecutor.ts","./src/types/index.ts","./src/utils/config.ts","./src/utils/logger.ts"],"version":"5.8.3"}
