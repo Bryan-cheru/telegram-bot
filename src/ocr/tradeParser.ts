@@ -47,13 +47,19 @@ export class TradeParser {
       
       const cleanText = this.cleanText(fullText);
 
-      // Try different parsing strategies
+      // Try different parsing strategies - CAPTION FIRST APPROACH! 🎯
       const strategies = [
-        () => this.parseVisualChartSignal(cleanText, caption),
+        // 1. CAPTION-FIRST: Try pure caption parsing if available
+        () => caption ? this.parseCaptionSignal(caption) : null,
+        
+        // 2. STANDARD FORMATS: Well-structured text patterns
         () => this.parseStandardSignal(cleanText),
         () => this.parseChartSetupSignal(cleanText),
-        () => this.parseCombinedTextImageSignal(cleanText),
         () => this.parseFlexibleFormatSignal(cleanText),
+        
+        // 3. FALLBACK: Visual/Image analysis (only when caption parsing fails)
+        () => this.parseVisualChartSignal(cleanText, caption),
+        () => this.parseCombinedTextImageSignal(cleanText),
         () => this.parsePriceActionSignal(cleanText)
       ];
 
@@ -103,14 +109,16 @@ export class TradeParser {
       'no drawdown'
     ];
     
-    // Phrases that indicate past tense trading results
+    // Phrases that indicate past tense trading results (COMPLETED trades)
     const pastTensePhrases = [
-      'entry:',
+      'entry: ', // Note: space after colon indicates completed entry price
       'target hit:',
       'secured!',
       'delivered',
-      'executed',
-      'hit:'
+      'executed at',
+      'hit at',
+      'closed at',
+      'filled at'
     ];
     
     // Check for result keywords
@@ -118,13 +126,16 @@ export class TradeParser {
       lowerText.includes(keyword)
     );
     
-    // Check for combination of past tense and trading terms
-    const hasPastTenseTrading = pastTensePhrases.some(phrase => 
-      lowerText.includes(phrase)
-    ) && (lowerText.includes('entry:') || lowerText.includes('target hit:'));
+    // Check for combination of past tense and trading terms (more specific)
+    const hasPastTenseTrading = (
+      (lowerText.includes('entry: ') && lowerText.includes('target hit:')) ||
+      (lowerText.includes('secured!') && (lowerText.includes('pips') || lowerText.includes('profit'))) ||
+      (lowerText.includes('delivered') && lowerText.includes('precision')) ||
+      (lowerText.includes('executed at') || lowerText.includes('filled at'))
+    );
     
     // Additional pattern: Messages with "→" indicating completed moves
-    const hasCompletedMove = lowerText.includes('entry:') && lowerText.includes('→') && lowerText.includes('target hit:');
+    const hasCompletedMove = lowerText.includes('entry: ') && lowerText.includes('→') && lowerText.includes('target hit:');
     
     if (hasResultKeyword || hasPastTenseTrading || hasCompletedMove) {
       logger.info('🚫 Identified result/update message - contains:', {
@@ -137,6 +148,201 @@ export class TradeParser {
     }
     
     return false;
+  }
+
+  /**
+   * 🎯 CAPTION-FIRST PARSING: Pure caption analysis (no OCR fallback needed)
+   * This is the PRIMARY parsing method - most accurate since captions are clean text
+   */
+  private parseCaptionSignal(caption: string): TradeSignal | null {
+    try {
+      logger.info('🎯 CAPTION-FIRST: Parsing pure caption signal (highest accuracy)');
+      logger.debug('Caption text:', caption);
+      
+      // 1. SYMBOL DETECTION - Enhanced with # prefix support
+      const symbolPatterns = [
+        // Major Indices
+        /#(NAS100|NASDAQ|US100|NDX)/i,
+        /#(SPX500|SPY|S&P500|SP500)/i,
+        /#(DJ30|DJI|DOWJONES|DOW)/i,
+        /#(DAX40|DAX|GER40)/i,
+        
+        // Metals & Commodities  
+        /#(XAUUSD|Gold|XAU|GOLD)/i,
+        /#(XAGUSD|Silver|XAG|SILVER)/i,
+        /#(USOIL|WTI|CRUDE|CL)/i,
+        
+        // Major Forex Pairs
+        /#(EURUSD|EUR\/USD)/i,
+        /#(GBPUSD|GBP\/USD)/i,
+        /#(USDJPY|USD\/JPY)/i,
+        /#(AUDUSD|AUD\/USD)/i,
+        /#(USDCAD|USD\/CAD)/i,
+        
+        // Generic pattern for ANY trading symbol with # prefix
+        /#([A-Z]{3,8})/i,
+        
+        // Fallback patterns without #
+        /(XAUUSD|Gold|XAU\/USD)/i,
+        /(NAS100|NASDAQ)/i,
+        /(SPX500|SPY)/i,
+        /(BTCUSD|Bitcoin|BTC)/i
+      ];
+      
+      let symbol: string | null = null;
+      for (const pattern of symbolPatterns) {
+        const match = caption.match(pattern);
+        if (match) {
+          // Normalize symbol names
+          const rawSymbol = match[1].toUpperCase();
+          if (['GOLD', 'XAU'].includes(rawSymbol)) symbol = 'XAUUSD';
+          else if (['SILVER', 'XAG'].includes(rawSymbol)) symbol = 'XAGUSD';
+          else if (['NASDAQ', 'US100', 'NDX'].includes(rawSymbol)) symbol = 'NAS100';
+          else if (['SPY', 'S&P500', 'SP500'].includes(rawSymbol)) symbol = 'SPX500';
+          else if (['BITCOIN', 'BTC'].includes(rawSymbol)) symbol = 'BTCUSD';
+          else symbol = rawSymbol;
+          
+          logger.info(`📈 Symbol detected: ${symbol} from caption pattern: ${match[0]}`);
+          break;
+        }
+      }
+      
+      if (!symbol) {
+        logger.debug('❌ No supported symbol detected in caption');
+        return null;
+      }
+      
+      // 2. ACTION DETECTION - Multiple patterns for buy/sell
+      const actionPatterns = [
+        /(buy|sell)\s+setup/i,
+        /(buy|sell)\s+limit/i,
+        /(buying|selling)\s+zone/i,
+        /best\s+(buying|selling)\s+zone/i,
+        /(bullish|bearish)\s+move\s+expected/i,
+        /(bullish|bearish)\s+setup/i,
+        /🔼\s*signal/i, // Buy signal emoji
+        /🔽\s*signal/i  // Sell signal emoji
+      ];
+      
+      let action: TradeAction | null = null;
+      for (const pattern of actionPatterns) {
+        const match = caption.match(pattern);
+        if (match) {
+          const matchedText = match[1] ? match[1].toLowerCase() : match[0].toLowerCase();
+          action = (matchedText.includes('bull') || matchedText.includes('buy') || match[0].includes('🔼')) ? 'BUY' : 'SELL';
+          logger.info(`📊 Action detected: ${action} from "${match[0]}"`);
+          break;
+        }
+      }
+      
+      if (!action) {
+        logger.debug('❌ No clear buy/sell action detected in caption');
+        return null;
+      }
+      
+      // 3. ENTRY ZONE DETECTION - Enhanced patterns
+      const entryPatterns = [
+        /(?:best\s+)?(?:buying|selling)\s+zone[:\s]*(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)/i,
+        /(?:buy|sell)\s+limit[:\s]+(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)/i,
+        /entry[:\s]+(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)/i,
+        /zone[:\s]*(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)/i,
+        /(\d{4}\.?\d*)\s*[–\-~]\s*(\d{4}\.?\d*)/
+      ];
+      
+      let entryMin: number | null = null;
+      let entryMax: number | null = null;
+      
+      for (const pattern of entryPatterns) {
+        const match = caption.match(pattern);
+        if (match && match.length >= 3) {
+          entryMin = Math.min(parseFloat(match[1]), parseFloat(match[2]));
+          entryMax = Math.max(parseFloat(match[1]), parseFloat(match[2]));
+          logger.info(`📊 Entry zone detected: ${entryMin} - ${entryMax} from "${match[0]}"`);
+          break;
+        }
+      }
+      
+      if (!entryMin || !entryMax) {
+        logger.debug('❌ No valid entry zone detected in caption');
+        return null;
+      }
+      
+      // 4. STOP LOSS DETECTION - Enhanced patterns
+      const slPatterns = [
+        /(?:stop\s+loss|SL|❌\s*SL)[:\s]*(\d+\.?\d*)/i,
+        /SL[:\s]+(\d+\.?\d*)/i,
+        /❌[^0-9]*(\d+\.?\d*)/,
+        /stop[:\s]+(\d+\.?\d*)/i
+      ];
+      
+      let stopLoss: number | undefined;
+      for (const pattern of slPatterns) {
+        const match = caption.match(pattern);
+        if (match) {
+          stopLoss = parseFloat(match[1]);
+          logger.info(`🛑 Stop Loss detected: ${stopLoss} from "${match[0]}"`);
+          break;
+        }
+      }
+      
+      // 5. TARGET DETECTION (Optional - will use 1:1 if not found)
+      const targetPatterns = [
+        /(?:tp|target|take\s*profit)\s*(\d+)?[:\s]*(\d+\.?\d*)/gi,
+        /🎯[^0-9]*(\d+\.?\d*)/g,
+        /final\s+tp[:\s]*(\d+\.?\d*)/gi
+      ];
+      
+      const detectedTargets: number[] = [];
+      for (const pattern of targetPatterns) {
+        const matches = [...caption.matchAll(pattern)];
+        matches.forEach(match => {
+          const value = parseFloat(match[match.length - 1]);
+          if (!isNaN(value) && value > 0) {
+            detectedTargets.push(value);
+          }
+        });
+      }
+      
+      // Calculate targets (use detected or 1:1 ratio)
+      const entryMid = (entryMin + entryMax) / 2;
+      let finalStopLoss = stopLoss;
+      
+      // If no stop loss provided, calculate based on instrument
+      if (!finalStopLoss) {
+        const slDistance = this.getStopLossDistance(symbol);
+        finalStopLoss = action === 'BUY' ? entryMin - slDistance : entryMax + slDistance;
+      }
+      
+      // Calculate targets (use detected targets or 1:1 ratio)
+      let targets: number[];
+      if (detectedTargets.length > 0) {
+        targets = detectedTargets.sort((a, b) => action === 'BUY' ? a - b : b - a);
+        logger.info(`🎯 Using detected targets: ${targets.join(', ')}`);
+      } else {
+        // Calculate 1:1 risk-reward target
+        const riskDistance = Math.abs(entryMid - finalStopLoss);
+        const target1 = action === 'BUY' ? entryMid + riskDistance : entryMid - riskDistance;
+        targets = [target1];
+        logger.info(`🎯 Using 1:1 calculated target: ${target1}`);
+      }
+      
+      const signal: TradeSignal = {
+        symbol,
+        action,
+        entryZone: { min: entryMin, max: entryMax },
+        stopLoss: finalStopLoss,
+        targets,
+        reason: `CAPTION-FIRST PARSING: ${caption.substring(0, 50)}...`,
+        plan: `${action} ${symbol} ${entryMin}-${entryMax} SL:${finalStopLoss} TP:${targets.join(',')}`
+      };
+      
+      logger.info(`✅ CAPTION-FIRST SUCCESS: ${signal.symbol} ${signal.action} ${signal.entryZone.min}-${signal.entryZone.max}`);
+      return signal;
+      
+    } catch (error) {
+      logger.error('Error in caption-first parsing:', error);
+      return null;
+    }
   }
 
   /**
@@ -240,8 +446,72 @@ export class TradeParser {
         return null;
       }
       
+      // Special handling for EURJPY price range detection
+      if (symbol === 'USDJPY' && text.includes('EURJPY')) {
+        symbol = 'EURJPY';
+        logger.info('📈 Corrected symbol: EURJPY detected from text');
+      }
+      
       // Extract visual chart data (OCR from chart zones) - PRIORITY since ALL charts use this
       const visualData = this.extractVisualChartData(text);
+      
+      // Enhanced chart analysis for Update messages - analyze price levels when no explicit zones found
+      if (!visualData && caption && caption.toLowerCase().includes('update')) {
+        logger.info('📊 Using enhanced price level analysis for Update message');
+        
+        // Extract all price levels and analyze them
+        const pricePattern = /\b(\d{1,3}\.\d{2,4})\b/g;
+        const prices = [...text.matchAll(pricePattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
+        
+        if (prices.length >= 3) {
+          prices.sort((a, b) => b - a); // Sort descending
+          
+          // For price analysis, assume:
+          // - Highest prices = resistance/sell area  
+          // - Lowest prices = support/buy area
+          // - Middle price = current market price
+          
+          const highLevel = prices[0];
+          const currentPrice = prices[Math.floor(prices.length / 2)];
+          const lowLevel = prices[prices.length - 1];
+          
+          // Determine trend direction based on price position
+          const isNearSupport = Math.abs(currentPrice - lowLevel) < Math.abs(currentPrice - highLevel);
+          
+          logger.info(`📊 Price analysis: High=${highLevel}, Current=${currentPrice}, Low=${lowLevel}`);
+          logger.info(`📈 Trend bias: ${isNearSupport ? 'Near support (BUY setup)' : 'Near resistance (SELL setup)'}`);
+          
+          if (isNearSupport) {
+            // Buy setup from support
+            return {
+              symbol: symbol,
+              action: 'BUY' as TradeAction,
+              entryZone: {
+                min: lowLevel,
+                max: currentPrice
+              },
+              stopLoss: lowLevel - (highLevel - lowLevel) * 0.1, // 10% buffer below support
+              targets: [highLevel],
+              reason: `${symbol.toUpperCase()} UPDATE - Buy setup near support level ${lowLevel}`,
+              plan: 'Chart analysis indicates bounce opportunity from support zone'
+            };
+          } else {
+            // Sell setup from resistance  
+            return {
+              symbol: symbol,
+              action: 'SELL' as TradeAction,
+              entryZone: {
+                min: currentPrice,
+                max: highLevel
+              },
+              stopLoss: highLevel + (highLevel - lowLevel) * 0.1, // 10% buffer above resistance
+              targets: [lowLevel],
+              reason: `${symbol.toUpperCase()} UPDATE - Sell setup near resistance level ${highLevel}`,
+              plan: 'Chart analysis indicates rejection opportunity from resistance zone'
+            };
+          }
+        }
+      }
       
       // Extract caption-based setup information as secondary
       const captionData = caption ? this.extractCaptionSetupData(caption) : null;
@@ -250,33 +520,102 @@ export class TradeParser {
       if (visualData && visualData.zones.length > 0) {
         logger.info('📊 Using visual chart data (highlighted zones detected)');
         
-        // Find entry zones (grey highlights) - ONLY what we need for 1:1 RR
-        const entryZones = visualData.zones.filter(z => 
-          z.name.toLowerCase().includes('selling') || 
-          z.name.toLowerCase().includes('buying') ||
+        // PRIORITY: Find grey entry zones (these are the main trading zones)
+        const greyEntryZones = visualData.zones.filter(z => 
+          z.name.toLowerCase().includes('grey') || 
           z.name.toLowerCase().includes('entry')
         );
         
-        // Determine action based on entry zones or price context
+        // Secondary: Find other entry zones 
+        const otherEntryZones = visualData.zones.filter(z => 
+          (z.name.toLowerCase().includes('selling') || 
+           z.name.toLowerCase().includes('buying')) &&
+          !z.name.toLowerCase().includes('grey')
+        );
+        
+        // Find target zones
+        const targetZones = visualData.zones.filter(z => 
+          z.name.toLowerCase().includes('target') || 
+          z.name.toLowerCase().includes('tp')
+        );
+        
+        // Use grey zones as primary entry areas
+        const entryZones = greyEntryZones.length > 0 ? greyEntryZones : otherEntryZones;
+        
         if (entryZones.length > 0) {
-          const entryZone = entryZones[0];
-          const action = entryZone.name.toLowerCase().includes('selling') ? 'SELL' : 'BUY';
+          const entryZone = entryZones[0]; // Use first grey zone
+          const preciseEntry = entryZone.value; // This is our exact entry level (median)
+          
+          logger.info(`🔘 Precise entry from grey zone: ${preciseEntry} (range: ${entryZone.min}-${entryZone.max})`);
+          
+          // Create tight entry zone around precise entry level
+          const entryBuffer = (entryZone.max - entryZone.min) * 0.1; // 10% of zone range as buffer
+          const tightEntryMin = Math.max(preciseEntry - entryBuffer, entryZone.min);
+          const tightEntryMax = Math.min(preciseEntry + entryBuffer, entryZone.max);
+          
+          // Determine action from caption or zone context
+          let action: 'BUY' | 'SELL' = 'BUY'; // default
+          
+          if (caption) {
+            if (/sell|short|bearish|down/i.test(caption)) action = 'SELL';
+            else if (/buy|long|bullish|up/i.test(caption)) action = 'BUY';
+          }
+          
+          // If no clear direction from caption, analyze current price vs entry
+          if (caption && !(/sell|short|bearish|down|buy|long|bullish|up/i.test(caption))) {
+            // Find current market price from the price list
+            const pricePattern = /\b(\d{3}\.\d{2,4})\b/g;
+            const allPrices = [...text.matchAll(pricePattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
+            if (allPrices.length > 0) {
+              allPrices.sort((a, b) => b - a); // Sort descending
+              const currentPrice = allPrices[0]; // Assume highest/most recent price is current
+              
+              // If current price is above entry, expect pullback to entry (BUY at lower level)
+              // If current price is below entry, expect bounce to entry (SELL at higher level)  
+              action = currentPrice > preciseEntry ? 'BUY' : 'SELL';
+              logger.info(`📊 Inferred ${action} (current: ${currentPrice} vs entry: ${preciseEntry})`);
+            }
+          }
+          
           const slDistance = this.getStopLossDistance(symbol);
           
-          // Calculate 1:1 risk-reward targets based on stop loss distance
-          const entryMid = (entryZone.min + entryZone.max) / 2;
-          const stopLoss = action === 'SELL' ? entryZone.max + slDistance : entryZone.min - slDistance;
-          const target1 = action === 'SELL' ? entryMid - slDistance : entryMid + slDistance;
-          const calculatedTargets = [target1];
+          // Calculate stop loss outside the grey zone with proper buffer
+          const stopLoss = action === 'SELL' ? 
+            entryZone.max + slDistance : 
+            entryZone.min - slDistance;
+          
+          // Use target zones if available, otherwise calculate from price extremes
+          let targets: number[];
+          if (targetZones.length > 0) {
+            // Filter targets based on trade direction
+            const validTargets = targetZones
+              .map(t => t.value)
+              .filter(target => action === 'BUY' ? target > preciseEntry : target < preciseEntry);
+            
+            targets = validTargets.length > 0 ? validTargets : [targetZones[0].value];
+            logger.info(`🎯 Using filtered chart targets for ${action}: ${targets.join(', ')}`);
+          } else {
+            // Use price extremes as targets
+            const pricePattern = /\b(\d{3}\.\d{2,4})\b/g;
+            const allPrices = [...text.matchAll(pricePattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
+            allPrices.sort((a, b) => a - b);
+            
+            const target = action === 'SELL' ? 
+              allPrices[Math.floor(allPrices.length * 0.15)] : // Lower target for SELL
+              allPrices[Math.floor(allPrices.length * 0.85)];  // Higher target for BUY
+              
+            targets = [target];
+            logger.info(`🎯 Calculated target from price extremes: ${target}`);
+          }
           
           return {
-            symbol: symbol || 'XAUUSD',
+            symbol: symbol,
             action,
-            entryZone: { min: entryZone.min, max: entryZone.max },
+            entryZone: { min: tightEntryMin, max: tightEntryMax },
             stopLoss,
-            targets: calculatedTargets,
-            reason: 'VISUAL CHART HIGHLIGHTED ZONES (1:1 RATIO)',
-            plan: `${action} SETUP FROM GREY ENTRY ZONE WITH 1:1 RISK-REWARD`
+            targets,
+            reason: `${symbol} UPDATE - Precise entry at ${preciseEntry} (grey zone)`,
+            plan: `${action} at precise level ${preciseEntry} from grey zone, targets: ${targets.join(', ')}`
           };
         }
         
@@ -397,49 +736,117 @@ export class TradeParser {
   /**
    * Extract visual data from chart OCR text (highlighted zones, pip values)
    * Enhanced for ALL charts that use grey entry zones and target markings
+   * STRICT: Only returns data if ACTUAL visual zones are detected, not just price numbers
    */
   private extractVisualChartData(text: string): { zones: Array<{name: string, min: number, max: number, value: number}> } | null {
     const zones: Array<{name: string, min: number, max: number, value: number}> = [];
     
     // ENHANCED PATTERNS for highlighted zone detection (ALL CHARTS format)
-    // Grey highlights = Entry zones, Red/colored highlights = Targets
+    // IMPORTANT: Grey highlights = Entry zones, Green/Red highlights = Targets
     
-    // 1. ENTRY ZONES (Grey highlights) - Multiple patterns
-    const entryPatterns = [
-      /(?:Selling|Buying|Entry)\s+(?:Area|Zone)\s*\((\d+\.?\d*)\s*[-–—]\s*(\d+\.?\d*)\)/gi,
-      /(?:Selling|Buying|Entry)\s+(?:Area|Zone)\s*:?\s*(\d+\.?\d*)\s*[-–—]\s*(\d+\.?\d*)/gi,
+    // 1. GREY ENTRY ZONES (Primary focus - these are the trading entry areas)
+    const greyEntryPatterns = [
+      // Look for grey colored zones on price scale
       /(?:Grey|Gray)\s+(?:Zone|Area|Highlight)\s*:?\s*(\d+\.?\d*)\s*[-–—]\s*(\d+\.?\d*)/gi,
-      /Entry\s*:?\s*(\d+\.?\d*)\s*[-–—]\s*(\d+\.?\d*)/gi,
-      /(\d{4}\.\d{2,3})\s*[-–—]\s*(\d{4}\.\d{2,3})\s*(?:Entry|Zone)/gi
+      /(?:Entry|Trading)\s+(?:Zone|Area)\s*\(Grey\)\s*:?\s*(\d+\.?\d*)\s*[-–—]\s*(\d+\.?\d*)/gi,
+      // Pattern for price ranges that appear in grey sections of charts
+      /(\d{3}\.\d{2,4})\s*[-–—]\s*(\d{3}\.\d{2,4})\s*(?:Entry|Grey|Gray)/gi,
+      // Look for clustered price levels (grey zones show as grouped prices)
+      /(?:Best|Good|Entry)\s+(?:Selling|Buying)\s+(?:Area|Zone)\s*:?\s*\(?(\d+\.?\d*)\s*[-–—]\s*(\d+\.?\d*)\)?/gi,
     ];
     
-    // 2. TARGET ZONES (Red/colored highlights) - Multiple patterns  
+    // 2. TARGET ZONES (Green/Red highlights) 
     const targetPatterns = [
       /Target\s*(\d+)?\s*:?\s*(\d+\.?\d*)/gi,
       /TP\s*(\d+)?\s*:?\s*(\d+\.?\d*)/gi,
       /Take\s*Profit\s*(\d+)?\s*:?\s*(\d+\.?\d*)/gi,
       /Final\s*Target\s*:?\s*(\d+\.?\d*)/gi,
-      /Red\s*(?:Zone|Highlight)\s*:?\s*(\d+\.?\d*)/gi,
-      /(\d{4}\.\d{2,3})\s*(?:Target|TP)/gi
+      /(?:Red|Green|Blue)\s*(?:Zone|Highlight)\s*:?\s*(\d+\.?\d*)/gi,
+      /(\d{3,4}\.\d{2,4})\s*(?:Target|TP)/gi
     ];
     
-    // Extract ENTRY ZONES (Grey highlights)
-    entryPatterns.forEach(pattern => {
+    // 3. ENHANCED: Extract grey zones from precise price level analysis
+    // For charts, grey zones are specific price levels, not broad ranges
+    const priceClusterPattern = /\b(\d{3}\.\d{2,4})\b/g;
+    const allPrices = [...text.matchAll(priceClusterPattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
+    
+    if (allPrices.length >= 4) {
+      // Sort prices to analyze structure
+      allPrices.sort((a, b) => a - b);
+      
+      // For Update messages, identify the MIDDLE price range as grey zone (entry area)
+      // Charts typically show: High prices, Grey zone (middle), Low prices
+      const priceCount = allPrices.length;
+      const startIdx = Math.floor(priceCount * 0.3); // Skip lowest 30%
+      const endIdx = Math.floor(priceCount * 0.7);   // Skip highest 30%
+      
+      // Extract the middle range as grey zone candidates
+      const greyZonePrices = allPrices.slice(startIdx, endIdx);
+      
+      if (greyZonePrices.length >= 2) {
+        // Create tight grey zone around middle prices
+        const greyMin = Math.min(...greyZonePrices);
+        const greyMax = Math.max(...greyZonePrices);
+        
+        // Use the median price as primary entry level
+        const medianPrice = greyZonePrices[Math.floor(greyZonePrices.length / 2)];
+        
+        zones.push({
+          name: 'Grey Entry Zone',
+          min: greyMin,
+          max: greyMax,
+          value: medianPrice  // This will be our precise entry level
+        });
+        
+        logger.info(`🔘 Precise grey zone: ${greyMin}-${greyMax}, entry: ${medianPrice}`);
+        
+        // Also identify potential target zones (higher/lower extremes)
+        const higherPrices = allPrices.slice(endIdx);
+        const lowerPrices = allPrices.slice(0, startIdx);
+        
+        if (higherPrices.length > 0) {
+          const targetHigh = higherPrices[Math.floor(higherPrices.length / 2)];
+          zones.push({
+            name: 'Upper Target',
+            min: targetHigh,
+            max: targetHigh,
+            value: targetHigh
+          });
+        }
+        
+        if (lowerPrices.length > 0) {
+          const targetLow = lowerPrices[Math.floor(lowerPrices.length / 2)];
+          zones.push({
+            name: 'Lower Target',
+            min: targetLow,
+            max: targetLow,
+            value: targetLow
+          });
+        }
+      }
+    }
+    
+    // Extract explicit GREY ZONES from patterns
+    greyEntryPatterns.forEach(pattern => {
       const matches = [...text.matchAll(pattern)];
       matches.forEach(match => {
         if (match.length >= 3) {
           const min = parseFloat(match[match.length - 2]);
           const max = parseFloat(match[match.length - 1]);
           if (!isNaN(min) && !isNaN(max)) {
-            const name = match[0].includes('Selling') ? 'Selling Area' : 
-                        match[0].includes('Buying') ? 'Buying Area' : 'Entry Zone';
-            zones.push({ name, min, max, value: (min + max) / 2 });
+            zones.push({ 
+              name: 'Grey Entry Zone', 
+              min: Math.min(min, max), 
+              max: Math.max(min, max), 
+              value: (min + max) / 2 
+            });
+            logger.info(`🔘 Found explicit grey zone: ${min} - ${max}`);
           }
         }
       });
     });
     
-    // Extract TARGET ZONES (Red/colored highlights)
+    // Extract TARGET ZONES 
     targetPatterns.forEach(pattern => {
       const matches = [...text.matchAll(pattern)];
       matches.forEach((match, index) => {
@@ -453,35 +860,7 @@ export class TradeParser {
       });
     });
     
-    // ENHANCED FALLBACK: Extract price numbers for different instruments
-    if (zones.length === 0) {
-      // Multiple price patterns for different instruments
-      const pricePatterns = [
-        /\b\d{5}\.\d{1,2}\b/g,  // NAS100: 18543.45
-        /\b\d{4}\.\d{2,3}\b/g,  // Gold: 2543.456
-        /\b[01]\.\d{4,5}\b/g,   // Forex: 1.95848 or 0.85643
-        /\b\d{1,3}\.\d{2,4}\b/g // General: 95.4567
-      ];
-      
-      let allPrices: number[] = [];
-      pricePatterns.forEach(pattern => {
-        const matches = text.match(pattern) || [];
-        matches.forEach(match => {
-          const value = parseFloat(match);
-          if (!isNaN(value) && value > 0) {
-            allPrices.push(value);
-          }
-        });
-      });
-      
-      // Remove duplicates and sort
-      allPrices = [...new Set(allPrices)].sort((a, b) => b - a);
-      
-      allPrices.forEach((price, index) => {
-        const name = index === 0 ? 'Entry Zone' : `Target ${index}`;
-        zones.push({ name, min: price, max: price, value: price });
-      });
-    }
+    logger.debug(`🔍 Visual chart analysis: Found ${zones.length} zones (grey entry + targets)`);
     
     return zones.length > 0 ? { zones } : null;
   }
@@ -490,26 +869,83 @@ export class TradeParser {
    * Extract setup data from caption text - simplified for 1:1 RR (no targets needed)
    */
   private extractCaptionSetupData(caption: string): { action: TradeAction, entryZone: {min: number, max: number}, stopLoss?: number } | null {
-    // Pattern for buying/selling setup in caption
-    const setupMatch = caption.match(/(bullish|bearish|buying|selling)\s+(?:setup|zone)/i);
-    if (!setupMatch) return null;
+    logger.debug('🔍 Analyzing caption for setup data:', caption);
     
-    const action: TradeAction = setupMatch[1].toLowerCase().includes('bull') || setupMatch[1].toLowerCase().includes('buy') ? 'BUY' : 'SELL';
+    // Pattern for buying/selling setup in caption - ENHANCED for more formats
+    const setupPatterns = [
+      /(bullish|bearish|buying|selling)\s+(?:setup|zone)/i,
+      /(buy|sell)\s+setup/i,
+      /(buy|sell)\s+limit/i,
+      /best\s+(buying|selling)\s+zone/i,
+      /(bullish|bearish)\s+move\s+expected/i
+    ];
     
-    // Extract entry zone: "buying zone (3352 – 3345)" or "retrace into the buying zone (3352 – 3345)"
-    const entryMatch = caption.match(/(?:zone|area)\s*\((\d+\.?\d*)\s*[–-]\s*(\d+\.?\d*)\)/i);
-    if (!entryMatch) return null;
+    let action: TradeAction | null = null;
+    let setupMatch = null;
     
-    const entryMin = Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2]));
-    const entryMax = Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2]));
-    
-    // Extract stop loss: "stop loss placed below 3338" or "SL below 3338"
-    let stopLoss: number | undefined;
-    const slMatch = caption.match(/(?:stop\s+loss|SL)\s+(?:placed\s+)?(?:below|above)\s+(\d+\.?\d*)/i);
-    if (slMatch) {
-      stopLoss = parseFloat(slMatch[1]);
+    for (const pattern of setupPatterns) {
+      setupMatch = caption.match(pattern);
+      if (setupMatch) {
+        const matchedText = setupMatch[1].toLowerCase();
+        action = (matchedText.includes('bull') || matchedText.includes('buy')) ? 'BUY' : 'SELL';
+        logger.debug(`📈 Action detected: ${action} from "${setupMatch[0]}"`);
+        break;
+      }
     }
     
+    if (!action) {
+      logger.debug('❌ No clear buy/sell setup found in caption');
+      return null;
+    }
+    
+    // Extract entry zone - ENHANCED patterns
+    const entryPatterns = [
+      // "buying zone: 3385 – 3375" or "zone (3385 – 3375)"
+      /(?:zone|area|levels?)[:\s]*\(?(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)\)?/i,
+      // "Buy Limit: 3385 – 3375"
+      /(?:buy|sell)\s+limit[:\s]+(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)/i,
+      // "Entry: 3385 – 3375"
+      /entry[:\s]+(\d+\.?\d*)\s*[–\-~]\s*(\d+\.?\d*)/i,
+      // Any two numbers with dash/hyphen
+      /(\d{4}\.?\d*)\s*[–\-~]\s*(\d{4}\.?\d*)/
+    ];
+    
+    let entryMin: number | null = null;
+    let entryMax: number | null = null;
+    
+    for (const pattern of entryPatterns) {
+      const entryMatch = caption.match(pattern);
+      if (entryMatch) {
+        entryMin = Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2]));
+        entryMax = Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2]));
+        logger.debug(`📊 Entry zone detected: ${entryMin} - ${entryMax} from "${entryMatch[0]}"`);
+        break;
+      }
+    }
+    
+    if (!entryMin || !entryMax) {
+      logger.debug('❌ No valid entry zone found in caption');
+      return null;
+    }
+    
+    // Extract stop loss - ENHANCED patterns
+    let stopLoss: number | undefined;
+    const slPatterns = [
+      /(?:stop\s+loss|SL|❌\s*SL)[:\s]*(\d+\.?\d*)/i,
+      /SL[:\s]+(\d+\.?\d*)/i,
+      /❌[^0-9]*(\d+\.?\d*)/
+    ];
+    
+    for (const pattern of slPatterns) {
+      const slMatch = caption.match(pattern);
+      if (slMatch) {
+        stopLoss = parseFloat(slMatch[1]);
+        logger.debug(`🛑 Stop Loss detected: ${stopLoss} from "${slMatch[0]}"`);
+        break;
+      }
+    }
+    
+    logger.info(`✅ Caption setup data extracted: ${action} ${entryMin}-${entryMax} SL:${stopLoss || 'N/A'}`);
     return { action, entryZone: { min: entryMin, max: entryMax }, stopLoss };
   }
 
@@ -518,6 +954,12 @@ export class TradeParser {
    */
   private parseStandardSignal(text: string): TradeSignal | null {
     const patterns = [
+      // Pattern 0: NEW - Telegram channel signal format (PRIORITY)
+      /#?(XAUUSD|NAS100|US30|SPX500|Gold|Silver)[\s\S]*?(Buy|Buying|BUY|Sell|Selling|SELL)[\s\S]*?(?:zone|area|limit)[\s\S]*?(\d{3,6})\s*[–-]\s*(\d{3,6})[\s\S]*?(?:Tp1?|TP1?|Target)[\s\S]*?(\d{3,6})[\s\S]*?(?:SL|❌\s*SL)[\s\S]*?(\d{3,6})/gi,
+      
+      // Pattern 0b: NEW - Forex pairs with decimal prices
+      /#?(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)[\s\S]*?(Buy|Buying|BUY|Sell|Selling|SELL)[\s\S]*?(?:zone|area|limit)[\s\S]*?(\d\.\d{4})\s*[–-]\s*(\d\.\d{4})[\s\S]*?(?:Tp1?|TP1?|Target)[\s\S]*?(\d\.\d{4})[\s\S]*?(?:SL|❌\s*SL)[\s\S]*?(\d\.\d{4})/gi,
+      
       // Pattern 1: SYMBOL ACTION ENTRY SL TP format
       /(\w+)\s+(BUY|SELL)\s+(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)\s+(?:SL|STOPLOSS|STOP LOSS)[\s:]*(\d+\.?\d*)\s+(?:TP|TARGET|TAKE PROFIT|TAKEPROFIT)[\s:]*([\d.,\s]+)/gi,
       
@@ -537,14 +979,23 @@ export class TradeParser {
       /(?:#?XAUUSD|Gold|EURUSD|GBPUSD)[\s\S]*?(Selling|Buying|SELL|BUY)[\s\S]*?\((\d+)[\s–-]+(\d+)\)[\s\S]*?(?:SL|❌\s*SL)[\s:]?(\d+)[\s\S]*?(?:TP|🏹\s*TP)[\s:]*(\d+(?:\s*\/\s*\d+)?)/gi
     ];
 
-    for (const pattern of patterns) {
+    for (let i = 0; i < patterns.length; i++) {
+      const pattern = patterns[i];
       const match = pattern.exec(text);
       if (match) {
-        let [, symbol, action, entryMin, entryMax, stopLoss, targetsStr] = match;
+        let symbol, action, entryMin, entryMax, stopLoss, targetsStr;
+        
+        if (i === 0 || i === 1) {
+          // New telegram patterns (0 and 0b): symbol, action, entryMax, entryMin, target, stopLoss
+          [, symbol, action, entryMax, entryMin, targetsStr, stopLoss] = match;
+        } else {
+          // Standard patterns: symbol, action, entryMin, entryMax, stopLoss, targetsStr
+          [, symbol, action, entryMin, entryMax, stopLoss, targetsStr] = match;
+        }
         
         // Handle Gold -> XAUUSD conversion
-        if (symbol.toUpperCase() === 'GOLD') {
-          symbol = 'XAUUSD';
+        if (symbol.toUpperCase() === 'GOLD' || symbol.toUpperCase() === 'SILVER') {
+          symbol = symbol.toUpperCase() === 'GOLD' ? 'XAUUSD' : 'XAGUSD';
         }
         
         // Normalize action
@@ -555,7 +1006,14 @@ export class TradeParser {
         }
         
         if (this.isValidSymbol(symbol)) {
-          const targets = this.parseTargets(targetsStr);
+          let targets;
+          if (i === 0 || i === 1) {
+            // For the new patterns, targetsStr is a single target
+            targets = [parseFloat(targetsStr)];
+          } else {
+            // For other patterns, parse multiple targets
+            targets = this.parseTargets(targetsStr);
+          }
           
           // Validate that we have reasonable price levels
           const entryMinNum = parseFloat(entryMin);
@@ -567,8 +1025,8 @@ export class TradeParser {
               symbol: symbol.toUpperCase(),
               action: action.toUpperCase() as TradeAction,
               entryZone: {
-                min: entryMinNum,
-                max: entryMaxNum
+                min: Math.min(entryMinNum, entryMaxNum),
+                max: Math.max(entryMinNum, entryMaxNum)
               },
               stopLoss: stopLossNum,
               targets,

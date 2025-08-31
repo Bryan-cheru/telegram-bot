@@ -139,6 +139,3 @@ process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
   process.exit(1);
 });
-
-// Start the application
-main();

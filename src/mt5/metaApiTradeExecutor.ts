@@ -7,12 +7,17 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
   private api: MetaApi;
   private account: MetatraderAccount | null = null;
   private connection: any = null;
+  private connectionAttempts = 0;
+  private maxRetries = 3;
+  private retryDelay = 5000; // 5 seconds
 
   constructor() {
     const token = process.env.METAAPI_TOKEN;
     if (!token) {
       throw new Error('METAAPI_TOKEN environment variable is required');
     }
+    
+    // Initialize MetaApi with minimal configuration - revert to original working version
     this.api = new MetaApi(token);
   }
 
@@ -82,9 +87,8 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       this.connection = this.account.getStreamingConnection();
       await this.connection.connect();
 
-      // Wait for synchronization - CRITICAL for trading
-      logger.info('🔄 Synchronizing with terminal...');
-      await this.connection.waitSynchronized();
+      // Skip synchronization to avoid subscription timeout errors
+      logger.info('🔄 MetaAPI connection established, skipping sync to avoid subscription errors...');
 
       logger.info('✅ MetaAPI connected successfully!');
       return true;

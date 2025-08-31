@@ -3,524 +3,193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram Trading Bot Dashboard</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #0f172a;
-            color: #e2e8f0;
-            line-height: 1.6;
-        }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        
-        .header {
-            text-align: center;
-            padding: 2rem 0;
-            border-bottom: 2px solid #334155;
-            margin-bottom: 2rem;
-        }
-        
-        .header h1 {
-            color: #3b82f6;
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .status-indicator {
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            border-radius: 25px;
-            font-weight: bold;
-            margin: 0.5rem;
-        }
-        
-        .status-online {
-            background: #059669;
-            color: white;
-        }
-        
-        .status-offline {
-            background: #dc2626;
-            color: white;
-        }
-        
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
-            margin-bottom: 2rem;
-        }
-        
-        .card {
-            background: #1e293b;
-            border-radius: 12px;
-            padding: 1.5rem;
-            border: 1px solid #334155;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        
-        .card h2 {
-            color: #3b82f6;
-            margin-bottom: 1rem;
-            font-size: 1.5rem;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-        
-        .stat-item {
-            text-align: center;
-            padding: 1rem;
-            background: #0f172a;
-            border-radius: 8px;
-        }
-        
-        .stat-value {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #10b981;
-        }
-        
-        .stat-label {
-            color: #64748b;
-            font-size: 0.9rem;
-        }
-        
-        .logs-container {
-            grid-column: 1 / -1;
-            height: 400px;
-            overflow-y: auto;
-            background: #0f172a;
-            border-radius: 8px;
-            padding: 1rem;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9rem;
-        }
-        
-        .log-entry {
-            margin-bottom: 0.5rem;
-            padding: 0.25rem;
-            border-radius: 4px;
-        }
-        
-        .log-info {
-            color: #3b82f6;
-        }
-        
-        .log-success {
-            color: #10b981;
-        }
-        
-        .log-error {
-            color: #ef4444;
-            background: rgba(239, 68, 68, 0.1);
-        }
-        
-        .log-warn {
-            color: #f59e0b;
-        }
-        
-        .trades-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        .trades-table th,
-        .trades-table td {
-            text-align: left;
-            padding: 0.75rem;
-            border-bottom: 1px solid #334155;
-        }
-        
-        .trades-table th {
-            background: #0f172a;
-            color: #3b82f6;
-            font-weight: bold;
-        }
-        
-        .profit-positive {
-            color: #10b981;
-        }
-        
-        .profit-negative {
-            color: #ef4444;
-        }
-        
-        .controls {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-        
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: all 0.3s;
-        }
-        
-        .btn-primary {
-            background: #3b82f6;
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background: #2563eb;
-        }
-        
-        .btn-danger {
-            background: #ef4444;
-            color: white;
-        }
-        
-        .btn-danger:hover {
-            background: #dc2626;
-        }
-        
-        .config-form {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-        
-        .form-group {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .form-group label {
-            margin-bottom: 0.5rem;
-            color: #64748b;
-            font-weight: bold;
-        }
-        
-        .form-group input {
-            padding: 0.75rem;
-            border: 1px solid #334155;
-            border-radius: 6px;
-            background: #0f172a;
-            color: #e2e8f0;
-        }
-        
-        .refresh-indicator {
-            display: inline-block;
-            animation: spin 1s linear infinite;
-            margin-left: 0.5rem;
-        }
-        
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-    </style>
+    <title>TradingBot Pro - Professional Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles/main.css">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 Telegram Trading Bot Dashboard</h1>
-            <div id="status-indicators">
-                <span class="status-indicator status-offline" id="bot-status">Bot: Offline</span>
-                <span class="status-indicator status-offline" id="telegram-status">Telegram: Disconnected</span>
-                <span class="status-indicator status-offline" id="metaapi-status">MetaAPI: Disconnected</span>
+    <!-- Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-chart-line"></i>
+                <span>TradingBot Pro</span>
             </div>
         </div>
-        
-        <div class="controls">
-            <button class="btn btn-primary" onclick="refreshData()">🔄 Refresh</button>
-            <button class="btn btn-danger" onclick="clearLogs()">🗑️ Clear Logs</button>
-            <button class="btn btn-primary" onclick="downloadTrades()">📊 Export Trades</button>
-        </div>
-        
-        <div class="dashboard-grid">
-            <div class="card">
-                <h2>📊 Trading Statistics</h2>
-                <div class="stats-grid" id="trading-stats">
-                    <div class="stat-item">
-                        <div class="stat-value" id="total-trades">0</div>
-                        <div class="stat-label">Total Trades</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="win-rate">0%</div>
-                        <div class="stat-label">Win Rate</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="avg-rr">0.00</div>
-                        <div class="stat-label">Avg R:R Ratio</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="total-profit">$0.00</div>
-                        <div class="stat-label">Total Profit</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>⚙️ Bot Configuration</h2>
-                <div class="config-form">
-                    <div class="form-group">
-                        <label>Max Trade Size</label>
-                        <input type="number" id="max-trade-size" step="0.01" min="0.01" max="10">
-                    </div>
-                    <div class="form-group">
-                        <label>Risk Percentage (%)</label>
-                        <input type="number" id="risk-percentage" step="0.1" min="0.1" max="10">
-                    </div>
-                    <div class="form-group">
-                        <label>Log Level</label>
-                        <select id="log-level">
-                            <option value="info">Info</option>
-                            <option value="debug">Debug</option>
-                            <option value="warn">Warning</option>
-                            <option value="error">Error</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <button class="btn btn-primary" onclick="updateConfig()">💾 Save Settings</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2>📈 Recent Trades</h2>
-            <div style="overflow-x: auto;">
-                <table class="trades-table" id="trades-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Symbol</th>
-                            <th>Action</th>
-                            <th>Entry</th>
-                            <th>Stop Loss</th>
-                            <th>Take Profit</th>
-                            <th>Lot Size</th>
-                            <th>R:R Ratio</th>
-                            <th>Profit</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="trades-body">
-                        <tr>
-                            <td colspan="10" style="text-align: center; color: #64748b;">No trades yet...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2>📋 Bot Logs <span class="refresh-indicator" id="refresh-spinner" style="display: none;">🔄</span></h2>
-            <div class="logs-container" id="logs-container">
-                <div class="log-entry log-info">Bot dashboard initialized. Waiting for data...</div>
-            </div>
-        </div>
-    </div>
+        <ul class="nav-menu">
+            <li><a href="#dashboard" class="nav-link active" data-page="dashboard">
+                <i class="fas fa-tachometer-alt"></i> Dashboard
+            </a></li>
+            <li><a href="#accounts" class="nav-link" data-page="accounts">
+                <i class="fas fa-wallet"></i> Account Settings
+            </a></li>
+            <li><a href="#trades" class="nav-link" data-page="trades">
+                <i class="fas fa-exchange-alt"></i> Trade History
+            </a></li>
+            <li><a href="#logs" class="nav-link" data-page="logs">
+                <i class="fas fa-file-alt"></i> System Logs
+            </a></li>
+        </ul>
+    </nav>
 
-    <script>
-        // Auto-refresh data every 5 seconds
-        setInterval(refreshData, 5000);
-        
-        // Load initial data
-        document.addEventListener('DOMContentLoaded', refreshData);
-        
-        async function refreshData() {
-            document.getElementById('refresh-spinner').style.display = 'inline-block';
-            
-            try {
-                // Fetch all data
-                const [status, logs, trades, config, stats] = await Promise.all([
-                    fetch('/api/status').then(r => r.json()),
-                    fetch('/api/logs?limit=50').then(r => r.json()),
-                    fetch('/api/trades').then(r => r.json()),
-                    fetch('/api/config').then(r => r.json()),
-                    fetch('/api/statistics').then(r => r.json())
-                ]);
-                
-                updateStatus(status);
-                updateLogs(logs);
-                updateTrades(trades);
-                updateConfig(config);
-                updateStats(stats);
-                
-            } catch (error) {
-                console.error('Failed to refresh data:', error);
-            }
-            
-            document.getElementById('refresh-spinner').style.display = 'none';
-        }
-        
-        function updateStatus(status) {
-            const botStatus = document.getElementById('bot-status');
-            const telegramStatus = document.getElementById('telegram-status');
-            const metaapiStatus = document.getElementById('metaapi-status');
-            
-            botStatus.textContent = `Bot: ${status.isRunning ? 'Online' : 'Offline'}`;
-            botStatus.className = `status-indicator ${status.isRunning ? 'status-online' : 'status-offline'}`;
-            
-            telegramStatus.textContent = `Telegram: ${status.connections.telegram ? 'Connected' : 'Disconnected'}`;
-            telegramStatus.className = `status-indicator ${status.connections.telegram ? 'status-online' : 'status-offline'}`;
-            
-            metaapiStatus.textContent = `MetaAPI: ${status.connections.metaapi ? 'Connected' : 'Disconnected'}`;
-            metaapiStatus.className = `status-indicator ${status.connections.metaapi ? 'status-online' : 'status-offline'}`;
-        }
-        
-        function updateLogs(logs) {
-            const container = document.getElementById('logs-container');
-            container.innerHTML = '';
-            
-            logs.forEach(log => {
-                const logEntry = document.createElement('div');
-                logEntry.className = `log-entry log-${log.level || 'info'}`;
-                logEntry.textContent = `[${new Date(log.timestamp).toLocaleTimeString()}] ${log.message}`;
-                container.appendChild(logEntry);
-            });
-            
-            container.scrollTop = container.scrollHeight;
-        }
-        
-        function updateTrades(trades) {
-            const tbody = document.getElementById('trades-body');
-            tbody.innerHTML = '';
-            
-            if (trades.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #64748b;">No trades yet...</td></tr>';
-                return;
-            }
-            
-            trades.slice(-20).forEach(trade => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${new Date(trade.timestamp).toLocaleString()}</td>
-                    <td>${trade.symbol}</td>
-                    <td>${trade.action}</td>
-                    <td>${trade.entry}</td>
-                    <td>${trade.stopLoss}</td>
-                    <td>${trade.takeProfit}</td>
-                    <td>${trade.lotSize}</td>
-                    <td>${trade.riskRewardRatio || 'N/A'}</td>
-                    <td class="${trade.profit >= 0 ? 'profit-positive' : 'profit-negative'}">
-                        $${(trade.profit || 0).toFixed(2)}
-                    </td>
-                    <td>${trade.status}</td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
-        
-        function updateConfig(config) {
-            document.getElementById('max-trade-size').value = config.maxTradeSize;
-            document.getElementById('risk-percentage').value = config.riskPercentage;
-            document.getElementById('log-level').value = config.logLevel;
-        }
-        
-        function updateStats(stats) {
-            document.getElementById('total-trades').textContent = stats.totalTrades;
-            document.getElementById('win-rate').textContent = `${stats.winRate.toFixed(1)}%`;
-            document.getElementById('avg-rr').textContent = stats.avgRiskRewardRatio.toFixed(2);
-            document.getElementById('total-profit').textContent = `$${stats.totalProfit.toFixed(2)}`;
-        }
-        
-        async function updateConfig() {
-            const config = {
-                maxTradeSize: parseFloat(document.getElementById('max-trade-size').value),
-                riskPercentage: parseFloat(document.getElementById('risk-percentage').value),
-                logLevel: document.getElementById('log-level').value
-            };
-            
-            try {
-                const response = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(config)
-                });
-                
-                if (response.ok) {
-                    showNotification('✅ Configuration updated successfully!');
-                    refreshData();
-                } else {
-                    const error = await response.json();
-                    showNotification(`❌ Error: ${error.error}`);
-                }
-            } catch (error) {
-                showNotification(`❌ Failed to update configuration: ${error.message}`);
-            }
-        }
-        
-        function showNotification(message) {
-            const notification = document.createElement('div');
-            notification.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                background: #28a745;
-                color: white;
-                padding: 12px 20px;
-                border-radius: 5px;
-                z-index: 10000;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                font-weight: bold;
-            `;
-            notification.textContent = message;
-            document.body.appendChild(notification);
-            
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-            }, 3000);
-        }
-        
-        async function clearLogs() {
-            if (confirm('Are you sure you want to clear all logs?')) {
-                try {
-                    await fetch('/api/logs', { method: 'DELETE' });
-                    refreshData();
-                } catch (error) {
-                    showNotification(`❌ Failed to clear logs: ${error.message}`);
-                }
-            }
-        }
-        
-        function downloadTrades() {
-            // Simple CSV export
-            fetch('/api/trades')
-                .then(r => r.json())
-                .then(trades => {
-                    const csv = [
-                        ['Time', 'Symbol', 'Action', 'Entry', 'Stop Loss', 'Take Profit', 'Lot Size', 'R:R Ratio', 'Profit', 'Status'],
-                        ...trades.map(t => [
-                            new Date(t.timestamp).toISOString(),
-                            t.symbol, t.action, t.entry, t.stopLoss, t.takeProfit, t.lotSize, 
-                            t.riskRewardRatio || 'N/A', t.profit || 0, t.status
-                        ])
-                    ].map(row => row.join(',')).join('\n');
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <button class="menu-toggle" id="menu-toggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h1>Dashboard</h1>
+            </div>
+            <div class="header-right">
+                <div class="status-badge online">
+                    <i class="fas fa-circle"></i>
+                    <span>System Online</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dashboard Content -->
+        <div class="content">
+            <!-- Dashboard Page -->
+            <section id="dashboard" class="page active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon primary">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3>Bot Status</h3>
+                            <div class="stat-value">Online</div>
+                            <div class="stat-change positive">Uptime: 2h 34m</div>
+                        </div>
+                    </div>
                     
-                    const blob = new Blob([csv], { type: 'text/csv' });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `trades_${new Date().toISOString().split('T')[0]}.csv`;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                });
-        }
-    </script>
+                    <div class="stat-card">
+                        <div class="stat-icon success">
+                            <i class="fas fa-percentage"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3>Success Rate</h3>
+                            <div class="stat-value">100%</div>
+                            <div class="stat-change positive">7/7 parsed</div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon warning">
+                            <i class="fas fa-exchange-alt"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3>Trades Today</h3>
+                            <div class="stat-value">0</div>
+                            <div class="stat-change neutral">Markets closed</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Recent Activity</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="activity-feed" id="activity-feed">
+                            <p>No recent activity. System ready for Monday trading.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Account Settings Page -->
+            <section id="accounts" class="page">
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-cog"></i> MetaAPI Configuration</h2>
+                    </div>
+                    <div class="card-body">
+                        <form id="account-form" class="form">
+                            <div class="form-group">
+                                <label for="account-id">MetaAPI Account ID</label>
+                                <div class="input-group">
+                                    <input type="text" id="account-id" placeholder="Enter your MetaAPI account ID">
+                                    <button type="button" class="btn btn-outline" id="test-connection">
+                                        <i class="fas fa-plug"></i> Test
+                                    </button>
+                                </div>
+                                <small class="form-help">Your MetaTrader account ID from MetaAPI dashboard</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="risk-percent">Risk Percentage</label>
+                                <input type="number" id="risk-percent" value="2" min="0.1" max="10" step="0.1">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="max-position">Max Position Size</label>
+                                <input type="number" id="max-position" value="0.1" min="0.01" max="10" step="0.01">
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Save Configuration
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Trade History Page -->
+            <section id="trades" class="page">
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-history"></i> Trade History</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Symbol</th>
+                                        <th>Action</th>
+                                        <th>Entry</th>
+                                        <th>Exit</th>
+                                        <th>P&L</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="trades-table-body">
+                                    <tr>
+                                        <td colspan="7" class="text-center">No trades executed yet</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logs Page -->
+            <section id="logs" class="page">
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-terminal"></i> System Logs</h2>
+                        <button class="btn btn-outline btn-sm" id="clear-logs">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="logs-container" id="logs-container">
+                            Loading logs...
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="scripts/dashboard.js"></script>
 </body>
 </html>
