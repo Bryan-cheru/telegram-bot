@@ -1,3 +1,5 @@
+export type OrderType = 'MARKET' | 'LIMIT' | 'PENDING';
+
 export interface TradeSignal {
   symbol: string;
   action: 'BUY' | 'SELL';
@@ -7,6 +9,10 @@ export interface TradeSignal {
   };
   stopLoss: number;
   targets: number[];
+  orderType?: OrderType; // New field for order type
+  entryPrice?: number; // Specific entry price for limit orders
+  expirationTime?: Date; // Expiration time for pending orders
+  requiresChartAnalysis?: boolean; // Flag for chart-based signals
   reason?: string;
   plan?: string;
   positionSizing?: {

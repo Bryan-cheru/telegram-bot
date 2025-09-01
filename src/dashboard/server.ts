@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
+import { MetaApiTradeExecutor } from '../mt5/metaApiTradeExecutor';
 
 const app = express();
 
@@ -21,6 +22,76 @@ let botStatus = {
     telegram: false,
     metaapi: false
   }
+};
+
+// MT5 Integration - Single instance to maintain connection
+let metaApiExecutor: MetaApiTradeExecutor | null = null;
+let mt5AccountInfo: any = null;
+let mt5Positions: any[] = [];
+let mt5LastUpdate = 0;
+
+// Initialize MT5 connection
+const initializeMT5 = async () => {
+  try {
+    if (!metaApiExecutor) {
+      metaApiExecutor = new MetaApiTradeExecutor();
+      await metaApiExecutor.initialize();
+      addLog({
+        level: 'info',
+        message: '📊 MT5 Dashboard Integration initialized'
+      });
+    }
+    return true;
+  } catch (error) {
+    addLog({
+      level: 'error',
+      message: `❌ MT5 Dashboard Integration failed: ${error}`
+    });
+    return false;
+  }
+};
+
+// Update MT5 data periodically
+const updateMT5Data = async () => {
+  if (!metaApiExecutor) return;
+  
+  try {
+    const isConnected = await metaApiExecutor.isConnected();
+    if (!isConnected) return;
+    
+    // Update account info
+    const accountInfo = await metaApiExecutor.getAccountInfo();
+    if (accountInfo) {
+      mt5AccountInfo = {
+        ...accountInfo,
+        lastUpdate: Date.now()
+      };
+    }
+    
+    // Update positions
+    const positions = await metaApiExecutor.getOpenPositions();
+    mt5Positions = positions.map((pos: any) => ({
+      ...pos,
+      unrealizedProfit: pos.unrealizedProfit || 0,
+      profit: pos.profit || 0,
+      commission: pos.commission || 0,
+      swap: pos.swap || 0,
+      lastUpdate: Date.now()
+    }));
+    
+    mt5LastUpdate = Date.now();
+    
+  } catch (error) {
+    console.error('Error updating MT5 data:', error);
+  }
+};
+
+// Start MT5 data updates
+const startMT5Updates = () => {
+  // Update every 10 seconds
+  setInterval(updateMT5Data, 10000);
+  // Initial update
+  updateMT5Data();
 };
 
 // Dashboard routes
@@ -71,6 +142,295 @@ app.get('/api/config', (req, res) => {
     currentAccountId: process.env.METAAPI_ACCOUNT_ID
   });
 });
+
+// ========== NEW MT5 TRADING DASHBOARD ENDPOINTS ==========
+
+// Get MT5 account information (balance, equity, margin, etc.)
+app.get('/api/mt5/account', async (req, res) => {
+  try {
+    if (!metaApiExecutor) {
+      const initialized = await initializeMT5();
+      if (!initialized || !metaApiExecutor) {
+        return res.status(503).json({ 
+          error: 'MT5 connection not available',
+          connected: false 
+        });
+      }
+    }
+
+    const isConnected = await metaApiExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({ 
+        error: 'MT5 not connected',
+        connected: false 
+      });
+    }
+
+    // Return cached data if recent, otherwise fetch fresh
+    const shouldUpdate = !mt5AccountInfo || (Date.now() - mt5LastUpdate) > 30000; // 30 seconds
+    if (shouldUpdate) {
+      await updateMT5Data();
+    }
+
+    res.json({
+      success: true,
+      connected: true,
+      account: mt5AccountInfo || {},
+      lastUpdate: mt5LastUpdate
+    });
+
+  } catch (error) {
+    console.error('Error getting MT5 account info:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch account information',
+      connected: false 
+    });
+  }
+});
+
+// Get MT5 open positions
+app.get('/api/mt5/positions', async (req, res) => {
+  try {
+    if (!metaApiExecutor) {
+      const initialized = await initializeMT5();
+      if (!initialized || !metaApiExecutor) {
+        return res.status(503).json({ 
+          error: 'MT5 connection not available',
+          positions: [] 
+        });
+      }
+    }
+
+    const isConnected = await metaApiExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({ 
+        error: 'MT5 not connected',
+        positions: [] 
+      });
+    }
+
+    // Return cached data if recent, otherwise fetch fresh
+    const shouldUpdate = !mt5Positions.length || (Date.now() - mt5LastUpdate) > 15000; // 15 seconds
+    if (shouldUpdate) {
+      await updateMT5Data();
+    }
+
+    res.json({
+      success: true,
+      connected: true,
+      positions: mt5Positions,
+      count: mt5Positions.length,
+      lastUpdate: mt5LastUpdate
+    });
+
+  } catch (error) {
+    console.error('Error getting MT5 positions:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch positions',
+      positions: [] 
+    });
+  }
+});
+
+// Get MT5 trading summary/statistics
+app.get('/api/mt5/summary', async (req, res) => {
+  try {
+    if (!metaApiExecutor) {
+      const initialized = await initializeMT5();
+      if (!initialized || !metaApiExecutor) {
+        return res.status(503).json({ 
+          error: 'MT5 connection not available' 
+        });
+      }
+    }
+
+    const isConnected = await metaApiExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({ 
+        error: 'MT5 not connected' 
+      });
+    }
+
+    // Ensure we have fresh data
+    await updateMT5Data();
+
+    // Calculate summary statistics
+    const totalUnrealizedPL = mt5Positions.reduce((sum, pos) => sum + (pos.unrealizedProfit || 0), 0);
+    const totalCommission = mt5Positions.reduce((sum, pos) => sum + (pos.commission || 0), 0);
+    const totalSwap = mt5Positions.reduce((sum, pos) => sum + (pos.swap || 0), 0);
+    
+    const buyPositions = mt5Positions.filter(pos => pos.type === 'POSITION_TYPE_BUY').length;
+    const sellPositions = mt5Positions.filter(pos => pos.type === 'POSITION_TYPE_SELL').length;
+    
+    const marginUsed = mt5AccountInfo?.margin || 0;
+    const marginFree = mt5AccountInfo?.freeMargin || 0;
+    const marginLevel = marginUsed > 0 ? ((mt5AccountInfo?.equity || 0) / marginUsed) * 100 : 0;
+
+    res.json({
+      success: true,
+      connected: true,
+      summary: {
+        account: {
+          balance: mt5AccountInfo?.balance || 0,
+          equity: mt5AccountInfo?.equity || 0,
+          margin: marginUsed,
+          freeMargin: marginFree,
+          marginLevel: marginLevel,
+          currency: mt5AccountInfo?.currency || 'USD'
+        },
+        positions: {
+          total: mt5Positions.length,
+          buy: buyPositions,
+          sell: sellPositions,
+          totalUnrealizedPL: totalUnrealizedPL,
+          totalCommission: totalCommission,
+          totalSwap: totalSwap
+        },
+        performance: {
+          dailyPL: totalUnrealizedPL, // This would need historical data for actual daily P&L
+          weeklyPL: totalUnrealizedPL, // This would need historical data
+          monthlyPL: totalUnrealizedPL // This would need historical data
+        }
+      },
+      lastUpdate: mt5LastUpdate
+    });
+
+  } catch (error) {
+    console.error('Error getting MT5 summary:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch trading summary' 
+    });
+  }
+});
+
+// Close a specific position
+app.post('/api/mt5/positions/:positionId/close', async (req, res) => {
+  try {
+    const { positionId } = req.params;
+    
+    if (!metaApiExecutor) {
+      return res.status(503).json({ 
+        error: 'MT5 connection not available' 
+      });
+    }
+
+    const isConnected = await metaApiExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({ 
+        error: 'MT5 not connected' 
+      });
+    }
+
+    const result = await metaApiExecutor.closePosition(positionId);
+    
+    if (result) {
+      // Update positions after closing
+      setTimeout(() => updateMT5Data(), 2000); // Give time for the close to process
+      
+      addLog({
+        level: 'info',
+        message: `✅ Position ${positionId} closed via dashboard`
+      });
+
+      res.json({
+        success: true,
+        message: `Position ${positionId} closed successfully`
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to close position'
+      });
+    }
+
+  } catch (error) {
+    console.error('Error closing position:', error);
+    res.status(500).json({ 
+      error: 'Failed to close position: ' + error 
+    });
+  }
+});
+
+// Get MT5 connection status
+app.get('/api/mt5/status', async (req, res) => {
+  try {
+    let connected = false;
+    let accountStatus = 'disconnected';
+    let initializationStatus = 'not_initialized';
+    
+    // First, ensure MT5 is initialized
+    if (!metaApiExecutor) {
+      console.log('🔄 MT5 not initialized, attempting initialization...');
+      const initialized = await initializeMT5();
+      initializationStatus = initialized ? 'initialized' : 'failed';
+    } else {
+      initializationStatus = 'initialized';
+    }
+    
+    if (metaApiExecutor) {
+      try {
+        connected = await metaApiExecutor.isConnected();
+        if (connected) {
+          accountStatus = 'connected';
+        } else {
+          accountStatus = 'disconnected';
+        }
+      } catch (error) {
+        console.log('❌ Error checking MT5 connection:', error);
+        accountStatus = 'error';
+      }
+    }
+
+    res.json({
+      connected,
+      status: accountStatus,
+      initialization: initializationStatus,
+      lastUpdate: mt5LastUpdate,
+      hasData: !!mt5AccountInfo,
+      positionsCount: mt5Positions.length,
+      executor: !!metaApiExecutor
+    });
+
+  } catch (error) {
+    console.error('Error getting MT5 status:', error);
+    res.status(500).json({ 
+      connected: false,
+      status: 'error',
+      initialization: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Force refresh MT5 data
+app.post('/api/mt5/refresh', async (req, res) => {
+  try {
+    if (!metaApiExecutor) {
+      const initialized = await initializeMT5();
+      if (!initialized) {
+        return res.status(503).json({ 
+          error: 'MT5 connection not available' 
+        });
+      }
+    }
+
+    await updateMT5Data();
+    
+    res.json({
+      success: true,
+      message: 'MT5 data refreshed',
+      lastUpdate: mt5LastUpdate
+    });
+
+  } catch (error) {
+    console.error('Error refreshing MT5 data:', error);
+    res.status(500).json({ 
+      error: 'Failed to refresh data: ' + error 
+    });
+  }
+});
+
+// ========== END MT5 ENDPOINTS ==========
 
 // Test MetaAPI account connection
 app.get('/api/metaapi/test/:accountId', async (req, res) => {
@@ -376,5 +736,18 @@ function calculateTradingStats(trades: any[]) {
     biggestLoss: losingTrades.length > 0 ? Math.min(...losingTrades.map(t => t.profit)) : 0
   };
 }
+
+// Initialize MT5 integration when server starts
+setTimeout(() => {
+  initializeMT5().then((success) => {
+    if (success) {
+      startMT5Updates();
+      addLog({
+        level: 'info',
+        message: '🚀 MT5 Dashboard Integration started successfully'
+      });
+    }
+  });
+}, 5000); // Wait 5 seconds after server start
 
 export default app;

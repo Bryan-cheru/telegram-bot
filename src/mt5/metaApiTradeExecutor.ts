@@ -1,7 +1,9 @@
 import MetaApi, { MetatraderAccount } from 'metaapi.cloud-sdk';
 import { ITradeExecutor } from '../types/ITradeExecutor';
-import { TradeSignal, TradeResult, TradeAction, MetaTraderTradeResponse } from '../types';
+import { TradeSignal, TradeResult, TradeAction, MetaTraderTradeResponse, OrderType } from '../types';
 import { logger } from '../utils/logger';
+import { OrderTypeDetector, OrderTypeDecision } from '../utils/orderTypeDetector';
+import { config } from '../utils/config';
 
 export class MetaApiTradeExecutor implements ITradeExecutor {
   private api: MetaApi;
@@ -127,10 +129,21 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
     try {
       if (!this.connection) return false;
       
-      // Try to get account info to test connection
-      await this.connection.getAccountInformation();
-      return true;
+      // Check if streaming connection is established and terminal state is available
+      const terminalState = this.connection.terminalState;
+      if (!terminalState) return false;
+      
+      // Check if we're connected to broker and have basic terminal state
+      if (terminalState.connected && terminalState.connectedToBroker) {
+        return true;
+      }
+      
+      // Fallback: try to get account info via terminal state
+      const accountInfo = terminalState.accountInformation;
+      return !!accountInfo;
+      
     } catch (error) {
+      logger.warn('Connection check failed:', error);
       return false;
     }
   }
@@ -197,6 +210,46 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         synchronized: terminalState.connected && terminalState.connectedToBroker
       });
 
+      // Check market status and server time
+      const now = new Date();
+      const serverTime = terminalState.accountInformation?.time || now;
+      logger.info('🕐 Server Time Check:', {
+        localTime: now.toISOString(),
+        serverTime: serverTime instanceof Date ? serverTime.toISOString() : serverTime,
+        terminalConnected: terminalState.connected,
+        brokerConnected: terminalState.connectedToBroker
+      });
+
+      // Check if we can get current price for the symbol (indicates market is open)
+      let symbolPrice = null;
+      try {
+        symbolPrice = terminalState.price(signal.symbol);
+        logger.info('💹 Symbol Price Check:', {
+          symbol: signal.symbol,
+          price: symbolPrice,
+          bid: symbolPrice?.bid,
+          ask: symbolPrice?.ask
+        });
+      } catch (error) {
+        logger.warn('⚠️ Could not get symbol price, market might be closed or symbol not available');
+      }
+
+      logger.info('🚀 Executing trade via MetaAPI:', {
+        symbol: signal.symbol,
+        action: signal.action,
+        targets: signal.targets.length,
+        synchronized: terminalState.connected && terminalState.connectedToBroker,
+        symbolPriceAvailable: !!symbolPrice
+      });
+
+      // Check market status before trading
+      const marketStatus = await this.checkMarketStatus(signal.symbol);
+      logger.info('🕐 Market Status Check:', {
+        symbol: signal.symbol,
+        isOpen: marketStatus.isOpen,
+        reason: marketStatus.reason
+      });
+
       // Get account info for position sizing
       const accountInfo = await this.getAccountInfo();
       
@@ -260,21 +313,155 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       for (let i = 0; i < signal.targets.length; i++) {
         const target = signal.targets[i];
         
-        // Check if stop loss is too close to target (minimum 10 points for forex)
-        const minDistance = 0.0010; // 10 points for EURUSD
+        // Get symbol-specific minimum stop level requirements
+        const getMinStopLevel = (symbol: string): number => {
+          const symbolType = symbol.toUpperCase();
+          
+          // Gold and precious metals (larger minimum distances)
+          if (symbolType.includes('XAU') || symbolType.includes('GOLD')) return 30.0;
+          if (symbolType.includes('XAG') || symbolType.includes('SILVER')) return 20.0;
+          
+          // Major indices (moderate distances)  
+          if (symbolType.includes('NAS100') || symbolType.includes('SPX500')) return 10.0;
+          if (symbolType.includes('US30') || symbolType.includes('DJ30')) return 50.0;
+          
+          // Forex majors (small distances in pips)
+          if (symbolType.includes('JPY')) return 0.10;   // 10 points for JPY pairs
+          if (symbolType.includes('USD') || symbolType.includes('EUR') || symbolType.includes('GBP')) return 0.0015; // 15 pips
+          
+          // Default fallback
+          return 1.0;
+        };
+
+        const minStopLevel = getMinStopLevel(signal.symbol);
         const distanceToTarget = Math.abs(signal.stopLoss - target);
         
-        if (distanceToTarget < minDistance) {
+        // Get current market price to validate stop levels
+        let currentPrice = null;
+        try {
+          const priceData = terminalState.price(signal.symbol);
+          currentPrice = signal.action === 'BUY' ? priceData?.ask : priceData?.bid;
+          logger.info(`💱 Current ${signal.symbol} price for ${signal.action}:`, {
+            bid: priceData?.bid,
+            ask: priceData?.ask,
+            using: currentPrice,
+            symbol: signal.symbol,
+            action: signal.action
+          });
+        } catch (error) {
+          logger.warn('Could not get current market price for stop validation');
+        }
+        
+        // Validate stop levels against current market price if available
+        if (currentPrice) {
+          const slDistanceFromMarket = Math.abs(signal.stopLoss - currentPrice);
+          const tpDistanceFromMarket = Math.abs(target - currentPrice);
+          
+          // Check if stops are too close to current market price
+          let adjustmentNeeded = false;
+          
+          if (slDistanceFromMarket < minStopLevel) {
+            logger.warn(`⚠️ Stop loss too close to current market price for ${signal.symbol}`, {
+              stopLoss: signal.stopLoss,
+              currentPrice: currentPrice,
+              distance: slDistanceFromMarket,
+              required: minStopLevel
+            });
+            adjustmentNeeded = true;
+          }
+          
+          if (tpDistanceFromMarket < minStopLevel) {
+            logger.warn(`⚠️ Take profit too close to current market price for ${signal.symbol}`, {
+              target: target,
+              currentPrice: currentPrice,
+              distance: tpDistanceFromMarket,
+              required: minStopLevel
+            });
+            adjustmentNeeded = true;
+          }
+          
+          // If market has moved significantly, consider using LIMIT order instead
+          const entryMid = (signal.entryZone.min + signal.entryZone.max) / 2;
+          const marketMovement = Math.abs(currentPrice - entryMid);
+          
+          if (adjustmentNeeded && marketMovement > minStopLevel * 0.5) {
+            logger.info(`🎯 Market moved significantly (${marketMovement} points). Attempting LIMIT order instead of MARKET order.`);
+            
+            // Try LIMIT order at entry zone instead of market order
+            try {
+              let result;
+              const limitPrice = signal.action === 'BUY' ? signal.entryZone.min : signal.entryZone.max;
+              
+              if (signal.action === 'BUY') {
+                result = await this.connection.createLimitBuyOrder(
+                  signal.symbol,
+                  volumePerTarget,
+                  limitPrice,
+                  signal.stopLoss,
+                  target,
+                  {
+                    comment: `TelegramBot-Limit-${Date.now()}`,
+                    magic: 123456
+                  }
+                );
+              } else {
+                result = await this.connection.createLimitSellOrder(
+                  signal.symbol,
+                  volumePerTarget,
+                  limitPrice,
+                  signal.stopLoss,
+                  target,
+                  {
+                    comment: `TelegramBot-Limit-${Date.now()}`,
+                    magic: 123456
+                  }
+                );
+              }
+              
+              results.push(result);
+              logger.info(`✅ LIMIT order placed successfully for target ${i + 1}:`, {
+                orderId: result.orderId,
+                limitPrice: limitPrice,
+                volume: volumePerTarget,
+                target: target
+              });
+              continue;
+              
+            } catch (limitError: any) {
+              logger.warn(`Failed to place LIMIT order, skipping target ${i + 1}:`, limitError.message);
+              results.push({ 
+                numericCode: 10016,
+                stringCode: 'TRADE_RETCODE_INVALID_STOPS',
+                message: `Market moved too far from entry zone. LIMIT order failed: ${limitError.message}`,
+                error: 'Market conditions unsuitable for immediate execution'
+              });
+              continue;
+            }
+          } else if (adjustmentNeeded) {
+            // If minor adjustment needed, skip this target
+            results.push({ 
+              numericCode: 10016,
+              stringCode: 'TRADE_RETCODE_INVALID_STOPS',
+              message: `Stops too close to current price (SL: ${slDistanceFromMarket}, TP: ${tpDistanceFromMarket} vs required: ${minStopLevel})`,
+              error: 'Stops violate broker minimum distance requirements'
+            });
+            continue;
+          }
+        }
+        
+        // Secondary check: SL to TP distance (fallback validation)
+        if (distanceToTarget < minStopLevel) {
           logger.warn(`⚠️ Skipping target ${i + 1}: Stop loss too close to target`, {
             target: target,
             stopLoss: signal.stopLoss,
             distance: distanceToTarget,
-            required: minDistance
+            required: minStopLevel,
+            symbol: signal.symbol
           });
           results.push({ 
             numericCode: 10016,
             stringCode: 'TRADE_RETCODE_INVALID_STOPS',
-            message: `Stop loss too close to target ${i + 1}`,
+            message: `SL-TP distance too small (${distanceToTarget} < ${minStopLevel})`,
             error: 'Stop loss too close to target'
           });
           continue;
@@ -326,8 +513,51 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
             error: errorMessage,
             stringCode: stringCode,
             symbol: signal.symbol,
-            volume: volumePerTarget
+            volume: volumePerTarget,
+            numericCode: error?.numericCode
           });
+
+          // Special handling for market closed error
+          if (errorMessage.includes('Market is closed') || stringCode.includes('MARKET_CLOSED')) {
+            logger.warn('🕐 Market Closed - Detailed Analysis:', {
+              symbol: signal.symbol,
+              errorCode: stringCode,
+              numericCode: error?.numericCode,
+              localTime: new Date().toLocaleString(),
+              utcTime: new Date().toISOString()
+            });
+            
+            // Get current market status
+            try {
+              const currentMarketStatus = await this.checkMarketStatus(signal.symbol);
+              logger.info('📊 Current Market Status:', {
+                isOpen: currentMarketStatus.isOpen,
+                reason: currentMarketStatus.reason,
+                serverTime: currentMarketStatus.serverTime,
+                lastPrice: currentMarketStatus.price
+              });
+            } catch (statusError) {
+              logger.warn('Could not check market status:', statusError);
+            }
+            
+            // Provide helpful message based on current time
+            const now = new Date();
+            const dayOfWeek = now.getDay(); // 0=Sunday, 6=Saturday
+            const hour = now.getUTCHours();
+            
+            let helpfulMessage = 'Market is closed. ';
+            if (dayOfWeek === 0 && hour < 22) {
+              helpfulMessage += `Forex markets open Sunday 5 PM EST (22 UTC). Current time: ${hour} UTC.`;
+            } else if (dayOfWeek === 6) {
+              helpfulMessage += 'Markets closed on Saturday. Will reopen Sunday 5 PM EST.';
+            } else if (dayOfWeek === 5 && hour >= 22) {
+              helpfulMessage += 'Markets closed Friday 5 PM EST. Will reopen Sunday 5 PM EST.';
+            } else {
+              helpfulMessage += 'Check if there are holidays or broker-specific trading hours.';
+            }
+            
+            logger.info('💡 Trading Schedule Info:', helpfulMessage);
+          }
           
           results.push({ 
             numericCode: error?.numericCode || -1,
@@ -430,6 +660,228 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         stringCode: error.stringCode
       });
       return false;
+    }
+  }
+
+  async checkMarketStatus(symbol: string): Promise<{
+    isOpen: boolean;
+    serverTime: string;
+    price?: any;
+    specification?: any;
+    reason?: string;
+  }> {
+    try {
+      if (!this.connection) {
+        return {
+          isOpen: false,
+          serverTime: new Date().toISOString(),
+          reason: 'Not connected to MetaAPI'
+        };
+      }
+
+      const terminalState = this.connection.terminalState;
+      const serverTime = terminalState.accountInformation?.time || new Date();
+      
+      // Check if we can get current price (indicates market is open)
+      let price = null;
+      let specification = null;
+      
+      try {
+        price = terminalState.price(symbol);
+        specification = terminalState.specification(symbol);
+      } catch (error) {
+        // Price not available might mean market closed
+      }
+
+      const isOpen = !!(price && price.bid && price.ask);
+      
+      logger.info('🕐 Market Status Check:', {
+        symbol: symbol,
+        isOpen: isOpen,
+        serverTime: serverTime instanceof Date ? serverTime.toISOString() : serverTime,
+        priceAvailable: !!price,
+        specificationAvailable: !!specification
+      });
+
+      return {
+        isOpen: isOpen,
+        serverTime: serverTime instanceof Date ? serverTime.toISOString() : serverTime,
+        price: price,
+        specification: specification,
+        reason: isOpen ? 'Market open - price available' : 'Market closed - no price available'
+      };
+
+    } catch (error: any) {
+      logger.error('Error checking market status:', error);
+      return {
+        isOpen: false,
+        serverTime: new Date().toISOString(),
+        reason: `Error checking market: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Execute market order (immediate execution)
+   */
+  private async executeMarketOrder(signal: TradeSignal, volume: number, target: number): Promise<any> {
+    logger.info('📈 Executing MARKET order:', {
+      symbol: signal.symbol,
+      action: signal.action,
+      volume,
+      target
+    });
+
+    if (signal.action === 'BUY') {
+      return await this.connection.createMarketBuyOrder(
+        signal.symbol,
+        volume,
+        signal.stopLoss,
+        target,
+        {
+          comment: `TelegramBot-MARKET-${Date.now()}`,
+          magic: 123456
+        }
+      );
+    } else {
+      return await this.connection.createMarketSellOrder(
+        signal.symbol,
+        volume,
+        signal.stopLoss,
+        target,
+        {
+          comment: `TelegramBot-MARKET-${Date.now()}`,
+          magic: 123456
+        }
+      );
+    }
+  }
+
+  /**
+   * Execute limit order (entry at specific price)
+   */
+  private async executeLimitOrder(signal: TradeSignal, volume: number, target: number): Promise<any> {
+    if (!signal.entryPrice) {
+      throw new Error('Entry price required for limit orders');
+    }
+
+    logger.info('🎯 Executing LIMIT order:', {
+      symbol: signal.symbol,
+      action: signal.action,
+      volume,
+      entryPrice: signal.entryPrice,
+      target
+    });
+
+    if (signal.action === 'BUY') {
+      return await this.connection.createLimitBuyOrder(
+        signal.symbol,
+        volume,
+        signal.entryPrice,
+        signal.stopLoss,
+        target,
+        {
+          comment: `TelegramBot-LIMIT-${Date.now()}`,
+          magic: 123456,
+          expirationType: 'ORDER_TIME_SPECIFIED',
+          expirationTime: signal.expirationTime
+        }
+      );
+    } else {
+      return await this.connection.createLimitSellOrder(
+        signal.symbol,
+        volume,
+        signal.entryPrice,
+        signal.stopLoss,
+        target,
+        {
+          comment: `TelegramBot-LIMIT-${Date.now()}`,
+          magic: 123456,
+          expirationType: 'ORDER_TIME_SPECIFIED',
+          expirationTime: signal.expirationTime
+        }
+      );
+    }
+  }
+
+  /**
+   * Execute pending order (stop/stop limit orders)
+   */
+  private async executePendingOrder(signal: TradeSignal, volume: number, target: number): Promise<any> {
+    if (!signal.entryPrice) {
+      throw new Error('Entry price required for pending orders');
+    }
+
+    logger.info('⏰ Executing PENDING order:', {
+      symbol: signal.symbol,
+      action: signal.action,
+      volume,
+      entryPrice: signal.entryPrice,
+      target
+    });
+
+    // Determine if this should be a stop or limit order based on current market price
+    try {
+      const symbolPrice = this.connection.terminalState.price(signal.symbol);
+      const currentPrice = signal.action === 'BUY' ? symbolPrice.ask : symbolPrice.bid;
+      
+      if (signal.action === 'BUY') {
+        // Buy stop if entry price > current price, buy limit if entry price < current price
+        if (signal.entryPrice > currentPrice) {
+          return await this.connection.createStopBuyOrder(
+            signal.symbol,
+            volume,
+            signal.entryPrice,
+            signal.stopLoss,
+            target,
+            {
+              comment: `TelegramBot-STOP-${Date.now()}`,
+              magic: 123456,
+              expirationType: 'ORDER_TIME_SPECIFIED',
+              expirationTime: signal.expirationTime
+            }
+          );
+        } else {
+          return await this.executeLimitOrder(signal, volume, target);
+        }
+      } else {
+        // Sell stop if entry price < current price, sell limit if entry price > current price
+        if (signal.entryPrice < currentPrice) {
+          return await this.connection.createStopSellOrder(
+            signal.symbol,
+            volume,
+            signal.entryPrice,
+            signal.stopLoss,
+            target,
+            {
+              comment: `TelegramBot-STOP-${Date.now()}`,
+              magic: 123456,
+              expirationType: 'ORDER_TIME_SPECIFIED',
+              expirationTime: signal.expirationTime
+            }
+          );
+        } else {
+          return await this.executeLimitOrder(signal, volume, target);
+        }
+      }
+    } catch (error) {
+      logger.warn('Could not get current price for pending order logic, using limit order');
+      return await this.executeLimitOrder(signal, volume, target);
+    }
+  }
+
+  /**
+   * Get pip value for different symbol types
+   */
+  private getPipValue(symbol: string): number {
+    if (symbol.includes('JPY')) {
+      return 0.01; // JPY pairs have 2 decimal places
+    } else if (symbol.includes('XAU') || symbol.includes('GOLD')) {
+      return 0.1; // Gold typically trades with 1 decimal
+    } else if (symbol.includes('XAG') || symbol.includes('SILVER')) {
+      return 0.01; // Silver typically trades with 2 decimals
+    } else {
+      return 0.0001; // Standard forex pairs have 4 decimal places
     }
   }
 }

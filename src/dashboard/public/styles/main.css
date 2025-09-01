@@ -561,3 +561,354 @@ select:focus {
     gap: var(--space-md);
   }
 }
+
+/* ========== MT5 TRADING DASHBOARD STYLES ========== */
+
+/* Trading Overview Styles */
+.trading-overview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xl);
+  margin-top: var(--space-xl);
+}
+
+.account-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-lg);
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-md);
+  background: var(--gray-700);
+  border-radius: var(--border-radius);
+  border: var(--border-width) solid var(--gray-600);
+}
+
+.summary-item .label {
+  color: var(--gray-300);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.summary-item .value {
+  font-weight: 600;
+  font-size: var(--font-size-base);
+}
+
+.summary-item .value.profit-loss.positive {
+  color: var(--success);
+}
+
+.summary-item .value.profit-loss.negative {
+  color: var(--danger);
+}
+
+.summary-item .value.status {
+  font-size: var(--font-size-sm);
+}
+
+.status.connected {
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.status.connected::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--success);
+  border-radius: 50%;
+}
+
+.status.disconnected {
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.status.disconnected::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--danger);
+  border-radius: 50%;
+}
+
+.status.warning {
+  color: var(--warning);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.status.warning::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--warning);
+  border-radius: 50%;
+}
+
+.status.error {
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.status.error::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--danger);
+  border-radius: 50%;
+}
+
+/* Trading Grid Layout */
+.trading-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-xl);
+  height: calc(100vh - 140px);
+}
+
+.positions-card {
+  min-height: 500px;
+}
+
+.performance-card {
+  max-height: 500px;
+}
+
+/* Positions Table Styles */
+.positions-table {
+  font-size: var(--font-size-sm);
+}
+
+.positions-table th {
+  background: var(--gray-700);
+  color: var(--gray-300);
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  padding: var(--space-md) var(--space-sm);
+}
+
+.positions-table td {
+  padding: var(--space-md) var(--space-sm);
+  border-bottom: var(--border-width) solid var(--gray-700);
+  vertical-align: middle;
+}
+
+.positions-table td.profit {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.positions-table td.loss {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.positions-table .no-data {
+  padding: var(--space-2xl);
+  text-align: center;
+  color: var(--gray-400);
+}
+
+.positions-table .no-data i {
+  font-size: var(--font-size-3xl);
+  margin-bottom: var(--space-md);
+  opacity: 0.5;
+}
+
+.positions-table .no-data p {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+/* Badge Styles */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  border-radius: calc(var(--border-radius) / 2);
+  letter-spacing: 0.025em;
+}
+
+.badge-success {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+  border: var(--border-width) solid rgba(16, 185, 129, 0.3);
+}
+
+.badge-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+  border: var(--border-width) solid rgba(239, 68, 68, 0.3);
+}
+
+/* Performance Stats */
+.performance-stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.perf-item {
+  display: flex;
+  justify-content: between;
+  align-items: center;
+  padding: var(--space-lg);
+  background: var(--gray-700);
+  border-radius: var(--border-radius);
+  border: var(--border-width) solid var(--gray-600);
+}
+
+.perf-label {
+  color: var(--gray-300);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  flex: 1;
+}
+
+.perf-value {
+  font-weight: 700;
+  font-size: var(--font-size-lg);
+  text-align: right;
+}
+
+.perf-value.positive {
+  color: var(--success);
+}
+
+.perf-value.negative {
+  color: var(--danger);
+}
+
+/* Header Actions */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.header-actions .badge {
+  background: var(--primary-light);
+  color: var(--primary);
+  border: var(--border-width) solid rgba(59, 130, 246, 0.3);
+}
+
+/* Activity Feed Enhancements */
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md) 0;
+  border-bottom: var(--border-width) solid var(--gray-700);
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-item i {
+  margin-top: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.activity-item span {
+  flex: 1;
+  color: var(--gray-300);
+}
+
+.activity-time {
+  color: var(--gray-400);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
+.text-info {
+  color: var(--info);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+/* Stat Card Icon Colors */
+.stat-icon.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+}
+
+.stat-icon.danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+/* Responsive Adjustments for Trading Dashboard */
+@media (max-width: 1200px) {
+  .trading-overview {
+    grid-template-columns: 1fr;
+  }
+  
+  .trading-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  
+  .positions-card,
+  .performance-card {
+    min-height: auto;
+    max-height: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .account-summary {
+    grid-template-columns: 1fr;
+  }
+  
+  .positions-table {
+    font-size: var(--font-size-xs);
+  }
+  
+  .positions-table th,
+  .positions-table td {
+    padding: var(--space-sm);
+  }
+  
+  .performance-stats {
+    gap: var(--space-md);
+  }
+  
+  .perf-item {
+    padding: var(--space-md);
+  }
+  
+  .perf-value {
+    font-size: var(--font-size-base);
+  }
+}
+
+/* ========== END MT5 TRADING DASHBOARD STYLES ========== */

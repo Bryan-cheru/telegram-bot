@@ -6,6 +6,7 @@ class TradingDashboard {
     this.currentPage = 'dashboard';
     this.isLoading = false;
     this.eventSource = null;
+    this.mt5UpdateInterval = null;
     
     this.init();
   }
@@ -14,6 +15,7 @@ class TradingDashboard {
     this.setupEventListeners();
     this.loadInitialData();
     this.startRealTimeUpdates();
+    this.startMT5Updates();
   }
 
   setupEventListeners() {
@@ -69,6 +71,7 @@ class TradingDashboard {
     // Update page title
     const titles = {
       dashboard: 'Dashboard',
+      trading: 'Live Trading',
       accounts: 'Account Settings',
       trades: 'Trade History',
       logs: 'System Logs'
@@ -83,6 +86,12 @@ class TradingDashboard {
 
   async loadPageData(page) {
     switch (page) {
+      case 'dashboard':
+        await this.updateMT5Dashboard();
+        break;
+      case 'trading':
+        await this.updateTradingData();
+        break;
       case 'accounts':
         await this.loadAccountSettings();
         break;
@@ -101,6 +110,9 @@ class TradingDashboard {
     try {
       // Load dashboard stats
       await this.updateStats();
+      
+      // Load MT5 account data
+      await this.updateMT5Dashboard();
       
       // Load account settings if on accounts page
       if (this.currentPage === 'accounts') {
@@ -492,6 +504,278 @@ class TradingDashboard {
     }, 5000);
   }
 
+  // ========== MT5 TRADING DATA FUNCTIONS ==========
+  
+  startMT5Updates() {
+    // Update MT5 data every 15 seconds
+    this.mt5UpdateInterval = setInterval(() => {
+      if (this.currentPage === 'dashboard' || this.currentPage === 'trading') {
+        this.updateMT5Dashboard();
+        if (this.currentPage === 'trading') {
+          this.updateTradingData();
+        }
+      }
+    }, 15000);
+  }
+
+  async updateMT5Dashboard() {
+    try {
+      // Get MT5 summary data
+      const summaryResponse = await fetch('/api/mt5/summary');
+      const summaryData = await summaryResponse.json();
+      
+      if (summaryData.success && summaryData.summary) {
+        this.updateDashboardStats(summaryData.summary);
+      }
+
+      // Get MT5 status
+      const statusResponse = await fetch('/api/mt5/status');
+      const statusData = await statusResponse.json();
+      
+      this.updateConnectionStatus(statusData);
+      
+    } catch (error) {
+      console.error('Error updating MT5 dashboard:', error);
+      this.updateConnectionStatus({ connected: false, status: 'error' });
+    }
+  }
+
+  updateDashboardStats(summary) {
+    const { account, positions } = summary;
+    
+    // Update account balance
+    const balanceElement = document.getElementById('account-balance');
+    if (balanceElement && account) {
+      balanceElement.textContent = this.formatCurrency(account.balance, account.currency);
+    }
+    
+    // Update account equity
+    const equityElement = document.getElementById('account-equity');
+    if (equityElement && account) {
+      equityElement.textContent = this.formatCurrency(account.equity, account.currency);
+    }
+    
+    // Update unrealized P&L
+    const plElement = document.getElementById('unrealized-pl');
+    if (plElement && positions) {
+      const plValue = positions.totalUnrealizedPL || 0;
+      plElement.textContent = this.formatCurrency(plValue, account.currency);
+      plElement.className = plValue >= 0 ? 'stat-change positive' : 'stat-change negative';
+    }
+    
+    // Update open positions count
+    const positionsElement = document.getElementById('open-positions');
+    if (positionsElement && positions) {
+      positionsElement.textContent = positions.total || 0;
+    }
+    
+    // Update positions breakdown
+    const breakdownElement = document.getElementById('positions-breakdown');
+    if (breakdownElement && positions) {
+      breakdownElement.textContent = `${positions.buy || 0} Buy • ${positions.sell || 0} Sell`;
+    }
+    
+    // Update account summary section
+    this.updateAccountSummary(summary);
+  }
+
+  updateAccountSummary(summary) {
+    const { account, positions } = summary;
+    
+    // Update free margin
+    const freeMarginElement = document.getElementById('free-margin');
+    if (freeMarginElement && account) {
+      freeMarginElement.textContent = this.formatCurrency(account.freeMargin, account.currency);
+    }
+    
+    // Update margin level
+    const marginLevelElement = document.getElementById('margin-level');
+    if (marginLevelElement && account) {
+      marginLevelElement.textContent = `${account.marginLevel?.toFixed(2) || 0}%`;
+    }
+    
+    // Update total P&L
+    const totalPlElement = document.getElementById('total-pl');
+    if (totalPlElement && positions) {
+      const plValue = positions.totalUnrealizedPL || 0;
+      totalPlElement.textContent = this.formatCurrency(plValue, account.currency);
+      totalPlElement.className = `value profit-loss ${plValue >= 0 ? 'positive' : 'negative'}`;
+    }
+  }
+
+  updateConnectionStatus(statusData) {
+    const statusElement = document.getElementById('mt5-connection-status');
+    const botStatusElement = document.getElementById('bot-status');
+    
+    console.log('📊 MT5 Status Update:', statusData); // Debug log
+    
+    if (statusElement) {
+      let statusHtml = '';
+      let statusClass = '';
+      
+      if (statusData.connected) {
+        statusHtml = '<span class="status connected">Connected</span>';
+        statusClass = 'connected';
+      } else if (statusData.initialization === 'failed') {
+        statusHtml = '<span class="status error">Initialization Failed</span>';
+        statusClass = 'error';
+      } else if (statusData.initialization === 'not_initialized') {
+        statusHtml = '<span class="status warning">Initializing...</span>';
+        statusClass = 'warning';
+      } else {
+        statusHtml = '<span class="status disconnected">Disconnected</span>';
+        statusClass = 'disconnected';
+      }
+      
+      statusElement.innerHTML = statusHtml;
+    }
+    
+    if (botStatusElement) {
+      if (statusData.connected) {
+        botStatusElement.textContent = 'MT5 Online';
+        botStatusElement.parentElement.parentElement.querySelector('.stat-icon').className = 'stat-icon success';
+      } else if (statusData.initialization === 'not_initialized') {
+        botStatusElement.textContent = 'Starting up...';
+        botStatusElement.parentElement.parentElement.querySelector('.stat-icon').className = 'stat-icon warning';
+      } else if (statusData.initialization === 'failed') {
+        botStatusElement.textContent = 'MT5 Failed';
+        botStatusElement.parentElement.parentElement.querySelector('.stat-icon').className = 'stat-icon danger';
+      } else {
+        botStatusElement.textContent = 'MT5 Offline';
+        botStatusElement.parentElement.parentElement.querySelector('.stat-icon').className = 'stat-icon danger';
+      }
+    }
+  }
+
+  async updateTradingData() {
+    try {
+      // Update positions table
+      await this.updatePositionsTable();
+      
+      // Update performance stats
+      await this.updatePerformanceStats();
+      
+    } catch (error) {
+      console.error('Error updating trading data:', error);
+    }
+  }
+
+  async updatePositionsTable() {
+    try {
+      const response = await fetch('/api/mt5/positions');
+      const data = await response.json();
+      
+      const tableBody = document.getElementById('positions-table-body');
+      const positionsCount = document.getElementById('positions-count');
+      
+      if (!tableBody) return;
+      
+      if (data.success && data.positions && data.positions.length > 0) {
+        // Update positions count
+        if (positionsCount) {
+          positionsCount.textContent = `${data.positions.length} position${data.positions.length > 1 ? 's' : ''}`;
+        }
+        
+        // Build table rows
+        const rows = data.positions.map(position => {
+          const profitClass = (position.unrealizedProfit || 0) >= 0 ? 'profit' : 'loss';
+          const typeDisplay = position.type === 'POSITION_TYPE_BUY' ? 'BUY' : 'SELL';
+          
+          return `
+            <tr>
+              <td><strong>${position.symbol}</strong></td>
+              <td><span class="badge badge-${position.type === 'POSITION_TYPE_BUY' ? 'success' : 'danger'}">${typeDisplay}</span></td>
+              <td>${position.volume}</td>
+              <td>${position.openPrice?.toFixed(5) || 'N/A'}</td>
+              <td>${position.currentPrice?.toFixed(5) || 'N/A'}</td>
+              <td class="${profitClass}">${this.formatCurrency(position.unrealizedProfit || 0)}</td>
+              <td>
+                <button class="btn btn-danger btn-sm" onclick="closePosition('${position.id}')" title="Close Position">
+                  <i class="fas fa-times"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+        
+        tableBody.innerHTML = rows;
+      } else {
+        // No positions
+        if (positionsCount) {
+          positionsCount.textContent = '0 positions';
+        }
+        
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="7" class="text-center no-data">
+              <i class="fas fa-chart-line"></i>
+              <p>No open positions</p>
+            </td>
+          </tr>
+        `;
+      }
+    } catch (error) {
+      console.error('Error updating positions table:', error);
+    }
+  }
+
+  async updatePerformanceStats() {
+    try {
+      const response = await fetch('/api/mt5/summary');
+      const data = await response.json();
+      
+      if (data.success && data.summary) {
+        const { positions, performance } = data.summary;
+        
+        // Update performance stats
+        const dailyPlElement = document.getElementById('daily-pl');
+        const weeklyPlElement = document.getElementById('weekly-pl');
+        const monthlyPlElement = document.getElementById('monthly-pl');
+        const commissionElement = document.getElementById('total-commission');
+        const swapElement = document.getElementById('total-swap');
+        
+        if (dailyPlElement && performance) {
+          dailyPlElement.textContent = this.formatCurrency(performance.dailyPL || 0);
+          dailyPlElement.className = `perf-value ${(performance.dailyPL || 0) >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        if (weeklyPlElement && performance) {
+          weeklyPlElement.textContent = this.formatCurrency(performance.weeklyPL || 0);
+          weeklyPlElement.className = `perf-value ${(performance.weeklyPL || 0) >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        if (monthlyPlElement && performance) {
+          monthlyPlElement.textContent = this.formatCurrency(performance.monthlyPL || 0);
+          monthlyPlElement.className = `perf-value ${(performance.monthlyPL || 0) >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        if (commissionElement && positions) {
+          commissionElement.textContent = this.formatCurrency(Math.abs(positions.totalCommission || 0));
+        }
+        
+        if (swapElement && positions) {
+          swapElement.textContent = this.formatCurrency(positions.totalSwap || 0);
+          swapElement.className = `perf-value ${(positions.totalSwap || 0) >= 0 ? 'positive' : 'negative'}`;
+        }
+      }
+    } catch (error) {
+      console.error('Error updating performance stats:', error);
+    }
+  }
+
+  formatCurrency(amount, currency = 'USD') {
+    if (typeof amount !== 'number') return '$0.00';
+    
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  }
+
+  // ========== END MT5 FUNCTIONS ==========
+
   // Cleanup method
   destroy() {
     if (this.eventSource) {
@@ -499,6 +783,9 @@ class TradingDashboard {
     }
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
+    }
+    if (this.mt5UpdateInterval) {
+      clearInterval(this.mt5UpdateInterval);
     }
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
@@ -510,6 +797,55 @@ class TradingDashboard {
 document.addEventListener('DOMContentLoaded', () => {
   window.dashboard = new TradingDashboard();
 });
+
+// Global functions accessible from HTML
+window.refreshMT5Data = async function() {
+  if (window.dashboard) {
+    await window.dashboard.updateMT5Dashboard();
+    if (window.dashboard.currentPage === 'trading') {
+      await window.dashboard.updateTradingData();
+    }
+  }
+};
+
+window.refreshPositions = async function() {
+  if (window.dashboard) {
+    await window.dashboard.updatePositionsTable();
+  }
+};
+
+window.closePosition = async function(positionId) {
+  if (!confirm('Are you sure you want to close this position?')) {
+    return;
+  }
+  
+  try {
+    const response = await fetch(`/api/mt5/positions/${positionId}/close`, {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      // Show success notification
+      if (window.dashboard) {
+        window.dashboard.showNotification('Position closed successfully', 'success');
+        // Refresh positions after a short delay
+        setTimeout(() => {
+          window.dashboard.updatePositionsTable();
+          window.dashboard.updateMT5Dashboard();
+        }, 2000);
+      }
+    } else {
+      throw new Error(result.error || 'Failed to close position');
+    }
+  } catch (error) {
+    console.error('Error closing position:', error);
+    if (window.dashboard) {
+      window.dashboard.showNotification('Failed to close position: ' + error.message, 'error');
+    }
+  }
+};
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {

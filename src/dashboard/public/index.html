@@ -21,6 +21,9 @@
             <li><a href="#dashboard" class="nav-link active" data-page="dashboard">
                 <i class="fas fa-tachometer-alt"></i> Dashboard
             </a></li>
+            <li><a href="#trading" class="nav-link" data-page="trading">
+                <i class="fas fa-chart-candlestick"></i> Live Trading
+            </a></li>
             <li><a href="#accounts" class="nav-link" data-page="accounts">
                 <i class="fas fa-wallet"></i> Account Settings
             </a></li>
@@ -62,19 +65,30 @@
                         </div>
                         <div class="stat-content">
                             <h3>Bot Status</h3>
-                            <div class="stat-value">Online</div>
-                            <div class="stat-change positive">Uptime: 2h 34m</div>
+                            <div class="stat-value" id="bot-status">Connecting...</div>
+                            <div class="stat-change" id="bot-uptime">Starting up...</div>
                         </div>
                     </div>
                     
                     <div class="stat-card">
                         <div class="stat-icon success">
-                            <i class="fas fa-percentage"></i>
+                            <i class="fas fa-dollar-sign"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Success Rate</h3>
-                            <div class="stat-value">100%</div>
-                            <div class="stat-change positive">7/7 parsed</div>
+                            <h3>Account Balance</h3>
+                            <div class="stat-value" id="account-balance">$0.00</div>
+                            <div class="stat-change" id="account-currency">USD</div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon info">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3>Account Equity</h3>
+                            <div class="stat-value" id="account-equity">$0.00</div>
+                            <div class="stat-change" id="unrealized-pl">+$0.00 P&L</div>
                         </div>
                     </div>
                     
@@ -83,20 +97,127 @@
                             <i class="fas fa-exchange-alt"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Trades Today</h3>
-                            <div class="stat-value">0</div>
-                            <div class="stat-change neutral">Markets closed</div>
+                            <h3>Open Positions</h3>
+                            <div class="stat-value" id="open-positions">0</div>
+                            <div class="stat-change" id="positions-breakdown">0 Buy • 0 Sell</div>
                         </div>
                     </div>
                 </div>
 
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Recent Activity</h2>
+                <div class="trading-overview">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2><i class="fas fa-chart-pie"></i> Account Overview</h2>
+                            <button class="btn btn-outline btn-sm" id="refresh-account" onclick="refreshMT5Data()">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="account-summary" id="account-summary">
+                                <div class="summary-item">
+                                    <span class="label">Free Margin:</span>
+                                    <span class="value" id="free-margin">$0.00</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="label">Margin Level:</span>
+                                    <span class="value" id="margin-level">0.00%</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="label">Total P&L:</span>
+                                    <span class="value profit-loss" id="total-pl">$0.00</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="label">Connection Status:</span>
+                                    <span class="value status" id="mt5-connection-status">Connecting...</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div class="activity-feed" id="activity-feed">
-                            <p>No recent activity. System ready for Monday trading.</p>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h2><i class="fas fa-clock"></i> Recent Activity</h2>
+                        </div>
+                        <div class="card-body">
+                            <div class="activity-feed" id="activity-feed">
+                                <div class="activity-item">
+                                    <i class="fas fa-info-circle text-info"></i>
+                                    <span>System initializing MT5 connection...</span>
+                                    <small class="activity-time">Just now</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Trading Page -->
+            <section id="trading" class="page">
+                <div class="trading-grid">
+                    <div class="card positions-card">
+                        <div class="card-header">
+                            <h2><i class="fas fa-list"></i> Open Positions</h2>
+                            <div class="header-actions">
+                                <span class="badge" id="positions-count">0 positions</span>
+                                <button class="btn btn-outline btn-sm" onclick="refreshPositions()">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-container">
+                                <table class="table positions-table" id="positions-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Symbol</th>
+                                            <th>Type</th>
+                                            <th>Volume</th>
+                                            <th>Open Price</th>
+                                            <th>Current Price</th>
+                                            <th>P&L</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="positions-table-body">
+                                        <tr>
+                                            <td colspan="7" class="text-center no-data">
+                                                <i class="fas fa-chart-line"></i>
+                                                <p>No open positions</p>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card performance-card">
+                        <div class="card-header">
+                            <h2><i class="fas fa-trophy"></i> Performance</h2>
+                        </div>
+                        <div class="card-body">
+                            <div class="performance-stats" id="performance-stats">
+                                <div class="perf-item">
+                                    <span class="perf-label">Today's P&L</span>
+                                    <span class="perf-value" id="daily-pl">$0.00</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">This Week</span>
+                                    <span class="perf-value" id="weekly-pl">$0.00</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">This Month</span>
+                                    <span class="perf-value" id="monthly-pl">$0.00</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Total Commission</span>
+                                    <span class="perf-value" id="total-commission">$0.00</span>
+                                </div>
+                                <div class="perf-item">
+                                    <span class="perf-label">Total Swap</span>
+                                    <span class="perf-value" id="total-swap">$0.00</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

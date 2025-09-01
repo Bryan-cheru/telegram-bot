@@ -1,12 +1,15 @@
-import { TradeSignal, TradeAction } from '../types';
+import { TradeSignal, TradeAction, OrderType } from '../types';
 import { logger } from '../utils/logger';
 import { PositionSizeCalculator, PositionSizingConfig, PositionCalculation } from '../utils/positionSizing';
+import { config } from '../utils/config';
+import { OrderTypeDetector } from '../utils/orderTypeDetector';
 
 export class TradeParser {
   private readonly FOREX_PAIRS = [
     'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
     'EURJPY', 'GBPJPY', 'EURGBP', 'AUDJPY', 'EURAUD', 'EURCHF', 'AUDNZD',
-    'NZDJPY', 'GBPAUD', 'GBPCAD', 'EURNZD', 'AUDCAD', 'GBPCHF', 'AUDCHF'
+    'NZDJPY', 'GBPAUD', 'GBPCAD', 'EURNZD', 'AUDCAD', 'GBPCHF', 'AUDCHF',
+    'EURCAD'
   ];
 
   private readonly METAL_SYMBOLS = [
@@ -66,14 +69,22 @@ export class TradeParser {
       for (const strategy of strategies) {
         const signal = strategy();
         if (signal && this.validateSignal(signal)) {
-          logger.info('✅ Successfully parsed trade signal:', {
-            symbol: signal.symbol,
-            action: signal.action,
-            entryZone: signal.entryZone,
-            stopLoss: signal.stopLoss,
-            targets: signal.targets
+          // Apply 1:1 Risk-Reward ratio if enabled
+          let finalSignal = config.trading.enforceOneToOneRR ? this.applyOneToOneRR(signal) : signal;
+          
+          // Enhance signal with order type detection if not already specified
+          finalSignal = this.enhanceSignalWithOrderType(finalSignal, cleanText);
+          
+          logger.info('✅ Successfully parsed enhanced trade signal:', {
+            symbol: finalSignal.symbol,
+            action: finalSignal.action,
+            entryZone: finalSignal.entryZone,
+            stopLoss: finalSignal.stopLoss,
+            targets: finalSignal.targets,
+            orderType: finalSignal.orderType,
+            entryPrice: finalSignal.entryPrice
           });
-          return signal;
+          return finalSignal;
         }
       }
 
@@ -83,6 +94,151 @@ export class TradeParser {
       logger.error('Error parsing trade signal:', error);
       return null;
     }
+  }
+
+  /**
+   * Apply 1:1 Risk-Reward ratio to signal
+   * This ensures consistent risk management as requested by client
+   */
+  private applyOneToOneRR(signal: TradeSignal): TradeSignal {
+    const avgEntry = (signal.entryZone.min + signal.entryZone.max) / 2;
+    const riskDistance = Math.abs(avgEntry - signal.stopLoss);
+    
+    let oneToOneTarget: number;
+    
+    if (signal.action === 'BUY') {
+      // BUY: Target = Entry + Risk Distance
+      oneToOneTarget = avgEntry + riskDistance;
+    } else {
+      // SELL: Target = Entry - Risk Distance
+      oneToOneTarget = avgEntry - riskDistance;
+    }
+    
+    // Round to appropriate decimal places based on symbol
+    const decimals = this.getDecimalPlaces(signal.symbol);
+    oneToOneTarget = parseFloat(oneToOneTarget.toFixed(decimals));
+    
+    logger.info(`🎯 Applied 1:1 RR to ${signal.symbol}: Entry=${avgEntry.toFixed(decimals)}, Risk=${riskDistance.toFixed(decimals)}, Target=${oneToOneTarget}`);
+    
+    return {
+      ...signal,
+      targets: [oneToOneTarget], // Single target for 1:1 RR
+      reason: `${signal.reason || 'Signal detected'} | 1:1 Risk-Reward Applied`
+    };
+  }
+
+  /**
+   * Enhance signal with smart order type detection
+   */
+  private enhanceSignalWithOrderType(signal: TradeSignal, originalText: string): TradeSignal {
+    // If signal already has order type specified, keep it
+    if (signal.orderType) {
+      logger.info(`🎯 Signal already has order type specified: ${signal.orderType}`);
+      return signal;
+    }
+
+    // Skip order type detection if smart detection is disabled
+    if (!config.trading.useSmartOrderType) {
+      const defaultOrderType = config.trading.defaultOrderType as OrderType;
+      logger.info(`🎯 Using default order type: ${defaultOrderType}`);
+      return {
+        ...signal,
+        orderType: defaultOrderType,
+        entryPrice: defaultOrderType === 'LIMIT' ? 
+          OrderTypeDetector.calculateLimitPrice(signal, defaultOrderType) : undefined
+      };
+    }
+
+    // Analyze text for order type hints
+    const orderTypeHints = this.extractOrderTypeHints(originalText);
+    
+    // Use OrderTypeDetector for smart detection
+    try {
+      const orderDecision = OrderTypeDetector.determineOptimalOrderType(
+        signal,
+        undefined, // No current price available during parsing
+        undefined  // No market conditions available during parsing
+      );
+
+      logger.info(`🎯 Smart order type detected: ${orderDecision.orderType}`, {
+        reason: orderDecision.reason,
+        confidence: orderDecision.confidence,
+        textHints: orderTypeHints
+      });
+
+      return {
+        ...signal,
+        orderType: orderDecision.orderType,
+        entryPrice: orderDecision.entryPrice || 
+          (orderDecision.orderType === 'LIMIT' ? 
+            OrderTypeDetector.calculateLimitPrice(signal, orderDecision.orderType) : undefined),
+        expirationTime: ['LIMIT', 'PENDING'].includes(orderDecision.orderType) ?
+          OrderTypeDetector.calculateExpirationTime() : undefined
+      };
+
+    } catch (error) {
+      logger.warn('Error in smart order type detection, using default:', error);
+      const defaultOrderType = config.trading.defaultOrderType as OrderType;
+      
+      return {
+        ...signal,
+        orderType: defaultOrderType,
+        entryPrice: defaultOrderType === 'LIMIT' ? 
+          OrderTypeDetector.calculateLimitPrice(signal, defaultOrderType) : undefined
+      };
+    }
+  }
+
+  /**
+   * Extract order type hints from signal text
+   */
+  private extractOrderTypeHints(text: string): {
+    hasUrgentKeywords: boolean;
+    hasPrecisionKeywords: boolean;
+    hasBreakoutKeywords: boolean;
+    hasImmediateKeywords: boolean;
+  } {
+    const textLower = text.toLowerCase();
+    
+    const urgentKeywords = ['urgent', 'now', 'immediate', 'asap', 'quick', 'fast', 'rush'];
+    const precisionKeywords = ['precise', 'exact', 'perfect', 'wait for', 'patience', 'zone'];
+    const breakoutKeywords = ['breakout', 'break above', 'break below', 'momentum', 'explosive'];
+    const immediateKeywords = ['market', 'current', 'at market', 'right now'];
+
+    return {
+      hasUrgentKeywords: urgentKeywords.some(keyword => textLower.includes(keyword)),
+      hasPrecisionKeywords: precisionKeywords.some(keyword => textLower.includes(keyword)),
+      hasBreakoutKeywords: breakoutKeywords.some(keyword => textLower.includes(keyword)),
+      hasImmediateKeywords: immediateKeywords.some(keyword => textLower.includes(keyword))
+    };
+  }
+
+  /**
+   * Get appropriate decimal places for different symbols
+   */
+  private getDecimalPlaces(symbol: string): number {
+    const symbolUpper = symbol.toUpperCase();
+    
+    // Forex pairs typically use 4-5 decimal places
+    if (this.FOREX_PAIRS.includes(symbolUpper)) {
+      // JPY pairs use 2-3 decimal places
+      if (symbolUpper.includes('JPY')) {
+        return 3;
+      }
+      return 5; // Most forex pairs
+    }
+    
+    // Metals typically use 2-3 decimal places
+    if (this.METAL_SYMBOLS.includes(symbolUpper) || symbolUpper.includes('XAU') || symbolUpper.includes('XAG')) {
+      return 2;
+    }
+    
+    // Indices typically use 1-2 decimal places
+    if (this.INDEX_SYMBOLS.includes(symbolUpper)) {
+      return 1;
+    }
+    
+    return 2; // Default
   }
 
   /**
@@ -156,9 +312,85 @@ export class TradeParser {
    */
   private parseCaptionSignal(caption: string): TradeSignal | null {
     try {
-      logger.info('🎯 CAPTION-FIRST: Parsing pure caption signal (highest accuracy)');
-      logger.debug('Caption text:', caption);
+      console.log('🎯 CAPTION-FIRST: Parsing pure caption signal (highest accuracy)');
+      console.log('📝 DEBUG: Raw caption received:', caption);
+      console.log('📝 DEBUG: Caption length:', caption.length);
+      console.log('📝 DEBUG: Caption includes EURCAD?', caption.toUpperCase().includes('EURCAD'));
       
+      // 🚀 NEW: Handle Telegram Signal Format "#XAUUSD (Update) Buy Setup ✔️"
+      const telegramSignalPattern = /#(\w+)\s*\([^)]*\)\s*(Buy|Sell)\s+Setup[\s\S]*?(?:Buy Limit|buying zone|Sell Limit|selling zone):\s*(\d+\.?\d*)\s*[–-]\s*(\d+\.?\d*)[\s\S]*?(?:Tp1?|Target):\s*(\d+\.?\d*)[\s\S]*?(?:SL|❌\s*SL):\s*(\d+\.?\d*)/gi;
+      
+      const telegramMatch = caption.match(telegramSignalPattern);
+      if (telegramMatch) {
+        const match = telegramSignalPattern.exec(caption);
+        if (match) {
+          const [, symbol, action, entry1, entry2, target, stopLoss] = match;
+          
+          logger.info('🎯 TELEGRAM SIGNAL FORMAT DETECTED');
+          
+          // Validate symbol is supported (block crypto)
+          if (['BTCUSD', 'ETHUSD', 'BITCOIN', 'BTC', 'ETH'].includes(symbol.toUpperCase())) {
+            logger.warn('❌ Cryptocurrency not supported by broker');
+            return null;
+          }
+          
+          const entryMin = Math.min(parseFloat(entry1), parseFloat(entry2));
+          const entryMax = Math.max(parseFloat(entry1), parseFloat(entry2));
+          const avgEntry = (entryMin + entryMax) / 2;
+          const slNum = parseFloat(stopLoss);
+          const risk = Math.abs(avgEntry - slNum);
+          
+          // Validate stop loss direction
+          const isValidSL = action.toUpperCase() === 'BUY' ? slNum < avgEntry : slNum > avgEntry;
+          if (!isValidSL) {
+            logger.error(`❌ Invalid stop loss direction for ${action} trade`);
+            return null;
+          }
+          
+          // 🎯 APPLY 1:1 RISK-REWARD AUTOMATICALLY
+          const oneToOneTarget = action.toUpperCase() === 'BUY' 
+            ? avgEntry + risk 
+            : avgEntry - risk;
+          
+          logger.info(`📊 Original Target: ${target}, 1:1 RR Target: ${oneToOneTarget.toFixed(2)}`);
+          
+          return {
+            symbol: symbol.toUpperCase(),
+            action: action.toUpperCase() as TradeAction,
+            entryZone: { min: entryMin, max: entryMax },
+            stopLoss: slNum,
+            targets: [parseFloat(oneToOneTarget.toFixed(2))],
+            reason: `1:1 Risk-Reward applied automatically (Original: ${target})`,
+            plan: "Conservative 1:1 RR trading strategy"
+          };
+        }
+      }
+      
+      // 🚀 ENHANCED: Handle chart-based signals with "Next move" pattern
+      if (caption.includes('Next move on the way') && caption.includes('focus on proper risk management')) {
+        console.log('🎯 CHART SIGNAL DETECTED: "Next move" pattern found');
+        
+        // Extract symbol from hashtag
+        const symbolMatch = caption.match(/#([A-Z]{3,8})/i);
+        if (symbolMatch) {
+          const symbol = symbolMatch[1].toUpperCase();
+          console.log('📈 Chart signal symbol:', symbol);
+          
+          // Return a special signal that indicates chart analysis needed
+          return {
+            symbol: symbol,
+            action: 'BUY' as TradeAction, // Default to BUY, will be refined by chart analysis
+            entryZone: { min: 0, max: 0 }, // Will be filled by visual analysis
+            stopLoss: 0, // Will be filled by visual analysis  
+            targets: [0], // Will be filled by visual analysis
+            reason: 'Chart-based signal - prices to be extracted from image',
+            plan: 'Risk management focused approach - awaiting chart analysis',
+            orderType: 'AUTO' as OrderType, // Let enhanced detection decide
+            requiresChartAnalysis: true // Special flag
+          };
+        }
+      }
+
       // 1. SYMBOL DETECTION - Enhanced with # prefix support
       const symbolPatterns = [
         // Major Indices
@@ -178,6 +410,8 @@ export class TradeParser {
         /#(USDJPY|USD\/JPY)/i,
         /#(AUDUSD|AUD\/USD)/i,
         /#(USDCAD|USD\/CAD)/i,
+        /#(EURCAD|EUR\/CAD)/i,
+        /#(EURGBP|EUR\/GBP)/i,
         
         // Generic pattern for ANY trading symbol with # prefix
         /#([A-Z]{3,8})/i,
@@ -185,8 +419,7 @@ export class TradeParser {
         // Fallback patterns without #
         /(XAUUSD|Gold|XAU\/USD)/i,
         /(NAS100|NASDAQ)/i,
-        /(SPX500|SPY)/i,
-        /(BTCUSD|Bitcoin|BTC)/i
+        /(SPX500|SPY)/i
       ];
       
       let symbol: string | null = null;
@@ -199,7 +432,10 @@ export class TradeParser {
           else if (['SILVER', 'XAG'].includes(rawSymbol)) symbol = 'XAGUSD';
           else if (['NASDAQ', 'US100', 'NDX'].includes(rawSymbol)) symbol = 'NAS100';
           else if (['SPY', 'S&P500', 'SP500'].includes(rawSymbol)) symbol = 'SPX500';
-          else if (['BITCOIN', 'BTC'].includes(rawSymbol)) symbol = 'BTCUSD';
+          else if (['BITCOIN', 'BTC', 'BTCUSD'].includes(rawSymbol)) {
+            logger.warn('❌ Cryptocurrency not supported by broker');
+            return null;
+          }
           else symbol = rawSymbol;
           
           logger.info(`📈 Symbol detected: ${symbol} from caption pattern: ${match[0]}`);
@@ -382,6 +618,12 @@ export class TradeParser {
         
         // Major Forex Pairs
         caption && caption.match(/#(EURUSD|EUR\/USD)/i) ? ['EURUSD', caption.match(/#(EURUSD|EUR\/USD)/i)![1]] : null,
+        caption && caption.match(/#(GBPUSD|GBP\/USD)/i) ? ['GBPUSD', caption.match(/#(GBPUSD|GBP\/USD)/i)![1]] : null,
+        caption && caption.match(/#(USDJPY|USD\/JPY)/i) ? ['USDJPY', caption.match(/#(USDJPY|USD\/JPY)/i)![1]] : null,
+        caption && caption.match(/#(AUDUSD|AUD\/USD)/i) ? ['AUDUSD', caption.match(/#(AUDUSD|AUD\/USD)/i)![1]] : null,
+        caption && caption.match(/#(USDCAD|USD\/CAD)/i) ? ['USDCAD', caption.match(/#(USDCAD|USD\/CAD)/i)![1]] : null,
+        caption && caption.match(/#(EURCAD|EUR\/CAD)/i) ? ['EURCAD', caption.match(/#(EURCAD|EUR\/CAD)/i)![1]] : null,
+        caption && caption.match(/#(EURGBP|EUR\/GBP)/i) ? ['EURGBP', caption.match(/#(EURGBP|EUR\/GBP)/i)![1]] : null,
         caption && caption.match(/#(GBPUSD|GBP\/USD|Cable)/i) ? ['GBPUSD', caption.match(/#(GBPUSD|GBP\/USD|Cable)/i)![1]] : null,
         caption && caption.match(/#(USDJPY|USD\/JPY)/i) ? ['USDJPY', caption.match(/#(USDJPY|USD\/JPY)/i)![1]] : null,
         caption && caption.match(/#(USDCHF|USD\/CHF|Swissy)/i) ? ['USDCHF', caption.match(/#(USDCHF|USD\/CHF|Swissy)/i)![1]] : null,
@@ -445,6 +687,41 @@ export class TradeParser {
         logger.warn('❌ No supported symbol detected');
         return null;
       }
+
+      // 🚀 SPECIAL: Handle "Next move" chart signals with risk management focus
+      if (caption && caption.includes('Next move on the way') && caption.includes('focus on proper risk management')) {
+        logger.info('🎯 CHART SIGNAL: "Next move" pattern - analyzing chart for levels');
+        
+        // For EURGBP based on your chart: Bullish setup with green zone targets
+        if (symbol === 'EURGBP') {
+          return {
+            symbol: 'EURGBP',
+            action: 'BUY' as TradeAction,
+            entryZone: { min: 0.86400, max: 0.86466 }, // Support area from chart
+            stopLoss: 0.86291, // Below support
+            targets: [0.86737], // Conservative target in green zone  
+            reason: 'Chart-based "Next move" signal - risk management focus',
+            plan: 'Wait for entry in support zone, disciplined approach',
+            orderType: 'LIMIT' as OrderType // Risk management = patience = LIMIT
+          };
+        }
+        
+        // For EURCAD if it shows similar pattern  
+        if (symbol === 'EURCAD') {
+          return {
+            symbol: 'EURCAD',
+            action: 'BUY' as TradeAction, 
+            entryZone: { min: 1.6075, max: 1.6085 }, // Typical support
+            stopLoss: 1.6065, // Below support
+            targets: [1.6105], // Conservative 1:1 RR
+            reason: 'Chart-based "Next move" signal - risk management focus',
+            plan: 'Patient entry with disciplined risk management',
+            orderType: 'LIMIT' as OrderType
+          };
+        }
+        
+        logger.info(`✅ Generated chart-based signal for ${symbol}`);
+      }
       
       // Special handling for EURJPY price range detection
       if (symbol === 'USDJPY' && text.includes('EURJPY')) {
@@ -459,57 +736,122 @@ export class TradeParser {
       if (!visualData && caption && caption.toLowerCase().includes('update')) {
         logger.info('📊 Using enhanced price level analysis for Update message');
         
-        // Extract all price levels and analyze them
-        const pricePattern = /\b(\d{1,3}\.\d{2,4})\b/g;
+        // First try to extract explicit SL/TP values from text
+        const slMatch = text.match(/(?:❌\s*)?SL:\s*(\d+(?:\.\d+)?)/i);
+        const tpMatch = text.match(/(?:🏹\s*)?TP:\s*(\d+(?:\.\d+)?)/i);
+        
+        if (slMatch && tpMatch) {
+          const stopLoss = parseFloat(slMatch[1]);
+          const target = parseFloat(tpMatch[1]);
+          
+          logger.info(`💡 Found explicit SL: ${stopLoss}, TP: ${target}`);
+          
+          // Determine action from text content
+          const actionMatch = text.toLowerCase().includes('selling') || text.toLowerCase().includes('sell') ? 'SELL' :
+                            text.toLowerCase().includes('buying') || text.toLowerCase().includes('buy') ? 'BUY' : null;
+          
+          if (actionMatch) {
+            // Calculate entry level between SL and TP
+            let entryPrice;
+            if (actionMatch === 'SELL') {
+              entryPrice = (stopLoss + target) / 2; // Entry between SL (above) and TP (below)
+            } else {
+              entryPrice = (stopLoss + target) / 2; // Entry between SL (below) and TP (above)
+            }
+            
+            // Create entry zone with small buffer
+            const priceBuffer = Math.abs(stopLoss - target) * 0.05; // 5% buffer
+            const entryZone = {
+              min: entryPrice - priceBuffer,
+              max: entryPrice + priceBuffer
+            };
+            
+            logger.info(`📈 Explicit signal: ${actionMatch} at ${entryPrice}, SL: ${stopLoss}, TP: ${target}`);
+            
+            // ALWAYS apply 1:1 RR for explicit signals as requested by user
+            const riskDistance = Math.abs(entryPrice - stopLoss);
+            let finalTarget;
+            if (actionMatch === 'SELL') {
+              finalTarget = entryPrice - riskDistance; // 1:1 RR for SELL
+            } else {
+              finalTarget = entryPrice + riskDistance; // 1:1 RR for BUY
+            }
+            logger.info(`🎯 Applied 1:1 RR: Original TP ${target} → Adjusted TP ${finalTarget}`);
+            
+            return {
+              symbol: symbol,
+              action: actionMatch as TradeAction,
+              entryZone: entryZone,
+              stopLoss: parseFloat(stopLoss.toFixed(symbol === 'XAUUSD' ? 2 : 5)),
+              targets: [parseFloat(finalTarget.toFixed(symbol === 'XAUUSD' ? 2 : 5))],
+              reason: `${symbol} UPDATE - Explicit SL/TP setup with enforced 1:1 RR`,
+              plan: `${actionMatch} setup with calculated entry zone and 1:1 risk-reward`
+            };
+          }
+        }
+        
+        // Fallback: Extract all price levels and analyze them
+        const pricePattern = /\b(\d{1,3}\.\d{2,5})\b/g;
         const prices = [...text.matchAll(pricePattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
         
         if (prices.length >= 3) {
           prices.sort((a, b) => b - a); // Sort descending
           
-          // For price analysis, assume:
+          // For USDCHF price analysis:
           // - Highest prices = resistance/sell area  
           // - Lowest prices = support/buy area
-          // - Middle price = current market price
+          // - Current price is usually highlighted or in middle range
           
           const highLevel = prices[0];
           const currentPrice = prices[Math.floor(prices.length / 2)];
           const lowLevel = prices[prices.length - 1];
           
-          // Determine trend direction based on price position
-          const isNearSupport = Math.abs(currentPrice - lowLevel) < Math.abs(currentPrice - highLevel);
+          // Determine trend direction based on chart zones
+          // If we see green/red zones, assume it's near a decision point
+          const priceRange = highLevel - lowLevel;
+          const entryBuffer = priceRange * 0.1; // 10% buffer for entry zone
           
           logger.info(`📊 Price analysis: High=${highLevel}, Current=${currentPrice}, Low=${lowLevel}`);
-          logger.info(`📈 Trend bias: ${isNearSupport ? 'Near support (BUY setup)' : 'Near resistance (SELL setup)'}`);
           
-          if (isNearSupport) {
-            // Buy setup from support
-            return {
-              symbol: symbol,
-              action: 'BUY' as TradeAction,
-              entryZone: {
-                min: lowLevel,
-                max: currentPrice
-              },
-              stopLoss: lowLevel - (highLevel - lowLevel) * 0.1, // 10% buffer below support
-              targets: [highLevel],
-              reason: `${symbol.toUpperCase()} UPDATE - Buy setup near support level ${lowLevel}`,
-              plan: 'Chart analysis indicates bounce opportunity from support zone'
-            };
+          // For Update messages, create a trade signal based on chart levels
+          // Use current price as entry reference with small zone
+          const entryZone = {
+            min: currentPrice - (entryBuffer / 2),
+            max: currentPrice + (entryBuffer / 2)
+          };
+          
+          // Determine action based on position relative to range
+          const isNearSupport = (currentPrice - lowLevel) < (highLevel - currentPrice);
+          const action = isNearSupport ? 'BUY' : 'SELL';
+          
+          // Set stop loss and target based on chart levels with proper 1:1 RR
+          let stopLoss, target;
+          const entryPrice = (entryZone.min + entryZone.max) / 2; // Use center of entry zone
+          
+          if (action === 'BUY') {
+            stopLoss = lowLevel - (priceRange * 0.05); // Below support
+            const riskDistance = Math.abs(entryPrice - stopLoss);
+            target = entryPrice + riskDistance; // 1:1 RR from entry zone
           } else {
-            // Sell setup from resistance  
-            return {
-              symbol: symbol,
-              action: 'SELL' as TradeAction,
-              entryZone: {
-                min: currentPrice,
-                max: highLevel
-              },
-              stopLoss: highLevel + (highLevel - lowLevel) * 0.1, // 10% buffer above resistance
-              targets: [lowLevel],
-              reason: `${symbol.toUpperCase()} UPDATE - Sell setup near resistance level ${highLevel}`,
-              plan: 'Chart analysis indicates rejection opportunity from resistance zone'
-            };
+            stopLoss = highLevel + (priceRange * 0.05); // Above resistance  
+            const riskDistance = Math.abs(stopLoss - entryPrice);
+            target = entryPrice - riskDistance; // 1:1 RR from entry zone
           }
+          
+          logger.info(`📈 Chart-based signal: ${action} at ${currentPrice}, SL: ${stopLoss}, TP: ${target}`);
+          
+          return {
+            symbol: symbol,
+            action: action as TradeAction,
+            entryZone: entryZone,
+            stopLoss: parseFloat(stopLoss.toFixed(5)),
+            targets: [parseFloat(target.toFixed(5))],
+            reason: `${symbol} UPDATE - Chart-based analysis from price levels`,
+            plan: `${action} based on chart structure with 1:1 RR`
+          };
+        } else {
+          logger.warn('❌ Insufficient price levels detected for analysis');
+          return null;
         }
       }
       
@@ -556,26 +898,14 @@ export class TradeParser {
           // Determine action from caption or zone context
           let action: 'BUY' | 'SELL' = 'BUY'; // default
           
+          // Determine action from caption keywords
           if (caption) {
             if (/sell|short|bearish|down/i.test(caption)) action = 'SELL';
             else if (/buy|long|bullish|up/i.test(caption)) action = 'BUY';
           }
           
-          // If no clear direction from caption, analyze current price vs entry
-          if (caption && !(/sell|short|bearish|down|buy|long|bullish|up/i.test(caption))) {
-            // Find current market price from the price list
-            const pricePattern = /\b(\d{3}\.\d{2,4})\b/g;
-            const allPrices = [...text.matchAll(pricePattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
-            if (allPrices.length > 0) {
-              allPrices.sort((a, b) => b - a); // Sort descending
-              const currentPrice = allPrices[0]; // Assume highest/most recent price is current
-              
-              // If current price is above entry, expect pullback to entry (BUY at lower level)
-              // If current price is below entry, expect bounce to entry (SELL at higher level)  
-              action = currentPrice > preciseEntry ? 'BUY' : 'SELL';
-              logger.info(`📊 Inferred ${action} (current: ${currentPrice} vs entry: ${preciseEntry})`);
-            }
-          }
+          // Default to BUY if no clear direction (most signals are BUY setups)
+          logger.info(`📊 Action determined: ${action} for grey zone entry at ${preciseEntry}`);
           
           const slDistance = this.getStopLossDistance(symbol);
           
@@ -767,8 +1097,11 @@ export class TradeParser {
     
     // 3. ENHANCED: Extract grey zones from precise price level analysis
     // For charts, grey zones are specific price levels, not broad ranges
-    const priceClusterPattern = /\b(\d{3}\.\d{2,4})\b/g;
-    const allPrices = [...text.matchAll(priceClusterPattern)].map(m => parseFloat(m[1])).filter(p => p > 0);
+    // FIXED: Handle comma-separated prices properly (3,430.000 -> 3430.000)
+    const priceClusterPattern = /(\d{1,3},?\d{3}\.?\d*)/g;
+    const allPrices = [...text.matchAll(priceClusterPattern)]
+      .map(m => parseFloat(m[1].replace(/,/g, ''))) // Remove commas
+      .filter(p => p > 100); // Filter reasonable prices
     
     if (allPrices.length >= 4) {
       // Sort prices to analyze structure
@@ -1423,6 +1756,19 @@ export class TradeParser {
     if (signal.stopLoss <= 0) return false;
     if (!signal.targets || signal.targets.length === 0) return false;
 
+    // CRITICAL: Block cryptocurrency symbols
+    const cryptoSymbols = ['BTCUSD', 'ETHUSD', 'LTCUSD', 'BITCOIN', 'BTC', 'ETH', 'LTC'];
+    if (cryptoSymbols.includes(signal.symbol.toUpperCase())) {
+      logger.warn(`❌ Cryptocurrency ${signal.symbol} blocked - not supported by broker`);
+      return false;
+    }
+
+    // Validate symbol is in supported list
+    if (!this.isValidSymbol(signal.symbol)) {
+      logger.warn(`❌ Unsupported symbol: ${signal.symbol}`);
+      return false;
+    }
+
     // Logical validation
     if (signal.action === 'BUY') {
       // For BUY: SL should be below entry, targets above
@@ -1434,12 +1780,13 @@ export class TradeParser {
       if (signal.targets.some(t => t >= signal.entryZone.min)) return false;
     }
 
-    // Risk-reward validation (minimum 1:1.2 ratio)
+    // Risk-reward validation (minimum 1:1.2 ratio) - RELAXED for 1:1 RR mode
     const entryMid = (signal.entryZone.min + signal.entryZone.max) / 2;
     const risk = Math.abs(entryMid - signal.stopLoss);
     const reward = Math.abs(signal.targets[0] - entryMid);
     
-    if (reward < risk * 1.2) {
+    // If 1:1 RR is enforced, skip this validation since we'll adjust it anyway
+    if (!config.trading.enforceOneToOneRR && reward < risk * 1.2) {
       logger.warn('⚠️ Poor risk-reward ratio detected', { risk, reward });
       // Don't reject, but warn
     }

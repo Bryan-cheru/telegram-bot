@@ -21,7 +21,13 @@ export const config = {
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
   trading: {
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '0.1'),
-    riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '2')
+    riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '2'),
+    enforceOneToOneRR: process.env.ENFORCE_1_1_RR !== 'false', // Default to true unless explicitly disabled
+    defaultOrderType: process.env.DEFAULT_ORDER_TYPE || 'MARKET', // MARKET, LIMIT, or AUTO
+    useSmartOrderType: process.env.USE_SMART_ORDER_TYPE !== 'false', // Auto-detect best order type
+    limitOrderSlippage: parseFloat(process.env.LIMIT_ORDER_SLIPPAGE || '5'), // Pips from entry zone
+    pendingOrderExpiration: parseInt(process.env.PENDING_ORDER_EXPIRATION || '4'), // Hours
+    enableAdvancedOrderTypes: process.env.ENABLE_ADVANCED_ORDER_TYPES !== 'false'
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info'
