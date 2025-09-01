@@ -742,7 +742,7 @@ export class TradeParser {
       }
       
       // Extract visual chart data (OCR from chart zones) - PRIORITY since ALL charts use this
-      const visualData = this.extractVisualChartData(text);
+      const visualData = this.extractVisualChartData(text, symbol);
       
       // Enhanced chart analysis for Update messages - analyze price levels when no explicit zones found
       if (!visualData && caption && caption.toLowerCase().includes('update')) {
@@ -1080,7 +1080,7 @@ export class TradeParser {
    * Enhanced for ALL charts that use grey entry zones and target markings
    * STRICT: Only returns data if ACTUAL visual zones are detected, not just price numbers
    */
-  private extractVisualChartData(text: string): { zones: Array<{name: string, min: number, max: number, value: number}> } | null {
+  private extractVisualChartData(text: string, symbol: string): { zones: Array<{name: string, min: number, max: number, value: number}> } | null {
     const zones: Array<{name: string, min: number, max: number, value: number}> = [];
     
     // ENHANCED PATTERNS for highlighted zone detection (ALL CHARTS format)
@@ -1110,10 +1110,46 @@ export class TradeParser {
     // 3. ENHANCED: Extract grey zones from precise price level analysis
     // For charts, grey zones are specific price levels, not broad ranges
     // FIXED: Handle comma-separated prices properly (3,430.000 -> 3430.000)
-    const priceClusterPattern = /(\d{1,3},?\d{3}\.?\d*)/g;
+    // ENHANCED: Symbol-specific price pattern matching
+    
+    let priceClusterPattern: RegExp;
+    const upperSym = symbol.toUpperCase();
+    
+    if (upperSym.includes('XAG') || upperSym.includes('SILVER')) {
+      // Silver: Match 2-digit prices like 39.1077, 38.7340
+      priceClusterPattern = /\b([2-5]\d\.\d{2,4})\b/g;
+    } else if (upperSym.includes('XAU') || upperSym.includes('GOLD')) {
+      // Gold: Match 4-digit prices like 3455.40
+      priceClusterPattern = /\b([1-3],?\d{3}\.\d{1,3})\b/g;
+    } else {
+      // General pattern for other symbols
+      priceClusterPattern = /(\d{1,3},?\d{3}\.?\d*)/g;
+    }
+    
+    // Symbol-aware price filtering
+    const getMinPriceForSymbol = (sym: string): number => {
+      const upperSym = sym.toUpperCase();
+      if (upperSym.includes('XAG') || upperSym.includes('SILVER')) return 15;  // Silver: 15-60 range
+      if (upperSym.includes('XAU') || upperSym.includes('GOLD')) return 1000;  // Gold: 1000+ range
+      if (upperSym.includes('BTC') || upperSym.includes('BITCOIN')) return 10000; // Bitcoin: 10000+ range
+      if (this.FOREX_PAIRS.some(pair => upperSym.includes(pair))) return 0.1;   // Forex: 0.1+ range
+      return 100; // Default for indices
+    };
+    
+    const getMaxPriceForSymbol = (sym: string): number => {
+      const upperSym = sym.toUpperCase();
+      if (upperSym.includes('XAG') || upperSym.includes('SILVER')) return 60;   // Silver: 15-60 range
+      if (upperSym.includes('XAU') || upperSym.includes('GOLD')) return 5000;   // Gold: 1000-5000 range
+      if (upperSym.includes('BTC') || upperSym.includes('BITCOIN')) return 200000; // Bitcoin: 10000-200000 range
+      if (this.FOREX_PAIRS.some(pair => upperSym.includes(pair))) return 10;    // Forex: 0.1-10 range
+      return 100000; // Default for indices
+    };
+    
+    const minPrice = getMinPriceForSymbol(symbol);
+    const maxPrice = getMaxPriceForSymbol(symbol);
     const allPrices = [...text.matchAll(priceClusterPattern)]
       .map(m => parseFloat(m[1].replace(/,/g, ''))) // Remove commas
-      .filter(p => p > 100); // Filter reasonable prices
+      .filter(p => p >= minPrice && p <= maxPrice); // Symbol-aware filtering
     
     if (allPrices.length >= 4) {
       // Sort prices to analyze structure
