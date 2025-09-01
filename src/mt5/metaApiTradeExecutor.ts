@@ -341,15 +341,17 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         try {
           const priceData = terminalState.price(signal.symbol);
           currentPrice = signal.action === 'BUY' ? priceData?.ask : priceData?.bid;
-          logger.info(`💱 Current ${signal.symbol} price for ${signal.action}:`, {
-            bid: priceData?.bid,
-            ask: priceData?.ask,
-            using: currentPrice,
-            symbol: signal.symbol,
-            action: signal.action
-          });
+          
+          // Enhanced logging to debug price issues
+          logger.info(`💱 Current ${signal.symbol} price for ${signal.action}:`);
+          logger.info(`   📊 Raw price data:`, priceData);
+          logger.info(`   📊 Bid: ${priceData?.bid}`);
+          logger.info(`   📊 Ask: ${priceData?.ask}`);
+          logger.info(`   📊 Using Price (${signal.action}): ${currentPrice}`);
+          logger.info(`   📊 Price Available: ${!!priceData}`);
+          
         } catch (error) {
-          logger.warn('Could not get current market price for stop validation');
+          logger.warn('Could not get current market price for stop validation:', error);
         }
         
         // Validate stop levels against current market price if available
