@@ -649,8 +649,20 @@ export class TradeParser {
         
         // =================== TEXT-BASED FALLBACKS ===================
         text.match(/#?(XAUUSD|Gold|XAU\/USD)/i) ? ['XAUUSD', text.match(/#?(XAUUSD|Gold|XAU\/USD)/i)![1]] : null,
+        text.match(/#?(XAGUSD|Silver|XAG\/USD)/i) ? ['XAGUSD', text.match(/#?(XAGUSD|Silver|XAG\/USD)/i)![1]] : null,
+        text.match(/#?(EURCAD|EUR\/CAD)/i) ? ['EURCAD', text.match(/#?(EURCAD|EUR\/CAD)/i)![1]] : null,
+        text.match(/#?(EURUSD|EUR\/USD)/i) ? ['EURUSD', text.match(/#?(EURUSD|EUR\/USD)/i)![1]] : null,
+        text.match(/#?(GBPUSD|GBP\/USD)/i) ? ['GBPUSD', text.match(/#?(GBPUSD|GBP\/USD)/i)![1]] : null,
+        text.match(/#?(USDJPY|USD\/JPY)/i) ? ['USDJPY', text.match(/#?(USDJPY|USD\/JPY)/i)![1]] : null,
+        text.match(/#?(USDCAD|USD\/CAD)/i) ? ['USDCAD', text.match(/#?(USDCAD|USD\/CAD)/i)![1]] : null,
+        text.match(/#?(USDCHF|USD\/CHF)/i) ? ['USDCHF', text.match(/#?(USDCHF|USD\/CHF)/i)![1]] : null,
+        text.match(/#?(AUDUSD|AUD\/USD)/i) ? ['AUDUSD', text.match(/#?(AUDUSD|AUD\/USD)/i)![1]] : null,
+        text.match(/#?(NZDUSD|NZD\/USD)/i) ? ['NZDUSD', text.match(/#?(NZDUSD|NZD\/USD)/i)![1]] : null,
+        text.match(/#?(EURJPY|EUR\/JPY)/i) ? ['EURJPY', text.match(/#?(EURJPY|EUR\/JPY)/i)![1]] : null,
+        text.match(/#?(GBPJPY|GBP\/JPY)/i) ? ['GBPJPY', text.match(/#?(GBPJPY|GBP\/JPY)/i)![1]] : null,
         text.match(/#?(NAS100|NASDAQ|US100)/i) ? ['NAS100', text.match(/#?(NAS100|NASDAQ|US100)/i)![1]] : null,
         text.match(/#?(SPX500|SPY|S&P500)/i) ? ['SPX500', text.match(/#?(SPX500|SPY|S&P500)/i)![1]] : null,
+        text.match(/#?(US30|DJ30|DOW)/i) ? ['US30', text.match(/#?(US30|DJ30|DOW)/i)![1]] : null,
         text.match(/#?(BTCUSD|Bitcoin|BTC)/i) ? ['BTCUSD', text.match(/#?(BTCUSD|Bitcoin|BTC)/i)![1]] : null
       ].filter(Boolean);
       
@@ -665,7 +677,7 @@ export class TradeParser {
         const hasNasPrices = /\b[1-2]\d{4}\.\d{1,2}\b/.test(text);            // 10000-29999 range (NAS100)  
         const hasSpxPrices = /\b[3-6]\d{3}\.\d{1,2}\b/.test(text);            // 3000-6999 range (SPX500)
         const hasGoldPrices = /\b[1-3]\d{3}\.\d{2,3}\b/.test(text);           // 1000-3999 range (Gold)
-        const hasSilverPrices = /\b[1-5]\d\.\d{2,3}\b/.test(text);            // 10-59 range (Silver)
+        const hasSilverPrices = /\b[2-5]\d\.\d{2,3}\b/.test(text);            // 20-59 range (Silver)
         const hasOilPrices = /\b[3-9]\d\.\d{2}\b/.test(text);                 // 30-99 range (Oil)
         const hasForexPrices = /\b[01]\.\d{4,5}\b/.test(text);                // 0.x or 1.x range (Forex)
         const hasJpyPrices = /\b1[0-5]\d\.\d{2,3}\b/.test(text);              // 100-159 range (JPY pairs)
