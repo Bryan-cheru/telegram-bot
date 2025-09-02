@@ -1,0 +1,6 @@
+{
+  "devDependencies": {
+    "sentiment": "^5.0.2",
+    "natural": "^6.6.0"
+  }
+}

@@ -4,6 +4,7 @@ import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
 import { MetaApiTradeExecutor } from '../mt5/metaApiTradeExecutor';
+import { MultiAccountMetaApiExecutor } from '../mt5/multiAccountMetaApiExecutor';
 
 const app = express();
 
@@ -12,6 +13,8 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Store for real-time data
+import { randomUUID } from 'crypto';
+
 let tradeHistory: any[] = [];
 let streamClients: any[] = []; // Store for SSE clients
 let botStatus = {
@@ -26,6 +29,7 @@ let botStatus = {
 
 // MT5 Integration - Single instance to maintain connection
 let metaApiExecutor: MetaApiTradeExecutor | null = null;
+let multiAccountExecutor: MultiAccountMetaApiExecutor | null = null;
 let mt5AccountInfo: any = null;
 let mt5Positions: any[] = [];
 let mt5LastUpdate = 0;
@@ -46,6 +50,27 @@ const initializeMT5 = async () => {
     addLog({
       level: 'error',
       message: `❌ MT5 Dashboard Integration failed: ${error}`
+    });
+    return false;
+  }
+};
+
+// Initialize Multi-Account executor
+const initializeMultiAccount = async () => {
+  try {
+    if (!multiAccountExecutor) {
+      multiAccountExecutor = new MultiAccountMetaApiExecutor();
+      await multiAccountExecutor.initialize();
+      addLog({
+        level: 'info',
+        message: '🌐 Multi-Account Dashboard Integration initialized'
+      });
+    }
+    return true;
+  } catch (error) {
+    addLog({
+      level: 'error',
+      message: `❌ Multi-Account Dashboard Integration failed: ${error}`
     });
     return false;
   }
@@ -88,11 +113,113 @@ const updateMT5Data = async () => {
 
 // Start MT5 data updates
 const startMT5Updates = () => {
-  // Update every 10 seconds
-  setInterval(updateMT5Data, 10000);
+  // Update every 30 seconds instead of 10 to reduce log noise
+  setInterval(updateMT5Data, 30000);
   // Initial update
   updateMT5Data();
 };
+
+// ========== MULTI-ACCOUNT HELPER FUNCTIONS ==========
+
+// Get real multi-account data from MultiAccountMetaApiExecutor
+const getMultiAccountData = async () => {
+  try {
+    // Initialize multi-account executor if not already done
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMultiAccount();
+      if (!initialized || !multiAccountExecutor) {
+        console.log('❌ Multi-account executor not initialized');
+        return [];
+      }
+    }
+
+    // Get all accounts data with real information
+    const accounts = await multiAccountExecutor.getAllAccountsData();
+    return accounts;
+    
+  } catch (error) {
+    console.error('Error in getMultiAccountData:', error);
+    return [];
+  }
+};
+
+// Remove the generateRandomPositions function - we don't want fake data
+// const generateRandomPositions = () => { ... } // REMOVED
+
+// Calculate summary statistics from all accounts
+const calculateSummaryStats = (accounts: any[]) => {
+  const connectedAccounts = accounts.filter(acc => acc.status === 'CONNECTED').length;
+  const totalBalance = accounts.reduce((sum, acc) => sum + (acc.balance || 0), 0);
+  const totalEquity = accounts.reduce((sum, acc) => sum + (acc.equity || 0), 0);
+  const totalUnrealizedPL = totalEquity - totalBalance;
+
+  let totalPositions = 0;
+  let buyPositions = 0;
+  let sellPositions = 0;
+
+  accounts.forEach(acc => {
+    if (acc.positions) {
+      totalPositions += acc.positions.length;
+      acc.positions.forEach((pos: any) => {
+        if (pos.type === 'BUY') buyPositions++;
+        else if (pos.type === 'SELL') sellPositions++;
+      });
+    }
+  });
+
+  return {
+    totalAccounts: accounts.length,
+    connectedAccounts,
+    totalBalance,
+    totalEquity,
+    totalUnrealizedPL,
+    totalPositions,
+    buyPositions,
+    sellPositions
+  };
+};
+
+// Get all active trades from all accounts
+const getAllActiveTrades = (accounts: any[]) => {
+  const allTrades: any[] = [];
+
+  accounts.forEach(account => {
+    if (account.positions && account.positions.length > 0) {
+      account.positions.forEach((position: any) => {
+        allTrades.push({
+          id: position.id,
+          accountId: account.id,
+          brokerName: account.brokerName,
+          symbol: position.symbol,
+          type: position.type,
+          volume: position.volume,
+          openPrice: position.openPrice,
+          currentPrice: position.currentPrice,
+          unrealizedProfit: position.unrealizedProfit,
+          openTime: position.openTime,
+          commission: position.commission,
+          swap: position.swap
+        });
+      });
+    }
+  });
+
+  return allTrades.sort((a, b) => new Date(b.openTime).getTime() - new Date(a.openTime).getTime());
+};
+
+// Get default summary when no accounts are available
+const getDefaultSummary = () => ({
+  totalAccounts: 0,
+  connectedAccounts: 0,
+  totalBalance: 0,
+  totalEquity: 0,
+  totalUnrealizedPL: 0,
+  totalPositions: 0,
+  buyPositions: 0,
+  sellPositions: 0
+});
+
+// ========== END MULTI-ACCOUNT HELPER FUNCTIONS ==========
 
 // Dashboard routes
 app.get('/', (req, res) => {
@@ -430,7 +557,328 @@ app.post('/api/mt5/refresh', async (req, res) => {
   }
 });
 
+// ========== COMPREHENSIVE TRADE HISTORY ENDPOINTS ==========
+
+// Get comprehensive trade history with advanced filtering
+app.get('/api/mt5/trade-history', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMultiAccount();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({ 
+          error: 'Multi-account executor not available' 
+        });
+      }
+    }
+
+    // Parse query parameters
+    const {
+      accountId,
+      symbol,
+      startDate,
+      endDate,
+      limit = 100,
+      offset = 0
+    } = req.query;
+
+    const filter: any = {
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string)
+    };
+
+    if (accountId && typeof accountId === 'string') filter.accountId = accountId;
+    if (symbol && typeof symbol === 'string') filter.symbol = symbol;
+    if (startDate && typeof startDate === 'string') filter.startDate = new Date(startDate);
+    if (endDate && typeof endDate === 'string') filter.endDate = new Date(endDate);
+
+    const history = await multiAccountExecutor!.getTradeHistory(filter);
+
+    res.json({
+      success: true,
+      ...history,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error fetching trade history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trade history',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get performance metrics for a specific account
+app.get('/api/mt5/performance/:accountId', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMultiAccount();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({ 
+          error: 'Multi-account executor not available' 
+        });
+      }
+    }
+
+    const { accountId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    const start = startDate && typeof startDate === 'string' ? 
+      new Date(startDate) : 
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    
+    const end = endDate && typeof endDate === 'string' ? 
+      new Date(endDate) : 
+      new Date();
+
+    const metrics = await multiAccountExecutor!.getAccountPerformanceMetrics(accountId, start, end);
+
+    if (!metrics) {
+      return res.status(404).json({
+        success: false,
+        error: 'Account not found or not connected'
+      });
+    }
+
+    res.json({
+      success: true,
+      metrics,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error fetching performance metrics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch performance metrics',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get performance metrics for all connected accounts
+app.get('/api/mt5/performance-all', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMultiAccount();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({ 
+          error: 'Multi-account executor not available' 
+        });
+      }
+    }
+
+    const { startDate, endDate } = req.query;
+
+    const start = startDate && typeof startDate === 'string' ? 
+      new Date(startDate) : 
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    
+    const end = endDate && typeof endDate === 'string' ? 
+      new Date(endDate) : 
+      new Date();
+
+    const allMetrics = await multiAccountExecutor!.getAllAccountsPerformanceMetrics(start, end);
+
+    res.json({
+      success: true,
+      accounts: allMetrics,
+      totalAccounts: allMetrics.length,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error fetching all performance metrics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch all performance metrics',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get trade history summary with aggregated statistics
+app.get('/api/mt5/trade-summary', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMultiAccount();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({ 
+          error: 'Multi-account executor not available' 
+        });
+      }
+    }
+
+    const { period = '30d' } = req.query;
+    
+    // Calculate start date based on period
+    let startDate: Date;
+    const now = new Date();
+    
+    switch (period) {
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      case '365d':
+        startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    }
+
+    const history = await multiAccountExecutor!.getTradeHistory({
+      startDate,
+      endDate: now,
+      limit: 1000
+    });
+
+    // Calculate additional summary statistics
+    const dailyStats = new Map<string, { trades: number; profit: number; volume: number }>();
+    
+    history.positions.forEach(pos => {
+      if (pos.status === 'CLOSED' && pos.closeTime) {
+        const day = pos.closeTime.toISOString().substring(0, 10);
+        const existing = dailyStats.get(day) || { trades: 0, profit: 0, volume: 0 };
+        existing.trades++;
+        existing.profit += pos.profit || 0;
+        existing.volume += pos.volume;
+        dailyStats.set(day, existing);
+      }
+    });
+
+    const dailyBreakdown = Array.from(dailyStats.entries()).map(([date, stats]) => ({
+      date,
+      ...stats
+    })).sort((a, b) => a.date.localeCompare(b.date));
+
+    res.json({
+      success: true,
+      period,
+      summary: history.summary,
+      dailyBreakdown,
+      recentDeals: history.deals.slice(0, 10),
+      openPositions: history.positions.filter(pos => pos.status === 'OPEN').slice(0, 10),
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error fetching trade summary:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trade summary',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ========== END TRADE HISTORY ENDPOINTS ==========
+
 // ========== END MT5 ENDPOINTS ==========
+
+// ========== MULTI-ACCOUNT ENDPOINTS ==========
+
+// Get all accounts data for multi-account dashboard
+app.get('/api/multi-accounts', async (req, res) => {
+  try {
+    // Get real account data (no simulated data)
+    const accounts = await getMultiAccountData();
+    const summary = calculateSummaryStats(accounts);
+    const allTrades = getAllActiveTrades(accounts);
+
+    res.json({
+      success: true,
+      accounts,
+      summary,
+      allTrades,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error getting multi-account data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch multi-account data',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      accounts: [],
+      summary: getDefaultSummary(),
+      allTrades: []
+    });
+  }
+});
+
+// Close a specific trade on a specific account
+app.post('/api/close-trade/:accountId/:tradeId', async (req, res) => {
+  try {
+    const { accountId, tradeId } = req.params;
+    
+    // Initialize multi-account executor if not already done
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMultiAccount();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({
+          success: false,
+          error: 'Multi-account executor not available'
+        });
+      }
+    }
+
+    console.log(`🔄 Attempting to close trade ${tradeId} on account ${accountId}`);
+    
+    // Use the real closePosition method
+    await multiAccountExecutor.closePosition(accountId, tradeId);
+    
+    res.json({
+      success: true,
+      message: 'Trade closed successfully',
+      accountId,
+      tradeId
+    });
+
+  } catch (error) {
+    console.error('Error closing trade:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to close trade'
+    });
+  }
+});
+
+// Get specific account status
+app.get('/api/multi-accounts/:accountId', async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    const accounts = await getMultiAccountData();
+    const account = accounts.find(acc => acc.id === accountId);
+    
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        error: 'Account not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      account
+    });
+
+  } catch (error) {
+    console.error('Error getting account data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch account data'
+    });
+  }
+});
+
+// ========== END MULTI-ACCOUNT ENDPOINTS ==========
 
 // Test MetaAPI account connection
 app.get('/api/metaapi/test/:accountId', async (req, res) => {
@@ -546,18 +994,28 @@ app.post('/api/test-connection', async (req, res) => {
         });
       }
 
-      // For production, you would test actual MetaAPI connection here
-      // For now, simulate a connection test
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
-      res.json({ 
-        success: true, 
-        message: 'MetaAPI connection test passed',
-        accountInfo: {
-          id: accountId.slice(0, 8) + '...',
-          status: 'Connected'
-        }
-      });
+      // Test actual MetaAPI connection
+      try {
+        const MetaApi = require('metaapi.cloud-sdk').default;
+        const api = new MetaApi(process.env.METAAPI_TOKEN);
+        const account = await api.metatraderAccountApi.getAccount(accountId);
+        
+        res.json({ 
+          success: true, 
+          message: 'MetaAPI connection test passed',
+          accountInfo: {
+            id: accountId.slice(0, 8) + '...',
+            name: account.name,
+            state: account.state,
+            type: account.type
+          }
+        });
+      } catch (error: any) {
+        res.status(500).json({
+          success: false,
+          error: 'MetaAPI connection failed: ' + error.message
+        });
+      }
     } else if (type === 'telegram') {
       // Test Telegram bot connection
       const { botToken, channelId } = testConfig;
@@ -569,17 +1027,33 @@ app.post('/api/test-connection', async (req, res) => {
         });
       }
 
-      // Simulate telegram connection test
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      res.json({ 
-        success: true, 
-        message: 'Telegram bot connection test passed',
-        botInfo: {
-          token: botToken.slice(0, 10) + '...',
-          channelId: channelId
-        }
-      });
+      // Test actual Telegram bot connection
+      try {
+        const { Telegram } = require('telegraf');
+        const telegram = new Telegram(botToken);
+        
+        // Test bot token validity by getting bot info
+        const botInfo = await telegram.getMe();
+        
+        // Test channel access by getting chat info
+        const chatInfo = await telegram.getChat(channelId);
+        
+        res.json({ 
+          success: true, 
+          message: 'Telegram bot connection test passed',
+          botInfo: {
+            username: botInfo.username,
+            firstName: botInfo.first_name,
+            channelId: channelId,
+            channelTitle: chatInfo.title || 'Private Channel'
+          }
+        });
+      } catch (error: any) {
+        res.status(500).json({
+          success: false,
+          error: 'Telegram connection failed: ' + error.message
+        });
+      }
     } else {
       res.status(400).json({ 
         success: false, 
@@ -695,7 +1169,7 @@ export const addTrade = (trade: any) => {
   tradeHistory.push({
     ...trade,
     timestamp: new Date().toISOString(),
-    id: Date.now() + Math.random()
+    id: randomUUID()
   });
   
   // Keep only last 500 trades
@@ -739,12 +1213,23 @@ function calculateTradingStats(trades: any[]) {
 
 // Initialize MT5 integration when server starts
 setTimeout(() => {
+  // Initialize single-account MT5 first
   initializeMT5().then((success) => {
     if (success) {
       startMT5Updates();
       addLog({
         level: 'info',
         message: '🚀 MT5 Dashboard Integration started successfully'
+      });
+    }
+  });
+
+  // Initialize multi-account executor
+  initializeMultiAccount().then((success) => {
+    if (success) {
+      addLog({
+        level: 'info',
+        message: '🌐 Multi-Account Dashboard Integration started successfully'
       });
     }
   });

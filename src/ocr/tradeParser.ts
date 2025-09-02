@@ -3,6 +3,7 @@ import { logger } from '../utils/logger';
 import { PositionSizeCalculator, PositionSizingConfig, PositionCalculation } from '../utils/positionSizing';
 import { config } from '../utils/config';
 import { OrderTypeDetector } from '../utils/orderTypeDetector';
+import { ChartColorAnalysisML } from '../ml/colorAnalysisML';
 
 export class TradeParser {
   private readonly FOREX_PAIRS = [
@@ -50,17 +51,17 @@ export class TradeParser {
       
       const cleanText = this.cleanText(fullText);
 
-      // Try different parsing strategies - CAPTION FIRST APPROACH! 🎯
+      // Try different parsing strategies - SMART STRATEGY SELECTION! 🎯
       const strategies = [
-        // 1. CAPTION-FIRST: Try pure caption parsing if available
-        () => caption ? this.parseCaptionSignal(caption) : null,
+        // 1. CAPTION-FIRST: Try pure caption parsing ONLY if caption has complete trading data
+        () => caption && this.hasTradingData(caption) ? this.parseCaptionSignal(caption) : null,
         
         // 2. STANDARD FORMATS: Well-structured text patterns
         () => this.parseStandardSignal(cleanText),
         () => this.parseChartSetupSignal(cleanText),
         () => this.parseFlexibleFormatSignal(cleanText),
         
-        // 3. FALLBACK: Visual/Image analysis (only when caption parsing fails)
+        // 3. VISUAL CHART: For image-based signals (PRIORITY for chart images)
         () => this.parseVisualChartSignal(cleanText, caption),
         () => this.parseCombinedTextImageSignal(cleanText),
         () => this.parsePriceActionSignal(cleanText)
@@ -69,8 +70,10 @@ export class TradeParser {
       for (const strategy of strategies) {
         const signal = strategy();
         if (signal && this.validateSignal(signal)) {
-          // Apply 1:1 Risk-Reward ratio if enabled
-          let finalSignal = config.trading.enforceOneToOneRR ? this.applyOneToOneRR(signal) : signal;
+          // Skip 1:1 RR enforcement if signal comes from Color ML (uses actual chart levels)
+          const isColorMLSignal = signal.reason?.includes('Color Analysis ML');
+          let finalSignal = (config.trading.enforceOneToOneRR && !isColorMLSignal) ? 
+            this.applyOneToOneRR(signal) : signal;
           
           // Enhance signal with order type detection if not already specified
           finalSignal = this.enhanceSignalWithOrderType(finalSignal, cleanText);
@@ -94,6 +97,23 @@ export class TradeParser {
       logger.error('Error parsing trade signal:', error);
       return null;
     }
+  }
+
+  /**
+   * Check if caption contains actual trading data (prices, entry zones, etc.)
+   * vs just general update text
+   */
+  private hasTradingData(caption: string): boolean {
+    const tradingDataPatterns = [
+      /\d+\.\d{3,5}/,                    // Price levels (1.61850)
+      /(?:entry|zone|limit).*\d+/i,      // Entry with numbers
+      /(?:tp|target).*\d+/i,             // Target with numbers
+      /(?:sl|stop).*\d+/i,               // Stop loss with numbers
+      /\d+\s*[-–]\s*\d+/,               // Price ranges
+      /#\w+.*(?:buy|sell)/i             // Hashtag with buy/sell
+    ];
+    
+    return tradingDataPatterns.some(pattern => pattern.test(caption));
   }
 
   /**
@@ -312,10 +332,10 @@ export class TradeParser {
    */
   private parseCaptionSignal(caption: string): TradeSignal | null {
     try {
-      console.log('🎯 CAPTION-FIRST: Parsing pure caption signal (highest accuracy)');
-      console.log('📝 DEBUG: Raw caption received:', caption);
-      console.log('📝 DEBUG: Caption length:', caption.length);
-      console.log('📝 DEBUG: Caption includes EURCAD?', caption.toUpperCase().includes('EURCAD'));
+      logger.debug('🎯 CAPTION-FIRST: Parsing pure caption signal (highest accuracy)');
+      logger.debug('📝 DEBUG: Raw caption received:', caption);
+      logger.debug('📝 DEBUG: Caption length:', caption.length);
+      logger.debug('📝 DEBUG: Caption includes EURCAD?', caption.toUpperCase().includes('EURCAD'));
       
       // 🚀 NEW: Handle Telegram Signal Format "#XAUUSD (Update) Buy Setup ✔️"
       const telegramSignalPattern = /#(\w+)\s*\([^)]*\)\s*(Buy|Sell)\s+Setup[\s\S]*?(?:Buy Limit|buying zone|Sell Limit|selling zone):\s*(\d+\.?\d*)\s*[–-]\s*(\d+\.?\d*)[\s\S]*?(?:Tp1?|Target):\s*(\d+\.?\d*)[\s\S]*?(?:SL|❌\s*SL):\s*(\d+\.?\d*)/gi;
@@ -368,13 +388,13 @@ export class TradeParser {
       
       // 🚀 ENHANCED: Handle chart-based signals with "Next move" pattern
       if (caption.includes('Next move on the way') && caption.includes('focus on proper risk management')) {
-        console.log('🎯 CHART SIGNAL DETECTED: "Next move" pattern found');
+        logger.debug('🎯 CHART SIGNAL DETECTED: "Next move" pattern found');
         
         // Extract symbol from hashtag
         const symbolMatch = caption.match(/#([A-Z]{3,8})/i);
         if (symbolMatch) {
           const symbol = symbolMatch[1].toUpperCase();
-          console.log('📈 Chart signal symbol:', symbol);
+          logger.debug('📈 Chart signal symbol:', symbol);
           
           // Return a special signal that indicates chart analysis needed
           return {
@@ -589,6 +609,44 @@ export class TradeParser {
     try {
       logger.info('🎯 Attempting to parse visual chart signal (ALL CHARTS have highlighted zones)');
       
+      // 🎨 NEW: COLOR ANALYSIS ML - Try color-based zone detection first!
+      const colorAnalysis = ChartColorAnalysisML.analyzeChartColors(text, 'XAUUSD'); // Default symbol
+      
+      // If color analysis found good zones with high confidence, use it!
+      if (colorAnalysis.greyEntry && colorAnalysis.recommendation.confidence > 0.7) {
+        logger.info('🎨 HIGH CONFIDENCE Color Analysis - Using ML color zone detection');
+        
+        // Apply 1:1 RR logic
+        const entryPrice = (colorAnalysis.greyEntry.min + colorAnalysis.greyEntry.max) / 2;
+        const stopLoss = colorAnalysis.redStops.length > 0 ? colorAnalysis.redStops[0] : 
+                        (colorAnalysis.recommendation.action === 'BUY' ? 
+                         colorAnalysis.greyEntry.min - 10 : colorAnalysis.greyEntry.max + 10);
+        
+        const risk = Math.abs(entryPrice - stopLoss);
+        const target = colorAnalysis.recommendation.action === 'BUY' ? 
+                      entryPrice + risk : entryPrice - risk;
+        
+        // Extract symbol from patterns below or use price-based estimation
+        let estimatedSymbol = 'XAUUSD'; // default
+        const allPrices = colorAnalysis.greenTargets.concat(colorAnalysis.redStops).concat([colorAnalysis.greyEntry.min, colorAnalysis.greyEntry.max]);
+        if (allPrices.some(p => p > 10000)) estimatedSymbol = 'NAS100';
+        else if (allPrices.some(p => p > 5000)) estimatedSymbol = 'SPX500';
+        else if (allPrices.some(p => p > 2000)) estimatedSymbol = 'XAUUSD';
+        else if (allPrices.some(p => p < 2 && p > 0.5)) estimatedSymbol = 'EURUSD';
+        
+        return {
+          symbol: estimatedSymbol,
+          action: colorAnalysis.recommendation.action as TradeAction,
+          entryZone: { min: colorAnalysis.greyEntry.min, max: colorAnalysis.greyEntry.max },
+          stopLoss,
+          targets: [target],
+          reason: `Color Analysis ML: ${colorAnalysis.recommendation.reason}`,
+          plan: `ML detected zones - Entry: ${colorAnalysis.greyEntry.min}-${colorAnalysis.greyEntry.max}, 1:1 RR enforced`
+        };
+      }
+      
+      // Continue with existing logic if color analysis didn't provide a strong signal...
+      
       // Enhanced symbol detection with # prefix support for multiple instruments
       const symbolPatterns = [
         // =================== CAPTION-BASED SYMBOLS (Priority Detection) ===================
@@ -743,6 +801,24 @@ export class TradeParser {
       
       // Extract visual chart data (OCR from chart zones) - PRIORITY since ALL charts use this
       const visualData = this.extractVisualChartData(text, symbol);
+      
+      // NEW: Extract grey highlighted entry price from chart scale (user's insight!)
+      const greyEntry = this.extractGreyHighlightEntry(text, symbol);
+      if (greyEntry) {
+        logger.info(`🎯 Grey highlighted entry price found: ${greyEntry}`);
+        
+        // If we have both visual data and grey entry, use grey entry as precise entry point
+        if (visualData && visualData.zones.length > 0) {
+          const entryZone = visualData.zones.find(z => z.name.includes('Entry') || z.name.includes('Grey'));
+          if (entryZone) {
+            // Update entry zone to use precise grey highlight price
+            entryZone.min = greyEntry - (greyEntry * 0.001); // Small range around grey price
+            entryZone.max = greyEntry + (greyEntry * 0.001);
+            entryZone.value = greyEntry;
+            logger.info(`📊 Updated entry zone with grey highlight: ${entryZone.min}-${entryZone.max} (center: ${greyEntry})`);
+          }
+        }
+      }
       
       // Enhanced chart analysis for Update messages - analyze price levels when no explicit zones found
       if (!visualData && caption && caption.toLowerCase().includes('update')) {
@@ -1003,7 +1079,7 @@ export class TradeParser {
           plan: `${captionData.action} SETUP FROM CAPTION WITH 1:1 RISK-REWARD`
         };
       }
-      
+
       return null;
     } catch (error) {
       logger.error('Error parsing visual chart signal:', error);
@@ -1141,7 +1217,7 @@ export class TradeParser {
       if (upperSym.includes('XAG') || upperSym.includes('SILVER')) return 60;   // Silver: 15-60 range
       if (upperSym.includes('XAU') || upperSym.includes('GOLD')) return 5000;   // Gold: 1000-5000 range
       if (upperSym.includes('BTC') || upperSym.includes('BITCOIN')) return 200000; // Bitcoin: 10000-200000 range
-      if (this.FOREX_PAIRS.some(pair => upperSym.includes(pair))) return 10;    // Forex: 0.1-10 range
+      if (this.FOREX_PAIRS.some(pair => upperSym.includes(pair))) return 200;   // Forex: 0.1-200 range (handles CAD/JPY pairs)
       return 100000; // Default for indices
     };
     
@@ -1244,6 +1320,103 @@ export class TradeParser {
     logger.debug(`🔍 Visual chart analysis: Found ${zones.length} zones (grey entry + targets)`);
     
     return zones.length > 0 ? { zones } : null;
+  }
+
+  /**
+   * Extract grey highlighted entry price from chart scale
+   * The grey highlight on the price scale indicates the precise entry level
+   * This is the key insight from the user - grey highlight = exact entry price!
+   */
+  private extractGreyHighlightEntry(text: string, symbol: string): number | null {
+    logger.info('🔍 Looking for grey highlighted entry price on chart scale...');
+    
+    // Get all price numbers from OCR text that match the symbol's price range
+    const priceRegex = /\d+\.\d{2,5}/g;
+    const allPrices = [...text.matchAll(priceRegex)]
+      .map(match => parseFloat(match[0]))
+      .filter(price => this.isPriceValidForSymbol(price, symbol));
+    
+    if (allPrices.length === 0) {
+      logger.debug('❌ No valid prices found for symbol');
+      return null;
+    }
+    
+    logger.debug(`📊 Found ${allPrices.length} valid prices for ${symbol}: ${allPrices.slice(0, 5).join(', ')}...`);
+    
+    // Remove duplicates but keep track of frequency
+    const uniquePrices = [...new Set(allPrices)];
+    uniquePrices.sort((a, b) => a - b);
+    
+    // IMPROVED STRATEGY: The grey highlighted entry is typically:
+    // 1. Not at the extreme high/low (those are targets/stops)
+    // 2. In the middle-upper range of visible prices
+    // 3. A "clean" price level (often round numbers)
+    
+    // Filter out extreme prices (likely targets/stops)
+    const priceCount = uniquePrices.length;
+    if (priceCount < 3) {
+      // Not enough prices to analyze
+      return uniquePrices[Math.floor(priceCount / 2)];
+    }
+    
+    // Remove bottom 20% and top 20% to focus on middle range
+    const startIdx = Math.floor(priceCount * 0.2);
+    const endIdx = Math.floor(priceCount * 0.8);
+    const middleRangePrices = uniquePrices.slice(startIdx, endIdx);
+    
+    if (middleRangePrices.length === 0) {
+      return uniquePrices[Math.floor(priceCount / 2)];
+    }
+    
+    // Within middle range, prefer prices that appear in the text context
+    // Look for prices that might be mentioned near "entry", "zone", or current levels
+    let bestCandidate = middleRangePrices[Math.floor(middleRangePrices.length / 2)];
+    
+    // Check for prices mentioned near contextual keywords
+    const entryContextPattern = /(?:entry|zone|level|current|grey|gray|highlight)[\s\S]{0,50}(\d+\.\d{2,5})/gi;
+    const contextMatches = [...text.matchAll(entryContextPattern)];
+    
+    for (const match of contextMatches) {
+      const contextPrice = parseFloat(match[1]);
+      if (middleRangePrices.includes(contextPrice)) {
+        bestCandidate = contextPrice;
+        logger.info(`🎯 Found contextual entry price: ${contextPrice}`);
+        break;
+      }
+    }
+    
+    logger.info(`🎯 Grey highlighted entry detected: ${bestCandidate} (from ${middleRangePrices.length} middle-range candidates)`);
+    
+    return bestCandidate;
+  }
+
+  /**
+   * Check if a price is valid for the given symbol's typical range
+   */
+  private isPriceValidForSymbol(price: number, symbol: string): boolean {
+    const upperSym = symbol.toUpperCase();
+    
+    // Forex pairs: 0.5 - 3.0 typically
+    if (this.FOREX_PAIRS.some(pair => upperSym.includes(pair))) {
+      return price >= 0.5 && price <= 3.0;
+    }
+    
+    // Gold: 1000-5000 range
+    if (upperSym.includes('XAU') || upperSym.includes('GOLD')) {
+      return price >= 1000 && price <= 5000;
+    }
+    
+    // Silver: 10-100 range  
+    if (upperSym.includes('XAG') || upperSym.includes('SILVER')) {
+      return price >= 10 && price <= 100;
+    }
+    
+    // Indices: typically 1000-50000
+    if (this.INDEX_SYMBOLS.some(idx => upperSym.includes(idx))) {
+      return price >= 1000 && price <= 50000;
+    }
+    
+    return true; // Default: accept all prices
   }
 
   /**

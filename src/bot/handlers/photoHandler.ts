@@ -6,6 +6,8 @@ import { ITradeExecutor } from '../../types/ITradeExecutor';
 import { config } from '../../utils/config';
 import { logger } from '../../utils/logger';
 import { InputValidator } from '../../utils/inputValidation';
+import { ProductionMLIntegration } from '../../ml/productionIntegration';
+import { tradingConfig } from '../../utils/tradingConfig';
 import axios from 'axios';
 
 export class PhotoHandler {
@@ -84,7 +86,17 @@ export class PhotoHandler {
         }
         
         // Check if caption contains clear trading information (entry, stop loss, targets)
-        const captionHasTradingInfo = /(?:SL|Stop|Target|TP|Entry|Zone|Buy|Sell|XAUUSD|Gold|EUR|GBP|USD)/gi.test(message.caption);
+        // More strict check - need actual trading setup data, not just symbol mentions
+        const tradingSetupPatterns = [
+          /(?:SL|Stop\s*Loss)[\s:]*\d+/i,           // Stop Loss with number
+          /(?:TP|Target|Take\s*Profit)[\s:]*\d+/i,  // Target with number
+          /(?:Entry|Zone|Limit)[\s:]*\d+/i,         // Entry with number
+          /\d+\.\d{3,5}/,                           // Price levels (1.61850)
+          /\d+\s*[-–]\s*\d+/,                      // Price ranges
+          /#\w+.*(?:buy|sell|limit|zone)/i          // Hashtag with setup
+        ];
+        
+        const captionHasTradingInfo = tradingSetupPatterns.some(pattern => pattern.test(message.caption));
         
         if (captionHasTradingInfo) {
           logger.info('Caption contains clear trading information - prioritizing caption over OCR');
@@ -94,14 +106,13 @@ export class PhotoHandler {
           // Extract text from image if caption doesn't have clear trading info
           const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
           
-          // Validate OCR confidence
-          if (ocrResult.confidence < 0.6) {
-            logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
-            await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: 60%\n\n💡 Please send a clearer, higher-resolution image.`);
-            return;
-          }
-          
-          logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
+        // Validate OCR confidence
+        const minOcrConfidence = tradingConfig.getConfig().minOcrConfidence;
+        if (ocrResult.confidence < minOcrConfidence) {
+          logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
+          await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: ${(minOcrConfidence * 100).toFixed(1)}%\n\n💡 Please send a clearer, higher-resolution image.`);
+          return;
+        }          logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
           logger.info('Extracted text from image:', ocrResult.text);
           
           // Check if OCR text indicates result/update message
@@ -118,9 +129,10 @@ export class PhotoHandler {
         const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
         
         // Validate OCR confidence
-        if (ocrResult.confidence < 0.6) {
+        const minOcrConfidence = tradingConfig.getConfig().minOcrConfidence;
+        if (ocrResult.confidence < minOcrConfidence) {
           logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
-          await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: 60%\n\n💡 Please send a clearer, higher-resolution image.`);
+          await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: ${(minOcrConfidence * 100).toFixed(1)}%\n\n💡 Please send a clearer, higher-resolution image.`);
           return;
         }
         
@@ -157,10 +169,39 @@ export class PhotoHandler {
         preview: combinedText.substring(0, 200) + (combinedText.length > 200 ? '...' : '')
       });
       
-      const tradeSignal = this.tradeParser.parseTradeSignal(combinedText);
+      const originalSignal = this.tradeParser.parseTradeSignal(combinedText);
+      
+      // 🎨 PRODUCTION ML INTEGRATION - Enhance with Color Analysis ML
+      logger.info('🚀 Applying Production ML Integration...');
+      const tradeSignal = await ProductionMLIntegration.enhanceTradeSignal(
+        originalSignal, 
+        combinedText, 
+        message.caption
+      );
       
       if (!tradeSignal) {
-        logger.warn('No valid trade signal found in image');
+        logger.warn('No valid trade signal found in image (after ML enhancement)');
+        // Only reply if it's not a channel post (channel posts can't be replied to directly)
+        if (!ctx.channelPost) {
+          await ctx.reply('❌ Could not parse trade signal from image');
+        }
+        return;
+      }
+
+      // 🚨 Production Risk Assessment
+      const riskAssessment = ProductionMLIntegration.assessSignalRisk(tradeSignal, combinedText);
+      logger.info('🔍 Risk Assessment:', riskAssessment);
+      
+      if (!riskAssessment.shouldTrade) {
+        logger.warn('🚨 Signal rejected due to high risk:', riskAssessment.warnings);
+        if (!ctx.channelPost) {
+          await ctx.reply(`🚨 High risk signal detected - trade rejected:\n${riskAssessment.warnings.join('\n')}\n\n${riskAssessment.recommendation}`);
+        }
+        return;
+      }
+      
+      if (!tradeSignal) {
+        logger.warn('No valid trade signal found in image (after ML enhancement)');
         // Only reply if it's not a channel post (channel posts can't be replied to directly)
         if (!ctx.channelPost) {
           await ctx.reply('❌ Could not parse trade signal from image');
@@ -190,7 +231,8 @@ export class PhotoHandler {
 
       // Add position sizing calculations
       try {
-        let accountEquity = 10000; // Default fallback
+        const configDefaults = tradingConfig.getConfig();
+        let accountEquity = configDefaults.minAccountBalance; // Use configured minimum instead of hardcoded 10000
         
         // Try to get actual account equity if available
         if (this.tradeExecutor.getAccountEquity) {
@@ -201,17 +243,17 @@ export class PhotoHandler {
             const equityValidation = InputValidator.validateAccountEquity(accountEquity);
             if (!equityValidation.isValid) {
               logger.warn('❌ Invalid account equity:', equityValidation.errors);
-              accountEquity = 10000; // Use fallback
+              accountEquity = configDefaults.minAccountBalance; // Use configured fallback
             } else if (equityValidation.warnings.length > 0) {
               logger.warn('⚠️ Account equity warnings:', equityValidation.warnings);
             }
             
             logger.info(`💰 Retrieved account equity: $${accountEquity.toLocaleString()}`);
           } catch (error) {
-            logger.warn('Failed to get account equity, using default:', error);
+            logger.warn('Failed to get account equity, using configured minimum:', error);
           }
         } else {
-          logger.info('💰 Trade executor does not support equity retrieval, using default $10,000');
+          logger.info(`💰 Trade executor does not support equity retrieval, using configured minimum $${configDefaults.minAccountBalance.toLocaleString()}`);
         }
         
         // Calculate position sizing

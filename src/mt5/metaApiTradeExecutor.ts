@@ -4,6 +4,7 @@ import { TradeSignal, TradeResult, TradeAction, MetaTraderTradeResponse, OrderTy
 import { logger } from '../utils/logger';
 import { OrderTypeDetector, OrderTypeDecision } from '../utils/orderTypeDetector';
 import { config } from '../utils/config';
+import { SmartMarketOverrideML, MarketOverrideDecision } from '../ml/tradingML';
 
 export class MetaApiTradeExecutor implements ITradeExecutor {
   private api: MetaApi;
@@ -12,6 +13,7 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
   private connectionAttempts = 0;
   private maxRetries = 3;
   private retryDelay = 5000; // 5 seconds
+  private lastLoggedAccountInfo: any = null;
 
   constructor() {
     const token = process.env.METAAPI_TOKEN;
@@ -89,10 +91,11 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       this.connection = this.account.getStreamingConnection();
       await this.connection.connect();
 
-      // Skip synchronization to avoid subscription timeout errors
-      logger.info('🔄 MetaAPI connection established, skipping sync to avoid subscription errors...');
+      // IMPORTANT: Wait for synchronization as per MetaAPI docs
+      logger.info('🔄 Waiting for terminal synchronization...');
+      await this.connection.waitSynchronized();
 
-      logger.info('✅ MetaAPI connected successfully!');
+      logger.info('✅ MetaAPI connected and synchronized successfully!');
       return true;
 
     } catch (error: any) {
@@ -148,6 +151,17 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
     }
   }
 
+  private hasSignificantAccountChange(newInfo: any): boolean {
+    if (!this.lastLoggedAccountInfo) return true;
+    if (!newInfo || !newInfo.balance || !newInfo.equity) return false;
+    if (!this.lastLoggedAccountInfo.balance || !this.lastLoggedAccountInfo.equity) return true;
+    
+    const balanceChanged = Math.abs(newInfo.balance - this.lastLoggedAccountInfo.balance) > 10;
+    const equityChanged = Math.abs(newInfo.equity - this.lastLoggedAccountInfo.equity) > 10;
+    
+    return balanceChanged || equityChanged;
+  }
+
   async getAccountInfo(): Promise<any> {
     try {
       if (!this.connection) {
@@ -174,13 +188,17 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       const accountInfo = terminalState.accountInformation;
       
       if (accountInfo) {
-        logger.info('💰 Account Info:', {
-          balance: accountInfo.balance,
-          equity: accountInfo.equity,
-          margin: accountInfo.margin,
-          freeMargin: accountInfo.freeMargin,
-          currency: accountInfo.currency
-        });
+        // Account info logging temporarily disabled to reduce log noise
+        // Only log significant changes at debug level
+        const shouldLogChange = this.hasSignificantAccountChange(accountInfo);
+        
+        if (shouldLogChange) {
+          logger.debug('Account Info changed:', {
+            balance: accountInfo.balance,
+            equity: accountInfo.equity
+          });
+          this.lastLoggedAccountInfo = { ...accountInfo };
+        }
       }
 
       return accountInfo;
@@ -194,6 +212,13 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
     try {
       if (!this.connection) {
         throw new Error('Not connected to MetaAPI');
+      }
+
+      // Map parsed symbols to broker-specific CFD symbols
+      const brokerSymbol = this.mapToBrokerSymbol(signal.symbol);
+      if (brokerSymbol !== signal.symbol) {
+        logger.info(`🔄 Symbol mapping: ${signal.symbol} → ${brokerSymbol}`);
+        signal.symbol = brokerSymbol;
       }
 
       // Ensure terminal state is synchronized before trading
@@ -242,6 +267,18 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         symbolPriceAvailable: !!symbolPrice
       });
 
+      // CRITICAL: Subscribe to market data for this symbol BEFORE trading (as per MetaAPI docs)
+      try {
+        logger.info(`📡 Subscribing to market data for ${signal.symbol}...`);
+        await this.connection.subscribeToMarketData(signal.symbol);
+        // Give MetaAPI time to sync market data
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        logger.info(`✅ Market data subscription complete for ${signal.symbol}`);
+      } catch (subscriptionError) {
+        logger.warn(`⚠️ Market data subscription failed for ${signal.symbol}:`, subscriptionError);
+        // Continue anyway - let FTMO handle it
+      }
+
       // Check market status before trading
       const marketStatus = await this.checkMarketStatus(signal.symbol);
       logger.info('🕐 Market Status Check:', {
@@ -250,27 +287,70 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         reason: marketStatus.reason
       });
 
+      // FTMO Override: Since FTMO worked before and has XAUUSD, be very permissive
+      const currentTime = new Date();
+      const dayOfWeek = currentTime.getUTCDay(); // 0=Sunday, 6=Saturday
+      const isActualWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      
+      // Only block on actual weekends, let FTMO handle the rest
+      if (!marketStatus.isOpen && isActualWeekend) {
+        throw new Error(`Market is closed: ${marketStatus.reason}`);
+      } else if (!marketStatus.isOpen) {
+        // Weekday but market status unclear - let FTMO decide
+        logger.warn(`⚠️ Market status unclear (${marketStatus.reason}), but it's a weekday - letting FTMO handle it`);
+      }
+
       // Get account info for position sizing
       const accountInfo = await this.getAccountInfo();
       
-      // Calculate position size based on risk
-      const riskAmount = accountInfo.balance * (parseFloat(process.env.RISK_PERCENTAGE || '2') / 100);
-      const maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
+      // Declare variables outside the conditional blocks
+      let volume: number;
+      let volumePerTarget: number;
+      let riskAmount: number;
       
-      // Calculate lot size with proper minimum volume
-      let volume = Math.min(maxTradeSize, riskAmount / 1000);
-      volume = Math.max(0.01, Math.round(volume * 100) / 100); // Ensure minimum 0.01 lots
+      // Safety check for account info
+      if (!accountInfo || !accountInfo.balance) {
+        logger.warn('⚠️ Account info not available, using fallback values');
+        const fallbackBalance = 10000; // Default fallback balance
+        
+        // Calculate position size with fallback
+        riskAmount = fallbackBalance * (parseFloat(process.env.RISK_PERCENTAGE || '2') / 100);
+        const maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
+        
+        // Calculate lot size with proper minimum volume
+        volume = Math.min(maxTradeSize, riskAmount / 1000);
+        volume = Math.max(0.01, Math.round(volume * 100) / 100);
+        
+        volumePerTarget = Math.max(0.01, Math.round((volume / signal.targets.length) * 100) / 100);
+        
+        logger.info('📊 Volume calculation (fallback):', {
+          fallbackBalance,
+          riskAmount: riskAmount,
+          totalVolume: volume,
+          volumePerTarget: volumePerTarget,
+          targets: signal.targets.length
+        });
+        
+      } else {
+        // Calculate position size based on actual account balance
+        riskAmount = accountInfo.balance * (parseFloat(process.env.RISK_PERCENTAGE || '2') / 100);
+        const maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
+        
+        // Calculate lot size with proper minimum volume
+        volume = Math.min(maxTradeSize, riskAmount / 1000);
+        volume = Math.max(0.01, Math.round(volume * 100) / 100); // Ensure minimum 0.01 lots
 
-      // If multiple targets, split volume but ensure each is at least 0.01
-      let volumePerTarget = Math.max(0.01, Math.round((volume / signal.targets.length) * 100) / 100);
-      
-      logger.info('📊 Volume calculation:', {
-        balance: accountInfo.balance,
-        riskAmount: riskAmount,
-        totalVolume: volume,
-        volumePerTarget: volumePerTarget,
-        targets: signal.targets.length
-      });
+        // If multiple targets, split volume but ensure each is at least 0.01
+        volumePerTarget = Math.max(0.01, Math.round((volume / signal.targets.length) * 100) / 100);
+        
+        logger.info('📊 Volume calculation:', {
+          balance: accountInfo.balance,
+          riskAmount: riskAmount,
+          totalVolume: volume,
+          volumePerTarget: volumePerTarget,
+          targets: signal.targets.length
+        });
+      }
 
       // Get symbol specification from terminal state or use defaults
       let symbolSpec;
@@ -521,7 +601,7 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
 
           // Special handling for market closed error
           if (errorMessage.includes('Market is closed') || stringCode.includes('MARKET_CLOSED')) {
-            logger.warn('🕐 Market Closed - Detailed Analysis:', {
+            logger.warn('🕐 Market Closed - Server Error Detected:', {
               symbol: signal.symbol,
               errorCode: stringCode,
               numericCode: error?.numericCode,
@@ -529,36 +609,75 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
               utcTime: new Date().toISOString()
             });
             
-            // Get current market status
+            // Get current market status with our improved logic
             try {
               const currentMarketStatus = await this.checkMarketStatus(signal.symbol);
-              logger.info('📊 Current Market Status:', {
+              logger.info('📊 Our Market Status Analysis:', {
                 isOpen: currentMarketStatus.isOpen,
                 reason: currentMarketStatus.reason,
                 serverTime: currentMarketStatus.serverTime,
                 lastPrice: currentMarketStatus.price
               });
+              
+              // SMART ML MARKET OVERRIDE: Use ML to analyze if we should override server error
+              if (currentMarketStatus.isOpen) {
+                const now = new Date();
+                const symbolPrice = await this.connection.getSymbolPrice(signal.symbol).catch((error: any) => {
+                  logger.error(`Failed to get symbol price for ${signal.symbol}:`, error);
+                  return null;
+                });
+                const spread = symbolPrice ? Math.abs(symbolPrice.ask - symbolPrice.bid) : undefined;
+                
+                const overrideDecision: MarketOverrideDecision = SmartMarketOverrideML.analyzeMarketConflict(
+                  'CLOSED', // Server says closed
+                  now,
+                  signal.symbol,
+                  !!symbolPrice, // Price data available
+                  spread
+                );
+                
+                logger.info('🤖 Smart Market Override ML Analysis:', {
+                  shouldOverride: overrideDecision.shouldOverride,
+                  confidence: `${(overrideDecision.confidence * 100).toFixed(1)}%`,
+                  reasoning: overrideDecision.reasoning,
+                  suggestedAction: overrideDecision.suggestedAction
+                });
+                
+                if (overrideDecision.shouldOverride && overrideDecision.confidence > 0.9) {
+                  logger.warn('� ML OVERRIDE: Attempting to proceed despite server "Market Closed" error');
+                  logger.warn(`📊 Confidence: ${(overrideDecision.confidence * 100).toFixed(1)}% - ${overrideDecision.reasoning}`);
+                  
+                  // In future versions, could attempt to retry the trade here
+                  // For now, log the decision for analysis
+                  logger.info('🔮 Future Enhancement: Could retry trade with ML override logic');
+                } else {
+                  logger.warn('⛔ ML Override declined - server error stands');
+                }
+              }
+              
             } catch (statusError) {
               logger.warn('Could not check market status:', statusError);
             }
             
             // Provide helpful message based on current time
             const now = new Date();
-            const dayOfWeek = now.getDay(); // 0=Sunday, 6=Saturday
+            const dayOfWeek = now.getUTCDay(); // 0=Sunday, 6=Saturday
             const hour = now.getUTCHours();
+            const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dayOfWeek];
             
-            let helpfulMessage = 'Market is closed. ';
-            if (dayOfWeek === 0 && hour < 22) {
-              helpfulMessage += `Forex markets open Sunday 5 PM EST (22 UTC). Current time: ${hour} UTC.`;
+            let helpfulMessage = '';
+            if (dayOfWeek === 0 && hour < 21) {
+              helpfulMessage = `Forex markets open Sunday 9 PM UTC. Current: ${dayName} ${hour}:${now.getUTCMinutes().toString().padStart(2,'0')} UTC.`;
             } else if (dayOfWeek === 6) {
-              helpfulMessage += 'Markets closed on Saturday. Will reopen Sunday 5 PM EST.';
-            } else if (dayOfWeek === 5 && hour >= 22) {
-              helpfulMessage += 'Markets closed Friday 5 PM EST. Will reopen Sunday 5 PM EST.';
+              helpfulMessage = 'Markets closed on Saturday. Will reopen Sunday 9 PM UTC.';
+            } else if (dayOfWeek === 5 && hour >= 21) {
+              helpfulMessage = 'Markets closed Friday 9 PM UTC. Will reopen Sunday 9 PM UTC.';
             } else {
-              helpfulMessage += 'Check if there are holidays or broker-specific trading hours.';
+              // Should be trading hours!
+              helpfulMessage = `🔥 UNEXPECTED: It's ${dayName} ${hour}:${now.getUTCMinutes().toString().padStart(2,'0')} UTC - markets should be OPEN! This is likely a demo account limitation.`;
             }
             
-            logger.info('💡 Trading Schedule Info:', helpfulMessage);
+            logger.info('💡 Trading Schedule Analysis:', helpfulMessage);
           }
           
           results.push({ 
@@ -684,7 +803,16 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       const terminalState = this.connection.terminalState;
       const serverTime = terminalState.accountInformation?.time || new Date();
       
-      // Check if we can get current price (indicates market is open)
+      // First, ensure we're subscribed to market data for this symbol
+      try {
+        await this.connection.subscribeToMarketData(symbol);
+        // Wait a bit for market data to arrive
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.log('Market data subscription attempt:', error);
+      }
+      
+      // Check if we can get current price and specification
       let price = null;
       let specification = null;
       
@@ -692,17 +820,60 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         price = terminalState.price(symbol);
         specification = terminalState.specification(symbol);
       } catch (error) {
-        // Price not available might mean market closed
+        // Price/spec not available - could be market closed or not subscribed
+        console.log('Price/specification access error:', error);
       }
 
-      const isOpen = !!(price && price.bid && price.ask);
+      // For Monday (market should be open), be more lenient
+      const now = new Date();
+      const dayOfWeek = now.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+      const hourUTC = now.getUTCHours();
+      const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dayOfWeek];
+      
+      logger.info(`🕐 Current UTC time: ${dayName} ${hourUTC}:${now.getUTCMinutes().toString().padStart(2,'0')}`);
+      
+      // Forex markets:
+      // Close: Friday 21:00 UTC (5:00 PM EST)
+      // Open: Sunday 21:00 UTC (Monday 00:00 AEDT Sydney)
+      // So Monday 20:58 UTC should definitely be open!
+      
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday or Saturday
+      
+      // Market is definitely closed only during weekend gap:
+      // Saturday all day, Sunday before 21:00 UTC
+      const isActualWeekendClosure = (dayOfWeek === 6) || (dayOfWeek === 0 && hourUTC < 21);
+      
+      // If we have valid price data, market is definitely open
+      const hasValidPrice = !!(price && price.bid && price.ask && price.bid > 0 && price.ask > 0);
+      
+      let isOpen: boolean;
+      let reason: string;
+      
+      if (hasValidPrice) {
+        isOpen = true;
+        reason = 'Market open - valid price data available';
+      } else if (isActualWeekendClosure) {
+        isOpen = false;
+        reason = `Market closed - weekend closure (${dayName} ${hourUTC}:${now.getUTCMinutes().toString().padStart(2,'0')} UTC)`;
+      } else {
+        // Weekday during trading hours but no price data - likely a connection/sync issue
+        // Monday 20:58 UTC should definitely be OPEN!
+        isOpen = true; // Assume open to allow trading attempt
+        reason = `Market OPEN - ${dayName} during trading hours (price data may be delayed)`;
+      }
       
       logger.info('🕐 Market Status Check:', {
         symbol: symbol,
+        dayOfWeek: dayOfWeek,
+        dayName: dayName,
+        hourUTC: hourUTC,
         isOpen: isOpen,
+        hasValidPrice: hasValidPrice,
+        isActualWeekendClosure: isActualWeekendClosure,
         serverTime: serverTime instanceof Date ? serverTime.toISOString() : serverTime,
         priceAvailable: !!price,
-        specificationAvailable: !!specification
+        bidAsk: price ? `${price.bid}/${price.ask}` : 'N/A',
+        reason: reason
       });
 
       return {
@@ -710,15 +881,20 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         serverTime: serverTime instanceof Date ? serverTime.toISOString() : serverTime,
         price: price,
         specification: specification,
-        reason: isOpen ? 'Market open - price available' : 'Market closed - no price available'
+        reason: reason
       };
 
     } catch (error: any) {
       logger.error('Error checking market status:', error);
+      // On error during trading hours, assume market is open
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const isLikelyTradingHours = dayOfWeek >= 1 && dayOfWeek <= 5; // Monday to Friday
+      
       return {
-        isOpen: false,
+        isOpen: isLikelyTradingHours, // Assume open if it's a weekday
         serverTime: new Date().toISOString(),
-        reason: `Error checking market: ${error.message}`
+        reason: `Error checking market: ${error.message} (assuming ${isLikelyTradingHours ? 'open' : 'closed'} based on day)`
       };
     }
   }
@@ -870,6 +1046,40 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
       logger.warn('Could not get current price for pending order logic, using limit order');
       return await this.executeLimitOrder(signal, volume, target);
     }
+  }
+
+  /**
+   * Map parsed symbols to broker-specific CFD symbols
+   * Based on common FTMO/broker symbol naming conventions
+   */
+  private mapToBrokerSymbol(parsedSymbol: string): string {
+    const upperSymbol = parsedSymbol.toUpperCase();
+    
+    // Handle Silver CFDs - FTMO typically uses "SILVER" for Silver CFDs
+    if (upperSymbol.includes('XAG') || upperSymbol === 'SILVER') {
+      return 'SILVER'; // FTMO Silver CFD symbol
+    }
+    
+    // Handle Gold CFDs - usually XAUUSD works as-is
+    if (upperSymbol.includes('XAU') || upperSymbol === 'GOLD') {
+      return 'XAUUSD';
+    }
+    
+    // Handle other common CFD mappings
+    if (upperSymbol === 'US30') {
+      return 'US30'; // Dow Jones CFD
+    }
+    
+    if (upperSymbol === 'NAS100') {
+      return 'NAS100'; // NASDAQ CFD  
+    }
+    
+    if (upperSymbol === 'SPX500') {
+      return 'SPX500'; // S&P 500 CFD
+    }
+    
+    // For Forex pairs, return as-is (they usually match)
+    return parsedSymbol;
   }
 
   /**

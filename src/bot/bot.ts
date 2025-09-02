@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { MessageHandler } from './handlers/messageHandler';
 import { PhotoHandler } from './handlers/photoHandler';
-import { MetaApiTradeExecutor } from '../mt5/metaApiTradeExecutor';
+import { MultiAccountMetaApiExecutor } from '../mt5/multiAccountMetaApiExecutor';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
@@ -15,9 +15,9 @@ export class TelegramBot {
   constructor() {
     this.bot = new Telegraf(config.botToken);
     
-    // Using MetaAPI for trade execution
-    logger.info('🌐 Using MetaAPI for trade execution');
-    this.tradeExecutor = new MetaApiTradeExecutor();
+    // Using Multi-Account MetaAPI for trade execution across multiple brokers
+    logger.info('🌐 Using Multi-Account MetaAPI for simultaneous trade execution');
+    this.tradeExecutor = new MultiAccountMetaApiExecutor();
     
     this.messageHandler = new MessageHandler();
     this.photoHandler = new PhotoHandler(this.tradeExecutor);
@@ -175,13 +175,13 @@ export class TelegramBot {
       await new Promise(resolve => setTimeout(resolve, 2000));
       logger.info('✅ Telegram bot started successfully');
       
-      // Initialize trade executor with proper error handling
-      logger.info('🔄 Attempting to initialize File-based Trade Executor...');
+      // Initialize Multi-Account trade executor with proper error handling
+      logger.info('🔄 Attempting to initialize Multi-Account MetaAPI Trade Executor...');
       try {
         await this.tradeExecutor.initialize();
-        logger.info('✅ File-based Trade executor initialized successfully');
+        logger.info('✅ Multi-Account MetaAPI Trade executor initialized successfully');
       } catch (error) {
-        logger.error('❌ Trade executor initialization failed:', error);
+        logger.error('❌ Multi-Account Trade executor initialization failed:', error);
         logger.warn('⚠️ Bot will continue running without trade execution');
         logger.info('ℹ️ OCR and parsing will still work, but trades cannot be executed');
       }

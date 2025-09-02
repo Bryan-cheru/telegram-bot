@@ -406,11 +406,19 @@ export class InputValidator {
     const cleanText = text.trim();
     
     if (cleanText.length < 5) {
-      warnings.push('Extracted text is very short');
+      errors.push('Extracted text is too short to contain valid trade information');
     }
 
     if (cleanText.length > 5000) {
       warnings.push('Extracted text is unusually long');
+    }
+
+    // Check if text is mostly special characters (safety critical)
+    const alphanumericChars = cleanText.match(/[a-zA-Z0-9]/g);
+    const alphanumericRatio = alphanumericChars ? alphanumericChars.length / cleanText.length : 0;
+    
+    if (alphanumericRatio < 0.3) {
+      errors.push('Text contains too few alphanumeric characters - likely corrupted or invalid');
     }
 
     // Check for common OCR artifacts
@@ -428,7 +436,8 @@ export class InputValidator {
     );
     
     if (!hasKeywords) {
-      warnings.push('Text does not contain common trading keywords');
+      // This is a safety critical error - text without trading keywords should not be processed
+      errors.push('Text does not contain common trading keywords - not a valid trade signal');
     }
 
     return { isValid: errors.length === 0, errors, warnings };

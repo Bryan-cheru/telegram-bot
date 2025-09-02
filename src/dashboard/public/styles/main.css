@@ -912,3 +912,379 @@ select:focus {
 }
 
 /* ========== END MT5 TRADING DASHBOARD STYLES ========== */
+
+/* ========== MULTI-ACCOUNT DASHBOARD STYLES ========== */
+
+/* Multi-Account Overview */
+.multi-account-overview {
+  margin-bottom: var(--space-xl);
+}
+
+.accounts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-lg);
+}
+
+.account-card {
+  background: linear-gradient(135deg, var(--gray-800) 0%, var(--gray-700) 100%);
+  border: var(--border-width) solid var(--gray-600);
+  border-radius: var(--border-radius-lg);
+  padding: var(--space-lg);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.account-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--primary);
+}
+
+.account-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--primary), var(--info));
+}
+
+.account-header {
+  display: flex;
+  justify-content: between;
+  align-items: center;
+  margin-bottom: var(--space-lg);
+}
+
+.account-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.account-name {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--white);
+}
+
+.account-type {
+  background: var(--primary-light);
+  color: var(--primary);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.account-type.demo {
+  background: rgba(249, 115, 22, 0.1);
+  color: #f97316;
+}
+
+.account-type.live {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.account-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+.status-indicator.connected {
+  background-color: var(--success);
+}
+
+.status-indicator.disconnected {
+  background-color: var(--danger);
+  animation: none;
+}
+
+.status-indicator.connecting {
+  background-color: var(--warning);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.account-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.metric-label {
+  font-size: var(--font-size-sm);
+  color: var(--gray-400);
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--white);
+}
+
+.metric-value.positive {
+  color: var(--success);
+}
+
+.metric-value.negative {
+  color: var(--danger);
+}
+
+.account-positions {
+  border-top: var(--border-width) solid var(--gray-600);
+  padding-top: var(--space-md);
+}
+
+.positions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-sm);
+}
+
+.positions-count {
+  font-size: var(--font-size-sm);
+  color: var(--gray-400);
+}
+
+.positions-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.position-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-sm);
+}
+
+.position-symbol {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.position-type {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.position-type.buy {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--success);
+}
+
+.position-type.sell {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger);
+}
+
+.position-pl {
+  font-weight: 600;
+}
+
+.account-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl);
+  color: var(--gray-400);
+  gap: var(--space-md);
+}
+
+.account-loading i {
+  font-size: var(--font-size-2xl);
+}
+
+/* Trades Table */
+.trades-table-container {
+  overflow-x: auto;
+  border-radius: var(--border-radius);
+  border: var(--border-width) solid var(--gray-700);
+}
+
+.trades-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--gray-800);
+}
+
+.trades-table th,
+.trades-table td {
+  padding: var(--space-md);
+  text-align: left;
+  border-bottom: var(--border-width) solid var(--gray-700);
+}
+
+.trades-table th {
+  background: var(--gray-700);
+  color: var(--gray-300);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.trades-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.trades-table .account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--primary-light);
+  color: var(--primary);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.trades-table .trade-type {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.trades-table .trade-type.buy {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--success);
+}
+
+.trades-table .trade-type.sell {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger);
+}
+
+.trades-table .profit-loss {
+  font-weight: 600;
+}
+
+.trades-table .profit-loss.positive {
+  color: var(--success);
+}
+
+.trades-table .profit-loss.negative {
+  color: var(--danger);
+}
+
+.trades-table .no-trades td {
+  padding: var(--space-2xl);
+  text-align: center;
+  color: var(--gray-400);
+}
+
+.trades-table .no-trades i {
+  font-size: var(--font-size-2xl);
+  margin-bottom: var(--space-sm);
+  display: block;
+}
+
+/* Header Actions */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.form-select {
+  background: var(--gray-700);
+  border: var(--border-width) solid var(--gray-600);
+  color: var(--white);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-sm);
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* Trade Action Buttons */
+.trade-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.btn-xs {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+  border-radius: var(--border-radius);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--white);
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .accounts-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .account-metrics {
+    grid-template-columns: 1fr;
+  }
+  
+  .trades-table-container {
+    font-size: var(--font-size-sm);
+  }
+  
+  .trades-table th,
+  .trades-table td {
+    padding: var(--space-sm);
+  }
+  
+  .header-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+}
+
+/* ========== END MULTI-ACCOUNT DASHBOARD STYLES ========== */

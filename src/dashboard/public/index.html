@@ -58,6 +58,28 @@
         <div class="content">
             <!-- Dashboard Page -->
             <section id="dashboard" class="page active">
+                <!-- Multi-Account Overview -->
+                <div class="multi-account-overview">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2><i class="fas fa-building-columns"></i> Multi-Account Overview</h2>
+                            <button class="btn btn-outline btn-sm" id="refresh-all-accounts" onclick="refreshAllAccountData()">
+                                <i class="fas fa-sync-alt"></i> Refresh All
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="accounts-grid" id="accounts-grid">
+                                <!-- Account cards will be dynamically populated here -->
+                                <div class="account-loading">
+                                    <i class="fas fa-spinner fa-spin"></i>
+                                    <span>Loading account information...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary Stats Grid -->
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon primary">
@@ -75,9 +97,9 @@
                             <i class="fas fa-dollar-sign"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Account Balance</h3>
-                            <div class="stat-value" id="account-balance">$0.00</div>
-                            <div class="stat-change" id="account-currency">USD</div>
+                            <h3>Total Balance</h3>
+                            <div class="stat-value" id="total-balance">$0.00</div>
+                            <div class="stat-change" id="total-accounts">0 Accounts</div>
                         </div>
                     </div>
                     
@@ -86,9 +108,9 @@
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Account Equity</h3>
-                            <div class="stat-value" id="account-equity">$0.00</div>
-                            <div class="stat-change" id="unrealized-pl">+$0.00 P&L</div>
+                            <h3>Total Equity</h3>
+                            <div class="stat-value" id="total-equity">$0.00</div>
+                            <div class="stat-change" id="total-unrealized-pl">+$0.00 P&L</div>
                         </div>
                     </div>
                     
@@ -97,9 +119,9 @@
                             <i class="fas fa-exchange-alt"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Open Positions</h3>
-                            <div class="stat-value" id="open-positions">0</div>
-                            <div class="stat-change" id="positions-breakdown">0 Buy • 0 Sell</div>
+                            <h3>Total Positions</h3>
+                            <div class="stat-value" id="total-positions">0</div>
+                            <div class="stat-change" id="total-positions-breakdown">0 Buy • 0 Sell</div>
                         </div>
                     </div>
                 </div>
@@ -107,29 +129,41 @@
                 <div class="trading-overview">
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-chart-pie"></i> Account Overview</h2>
-                            <button class="btn btn-outline btn-sm" id="refresh-account" onclick="refreshMT5Data()">
-                                <i class="fas fa-sync-alt"></i> Refresh
-                            </button>
+                            <h2><i class="fas fa-list"></i> Active Trades Across All Accounts</h2>
+                            <div class="header-actions">
+                                <select id="account-filter" class="form-select">
+                                    <option value="all">All Accounts</option>
+                                </select>
+                                <button class="btn btn-outline btn-sm" onclick="refreshTradesData()">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
                         </div>
                         <div class="card-body">
-                            <div class="account-summary" id="account-summary">
-                                <div class="summary-item">
-                                    <span class="label">Free Margin:</span>
-                                    <span class="value" id="free-margin">$0.00</span>
-                                </div>
-                                <div class="summary-item">
-                                    <span class="label">Margin Level:</span>
-                                    <span class="value" id="margin-level">0.00%</span>
-                                </div>
-                                <div class="summary-item">
-                                    <span class="label">Total P&L:</span>
-                                    <span class="value profit-loss" id="total-pl">$0.00</span>
-                                </div>
-                                <div class="summary-item">
-                                    <span class="label">Connection Status:</span>
-                                    <span class="value status" id="mt5-connection-status">Connecting...</span>
-                                </div>
+                            <div class="trades-table-container">
+                                <table class="trades-table" id="active-trades-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Account</th>
+                                            <th>Symbol</th>
+                                            <th>Type</th>
+                                            <th>Volume</th>
+                                            <th>Open Price</th>
+                                            <th>Current Price</th>
+                                            <th>P&L</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Trades will be populated here -->
+                                        <tr class="no-trades">
+                                            <td colspan="8" class="text-center">
+                                                <i class="fas fa-chart-line text-muted"></i>
+                                                <span>No active trades</span>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -312,5 +346,6 @@
 
     <!-- Scripts -->
     <script src="scripts/dashboard.js"></script>
+    <script src="scripts/multiAccountDashboard.js"></script>
 </body>
 </html>
