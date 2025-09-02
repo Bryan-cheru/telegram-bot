@@ -167,15 +167,7 @@ export class TelegramBot {
 
   async start(): Promise<void> {
     try {
-      // Start bot first - don't wait for launch to resolve (it often doesn't)
-      logger.info('🚀 Launching Telegram bot...');
-      this.bot.launch();
-      
-      // Give it a moment to start, then continue
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      logger.info('✅ Telegram bot started successfully');
-      
-      // Initialize Multi-Account trade executor with proper error handling
+      // Initialize Multi-Account trade executor FIRST before starting bot
       logger.info('🔄 Attempting to initialize Multi-Account MetaAPI Trade Executor...');
       try {
         await this.tradeExecutor.initialize();
@@ -185,6 +177,15 @@ export class TelegramBot {
         logger.warn('⚠️ Bot will continue running without trade execution');
         logger.info('ℹ️ OCR and parsing will still work, but trades cannot be executed');
       }
+      
+      // Now start the bot after executor is ready
+      logger.info('🚀 Launching Telegram bot...');
+      this.bot.launch();
+      
+      // Give it a moment to start, then continue
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      logger.info('✅ Telegram bot started successfully');
+      logger.info('Bot is running. Press Ctrl+C to stop.');
       
       // Graceful shutdown
       process.once('SIGINT', () => this.stop());
