@@ -10,5 +10,6 @@ export interface ITradeExecutor {
     signalId?: string;
   }>;
   getAccountEquity?(): Promise<number>; // Optional method for position sizing
+  isConnected(): Promise<boolean>; // Check if executor is connected and ready
   closeConnection(): Promise<void>;
 }

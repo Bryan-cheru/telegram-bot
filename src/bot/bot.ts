@@ -109,8 +109,11 @@ export class TelegramBot {
         return;
       }
 
-      // Check if text contains trading signal keywords
-      const tradingKeywords = ['#XAUUSD', '#EURUSD', '#GBPUSD', 'Sell:', 'Buy:', 'Target', 'Update'];
+      logger.info('📨 Processing text message for trading signal');
+      logger.debug('Message text:', text);
+
+      // Check if message contains trading signal indicators
+      const tradingKeywords = ['#XAUUSD', '#EURUSD', '#GBPUSD', 'zone', 'buy', 'sell', 'target', 'update'];
       const containsTradingSignal = tradingKeywords.some(keyword => 
         text.toLowerCase().includes(keyword.toLowerCase())
       );
@@ -120,11 +123,9 @@ export class TelegramBot {
         return;
       }
 
-      logger.info('Processing text message for trading signal:', text);
-
-      // Use the same trade parser to parse text signals
-      const { TradeParser } = await import('../ocr/tradeParser');
-      const tradeParser = new TradeParser();
+      // Use the clean real-world parser
+      const { RealWorldTradeParser } = await import('../ocr/realWorldTradeParser');
+      const tradeParser = new RealWorldTradeParser();
       
       const tradeSignal = tradeParser.parseTradeSignal(text);
       
@@ -145,7 +146,25 @@ export class TelegramBot {
 
       // Execute trade
       try {
+        // Check if trade executor is properly initialized before attempting execution
+        const isConnected = await this.tradeExecutor.isConnected();
+        logger.info(`🔗 Trade executor connection status: ${isConnected}`);
+        
+        if (!isConnected) {
+          logger.error('❌ Trade executor is not connected - cannot execute trades');
+          logger.error('This means MetaAPI connections failed during startup');
+          return;
+        }
+        
+        logger.info('🚀 Attempting to execute trade signal...');
         const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+        
+        logger.info('📊 Trade execution result received:', {
+          success: result.success,
+          message: result.message,
+          error: result.error,
+          signalId: result.signalId
+        });
         
         if (result.success) {
           const successMessage = result.signalId 
@@ -155,9 +174,11 @@ export class TelegramBot {
         } else {
           const errorMessage = `❌ Trade execution failed: ${result.error || result.message}`;
           logger.error(errorMessage);
+          logger.error('💡 Check MetaAPI account connections and market status');
         }
       } catch (error) {
-        logger.error('Trade execution error from text signal:', error);
+        logger.error('💥 Trade execution threw an exception:', error);
+        logger.error('This indicates a serious issue with the trade executor');
       }
 
     } catch (error) {
@@ -169,13 +190,32 @@ export class TelegramBot {
     try {
       // Initialize Multi-Account trade executor FIRST before starting bot
       logger.info('🔄 Attempting to initialize Multi-Account MetaAPI Trade Executor...');
+      let tradeExecutorReady = false;
+      
       try {
         await this.tradeExecutor.initialize();
-        logger.info('✅ Multi-Account MetaAPI Trade executor initialized successfully');
+        
+        // Verify the connection after initialization
+        const isConnected = await this.tradeExecutor.isConnected();
+        if (isConnected) {
+          logger.info('✅ Multi-Account MetaAPI Trade executor initialized and connected successfully');
+          tradeExecutorReady = true;
+        } else {
+          logger.error('❌ Trade executor initialized but not connected to any accounts');
+          tradeExecutorReady = false;
+        }
+        
       } catch (error) {
         logger.error('❌ Multi-Account Trade executor initialization failed:', error);
+        tradeExecutorReady = false;
+      }
+      
+      if (!tradeExecutorReady) {
         logger.warn('⚠️ Bot will continue running without trade execution');
         logger.info('ℹ️ OCR and parsing will still work, but trades cannot be executed');
+        logger.info('🔧 Check your MetaAPI configuration and account status');
+      } else {
+        logger.info('🎯 Trade execution is ready and available');
       }
       
       // Now start the bot after executor is ready

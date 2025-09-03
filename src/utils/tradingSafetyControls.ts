@@ -110,7 +110,7 @@ export class TradingSafetyControls {
 
       // Check trade frequency (prevent over-trading)
       const timeSinceLastTrade = Date.now() - this.state.lastTradeTime.getTime();
-      const minTradeInterval = 60000; // 1 minute minimum between trades
+      const minTradeInterval = 2000; // 2 seconds minimum between trades (reduced for easier monitoring)
       
       if (timeSinceLastTrade < minTradeInterval) {
         return {

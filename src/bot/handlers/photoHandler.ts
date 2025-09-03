@@ -1,23 +1,24 @@
 import { Context } from 'telegraf';
 import { Message } from 'telegraf/typings/core/types/typegram';
 import { TextExtractor } from '../../ocr/textExtractor';
-import { TradeParser } from '../../ocr/tradeParser';
+import { RealWorldTradeParser } from '../../ocr/realWorldTradeParser';
+import { VisualChartAnalysisML } from '../../ml/visualChartAnalysisML';
 import { ITradeExecutor } from '../../types/ITradeExecutor';
 import { config } from '../../utils/config';
 import { logger } from '../../utils/logger';
-import { InputValidator } from '../../utils/inputValidation';
-import { ProductionMLIntegration } from '../../ml/productionIntegration';
 import { tradingConfig } from '../../utils/tradingConfig';
 import axios from 'axios';
 
 export class PhotoHandler {
   private textExtractor: TextExtractor;
-  private tradeParser: TradeParser;
+  private tradeParser: RealWorldTradeParser;
+  private visualML: VisualChartAnalysisML;
   private tradeExecutor: ITradeExecutor;
 
   constructor(tradeExecutor: ITradeExecutor) {
     this.textExtractor = new TextExtractor();
-    this.tradeParser = new TradeParser();
+    this.tradeParser = new RealWorldTradeParser();
+    this.visualML = new VisualChartAnalysisML();
     this.tradeExecutor = tradeExecutor;
   }
 
@@ -29,7 +30,7 @@ export class PhotoHandler {
         return;
       }
 
-      // Get the message object - it could be from ctx.message (private/group) or ctx.channelPost (channel)
+      // Get the message object
       const message = (ctx.message || ctx.channelPost) as any;
       
       if (!message) {
@@ -37,316 +38,337 @@ export class PhotoHandler {
         return;
       }
 
+      // Extract photo file ID
       let fileId: string | null = null;
-      const isChannelPost = !!ctx.channelPost;
-
-      logger.info(`Processing ${isChannelPost ? 'channel post' : 'message'} for image content`);
-
-      // Handle photo messages
+      
       if (message.photo && message.photo.length > 0) {
-        logger.info(`Processing photo ${isChannelPost ? 'from channel post' : 'from message'}`);
-        // Get the highest resolution photo
         const photo = message.photo[message.photo.length - 1];
         fileId = photo.file_id;
-      }
-      // Handle document messages (images sent as files)
-      else if (message.document) {
-        // Check if document is an image
-        const mimeType = message.document.mime_type;
-        if (mimeType && mimeType.startsWith('image/')) {
-          logger.info(`Processing image document ${isChannelPost ? 'from channel post' : 'from message'}`);
-          fileId = message.document.file_id;
-        } else {
-          logger.info('Document is not an image, skipping');
-          return;
-        }
+      } else if (message.document?.mime_type?.startsWith('image/')) {
+        fileId = message.document.file_id;
       }
 
       if (!fileId) {
-        logger.warn('No photo or image document found in message');
+        logger.warn('No photo found in message');
         return;
       }
 
-      // Download the image file
+      // Download the image
+      logger.info('📸 Downloading image...');
       const fileLink = await ctx.telegram.getFileLink(fileId);
       const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
       const imageBuffer = Buffer.from(response.data);
 
-      // Check for caption text first (when image is sent with accompanying text)
-      let combinedText = '';
-      let usesCaptionOnly = false;
-      
+      // Process the message based on whether it has a caption
+      let tradeSignal = null;
+
       if (message.caption && message.caption.trim().length > 0) {
-        logger.info('Caption text found:', message.caption);
+        logger.info(`📝 Caption found: "${message.caption.substring(0, 100)}..."`);
         
-        // Early check: If caption indicates this is a result/update message, skip everything
+        // Check if it's a result/update message (skip trading)
         if (this.tradeParser.isResultOrUpdateMessage(message.caption)) {
-          logger.info('🚫 Caption indicates result/update message - skipping image processing and trade parsing');
+          logger.info('🚫 This is a result/update message - skipping trade execution');
           return;
         }
+
+        // Extract instrument from caption (e.g., #EURCAD, #XAUUSD)
+        const instrument = this.extractInstrumentFromCaption(message.caption);
         
-        // Check if caption contains clear trading information (entry, stop loss, targets)
-        // More strict check - need actual trading setup data, not just symbol mentions
-        const tradingSetupPatterns = [
-          /(?:SL|Stop\s*Loss)[\s:]*\d+/i,           // Stop Loss with number
-          /(?:TP|Target|Take\s*Profit)[\s:]*\d+/i,  // Target with number
-          /(?:Entry|Zone|Limit)[\s:]*\d+/i,         // Entry with number
-          /\d+\.\d{3,5}/,                           // Price levels (1.61850)
-          /\d+\s*[-–]\s*\d+/,                      // Price ranges
-          /#\w+.*(?:buy|sell|limit|zone)/i          // Hashtag with setup
-        ];
-        
-        const captionHasTradingInfo = tradingSetupPatterns.some(pattern => pattern.test(message.caption));
-        
-        if (captionHasTradingInfo) {
-          logger.info('Caption contains clear trading information - prioritizing caption over OCR');
-          combinedText = message.caption;
-          usesCaptionOnly = true;
-        } else {
-          // Extract text from image if caption doesn't have clear trading info
-          const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
+        if (instrument) {
+          logger.info(`💰 Trading instrument detected: ${instrument}`);
           
-        // Validate OCR confidence
-        const minOcrConfidence = tradingConfig.getConfig().minOcrConfidence;
-        if (ocrResult.confidence < minOcrConfidence) {
-          logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
-          await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: ${(minOcrConfidence * 100).toFixed(1)}%\n\n💡 Please send a clearer, higher-resolution image.`);
-          return;
-        }          logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
-          logger.info('Extracted text from image:', ocrResult.text);
-          
-          // Check if OCR text indicates result/update message
-          if (this.tradeParser.isResultOrUpdateMessage(ocrResult.text)) {
-            logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
-            return;
+          try {
+            // Use Visual ML to analyze the chart image
+            logger.info('🎨 Analyzing chart with Visual ML...');
+            tradeSignal = await this.processWithVisualML(imageBuffer, instrument, message.caption);
+            logger.info('✅ Visual ML analysis completed successfully');
+          } catch (visualError) {
+            logger.error('❌ Visual ML failed, trying text-based parsing:', visualError);
+            // Fallback to text-based parsing
+            tradeSignal = this.tradeParser.parseTradeSignal(message.caption);
           }
-          
-          combinedText = `${message.caption}\n\n--- OCR TEXT FROM IMAGE ---\n${ocrResult.text}`;
-          logger.info('Using combined text (caption + OCR) for enhanced parsing');
+        } else {
+          // No instrument in caption, try text-based parsing
+          logger.info('No instrument found in caption, using text-based parsing');
+          tradeSignal = this.tradeParser.parseTradeSignal(message.caption);
         }
       } else {
-        // No caption, extract text from image
+        // No caption, extract text from image using OCR
+        logger.info('📖 No caption found, using OCR...');
         const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
         
-        // Validate OCR confidence
-        const minOcrConfidence = tradingConfig.getConfig().minOcrConfidence;
-        if (ocrResult.confidence < minOcrConfidence) {
-          logger.warn(`❌ Low OCR confidence (${(ocrResult.confidence * 100).toFixed(1)}%)`);
-          await ctx.reply(`❌ Image quality too poor for reliable processing.\n\n📊 OCR Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%\n📋 Minimum required: ${(minOcrConfidence * 100).toFixed(1)}%\n\n💡 Please send a clearer, higher-resolution image.`);
-          return;
-        }
-        
-        logger.info(`✅ OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
-        logger.info('Extracted text from image:', ocrResult.text);
-        
-        // Validate extracted text quality
-        const textValidation = InputValidator.validateExtractedText(ocrResult.text);
-        if (!textValidation.isValid) {
-          logger.warn('❌ Text validation failed:', textValidation.errors);
+        if (ocrResult.confidence < 0.7) {
+          logger.warn(`❌ OCR confidence too low: ${(ocrResult.confidence * 100).toFixed(1)}%`);
           if (!ctx.channelPost) {
-            await ctx.reply(`❌ Extracted text quality issues:\n${textValidation.errors.join('\n')}`);
+            await ctx.reply(`❌ Image quality too poor for reliable processing. OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
           }
           return;
         }
         
-        if (textValidation.warnings.length > 0) {
-          logger.warn('⚠️ Text validation warnings:', textValidation.warnings);
-        }
-        
-        // Check if OCR text indicates result/update message
-        if (this.tradeParser.isResultOrUpdateMessage(ocrResult.text)) {
-          logger.info('🚫 OCR text indicates result/update message - skipping trade parsing');
-          return;
-        }
-
-        combinedText = ocrResult.text;
+        tradeSignal = this.tradeParser.parseTradeSignal(ocrResult.text);
       }
 
-      // Parse trade signal from the text
-      logger.info('🔍 Parsing trade signal from text:', { 
-        textLength: combinedText.length, 
-        usesCaptionOnly,
-        preview: combinedText.substring(0, 200) + (combinedText.length > 200 ? '...' : '')
-      });
-      
-      const originalSignal = this.tradeParser.parseTradeSignal(combinedText);
-      
-      // 🎨 PRODUCTION ML INTEGRATION - Enhance with Color Analysis ML
-      logger.info('🚀 Applying Production ML Integration...');
-      const tradeSignal = await ProductionMLIntegration.enhanceTradeSignal(
-        originalSignal, 
-        combinedText, 
-        message.caption
-      );
-      
-      if (!tradeSignal) {
-        logger.warn('No valid trade signal found in image (after ML enhancement)');
-        // Only reply if it's not a channel post (channel posts can't be replied to directly)
+      // Validate trade signal
+      if (!tradeSignal || !tradeSignal.symbol) {
+        logger.warn('❌ No valid trade signal extracted');
         if (!ctx.channelPost) {
-          await ctx.reply('❌ Could not parse trade signal from image');
+          await ctx.reply('❌ Could not extract a valid trade signal from the image');
         }
         return;
       }
 
-      // 🚨 Production Risk Assessment
-      const riskAssessment = ProductionMLIntegration.assessSignalRisk(tradeSignal, combinedText);
-      logger.info('🔍 Risk Assessment:', riskAssessment);
+      logger.info(`🎯 Processing validated trade signal: ${tradeSignal.symbol} ${tradeSignal.action || 'BUY'}`);
       
-      if (!riskAssessment.shouldTrade) {
-        logger.warn('🚨 Signal rejected due to high risk:', riskAssessment.warnings);
-        if (!ctx.channelPost) {
-          await ctx.reply(`🚨 High risk signal detected - trade rejected:\n${riskAssessment.warnings.join('\n')}\n\n${riskAssessment.recommendation}`);
-        }
-        return;
-      }
-      
-      if (!tradeSignal) {
-        logger.warn('No valid trade signal found in image (after ML enhancement)');
-        // Only reply if it's not a channel post (channel posts can't be replied to directly)
-        if (!ctx.channelPost) {
-          await ctx.reply('❌ Could not parse trade signal from image');
-        }
-        return;
-      }
-
-      // Comprehensive validation of trade signal
-      const validationResult = InputValidator.validateTradeSignal(tradeSignal);
-      
-      if (!validationResult.isValid) {
-        logger.warn('❌ Trade signal validation failed:', validationResult.errors);
-        // Only reply if it's not a channel post
-        if (!ctx.channelPost) {
-          await ctx.reply(`❌ Invalid trade signal detected:\n${validationResult.errors.join('\n')}`);
-        }
-        return;
-      }
-      
-      // Log any validation warnings
-      if (validationResult.warnings.length > 0) {
-        logger.warn('⚠️ Trade signal validation warnings:', validationResult.warnings);
-      }
-      
-      // Use sanitized data from validation
-      const sanitizedSignal = validationResult.sanitizedData || tradeSignal;
-
-      // Add position sizing calculations
-      try {
-        const configDefaults = tradingConfig.getConfig();
-        let accountEquity = configDefaults.minAccountBalance; // Use configured minimum instead of hardcoded 10000
-        
-        // Try to get actual account equity if available
-        if (this.tradeExecutor.getAccountEquity) {
-          try {
-            accountEquity = await this.tradeExecutor.getAccountEquity();
-            
-            // Validate account equity
-            const equityValidation = InputValidator.validateAccountEquity(accountEquity);
-            if (!equityValidation.isValid) {
-              logger.warn('❌ Invalid account equity:', equityValidation.errors);
-              accountEquity = configDefaults.minAccountBalance; // Use configured fallback
-            } else if (equityValidation.warnings.length > 0) {
-              logger.warn('⚠️ Account equity warnings:', equityValidation.warnings);
-            }
-            
-            logger.info(`💰 Retrieved account equity: $${accountEquity.toLocaleString()}`);
-          } catch (error) {
-            logger.warn('Failed to get account equity, using configured minimum:', error);
-          }
-        } else {
-          logger.info(`💰 Trade executor does not support equity retrieval, using configured minimum $${configDefaults.minAccountBalance.toLocaleString()}`);
-        }
-        
-        // Calculate position sizing
-        this.tradeParser.addPositionSizing(sanitizedSignal, accountEquity);
-        
-      } catch (error) {
-        logger.error('Failed to calculate position sizing:', error);
-        // Continue without position sizing - the trade executor should handle this
-      }
-
-      // Send confirmation message
-      const confirmationMessage = this.formatTradeSignal(sanitizedSignal);
-      const processingInfo = message.caption ? ' (processed caption + image text)' : ' (processed image text only)';
-      
-      // For channel posts, we might want to send to a specific chat or log only
-      if (ctx.channelPost) {
-        logger.info(`Trade signal detected from channel post${processingInfo}:`, confirmationMessage);
-        // You could send this to a specific admin chat if needed
-        // await ctx.telegram.sendMessage(adminChatId, confirmationMessage);
-      } else {
+      // Format confirmation message (only for non-channel posts)
+      if (!ctx.channelPost) {
+        const confirmationMessage = this.formatTradeSignal(tradeSignal);
         await ctx.reply(confirmationMessage);
       }
 
-      // Execute trade
+      // Execute the trade
       try {
-        const result = await this.tradeExecutor.executeTradeSignal(sanitizedSignal);
+        // Check if trade executor is properly initialized before attempting execution
+        const isConnected = await this.tradeExecutor.isConnected();
+        logger.info(`🔗 Trade executor connection status: ${isConnected}`);
         
-        if (result.success) {
-          const successMessage = result.signalId 
-            ? `✅ Trade signal saved successfully!\n📁 Signal ID: ${result.signalId}\n💾 Waiting for MT5 EA to execute...`
-            : `✅ Trade executed successfully!`;
-          if (ctx.channelPost) {
-            logger.info('Trade execution success:', successMessage);
-          } else {
-            await ctx.reply(successMessage);
+        if (!isConnected) {
+          logger.error('❌ Trade executor is not connected - cannot execute trades from photo');
+          logger.error('This means MetaAPI connections failed during startup');
+          if (!ctx.channelPost) {
+            await ctx.reply('❌ Trade execution unavailable - MetaAPI connection issue');
           }
-        } else {
-          const errorMessage = `❌ Trade execution failed: ${result.error || result.message}`;
-          if (ctx.channelPost) {
-            logger.error('Trade execution failed:', errorMessage);
-          } else {
-            await ctx.reply(errorMessage);
-          }
-        }
-      } catch (error) {
-        logger.error('Trade execution error:', error);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        let replyMessage = '';
-        
-        if (errorMessage.includes('Not connected to MT5')) {
-          replyMessage = '⚠️ Trade signal parsed successfully, but MT5 is not connected.\n💡 Check if trade signal file was created in trade_signals folder.';
-        } else {
-          replyMessage = '❌ Error executing trade';
+          return;
         }
         
-        if (ctx.channelPost) {
-          logger.warn('Trade execution error for channel post:', replyMessage);
+        logger.info(`🎯 Executing trade from photo: ${tradeSignal.symbol} ${tradeSignal.action || 'BUY'}`);
+        const executionResult = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+        
+        logger.info('📊 Photo trade execution result received:', {
+          success: executionResult.success,
+          message: executionResult.message,
+          error: executionResult.error,
+          signalId: executionResult.signalId
+        });
+        
+        // Send execution results
+        if (!ctx.channelPost) {
+          const resultMessage = this.formatExecutionResult(executionResult);
+          await ctx.reply(resultMessage);
+        }
+        
+        if (executionResult.success) {
+          logger.info('✅ Photo trade execution completed successfully');
         } else {
-          await ctx.reply(replyMessage);
+          logger.error(`❌ Photo trade execution failed: ${executionResult.error || executionResult.message}`);
+          logger.error('💡 Check MetaAPI account connections and market status');
+        }
+        
+      } catch (executionError) {
+        logger.error('💥 Photo trade execution threw an exception:', executionError);
+        logger.error('This indicates a serious issue with the trade executor');
+        if (!ctx.channelPost) {
+          await ctx.reply('❌ Trade execution failed. Please check logs for details.');
         }
       }
 
     } catch (error) {
-      logger.error('Error handling photo:', error);
-      // Only reply if it's not a channel post
+      logger.error('❌ Error handling photo:', error);
       if (!ctx.channelPost) {
         await ctx.reply('❌ Error processing image');
       }
     }
   }
 
-  private formatTradeSignal(signal: any): string {
-    let message = `🔍 **Trade Signal Detected**\n\n` +
-           `📈 Symbol: ${signal.symbol}\n` +
-           `📊 Action: ${signal.action}\n` +
-           `🎯 Entry Zone: ${signal.entryZone.min} - ${signal.entryZone.max}\n` +
-           `🛑 Stop Loss: ${signal.stopLoss}\n` +
-           `🏆 Targets: ${signal.targets.join(', ')}\n`;
-           
-    // Add position sizing information if available
-    if (signal.positionSizing) {
-      const ps = signal.positionSizing;
-      message += `\n💰 **Position Sizing**\n` +
-                 `📊 Lot Size: ${ps.lotSize}\n` +
-                 `💵 Risk Amount: $${ps.riskAmount.toFixed(2)}\n` +
-                 `📊 Risk Percentage: ${ps.riskPercentage.toFixed(2)}%\n` +
-                 `💼 Account Equity: $${ps.accountEquity.toLocaleString()}\n`;
+  /**
+   * Extract trading instrument from caption (e.g., #EURCAD, #XAUUSD)
+   */
+  private extractInstrumentFromCaption(caption: string): string | null {
+    // Look for hashtag symbols: #EURCAD, #XAUUSD, etc.
+    const hashtagPattern = /#([A-Z]{6})\b/gi;
+    const match = caption.match(hashtagPattern);
+    
+    if (match && match.length > 0) {
+      const instrument = match[0].replace('#', '').toUpperCase();
+      logger.info(`💰 Instrument extracted from caption: ${instrument}`);
+      return instrument;
     }
-           
-    message += `${signal.reason ? `💡 Reason: ${signal.reason}\n` : ''}` +
-               `${signal.plan ? `📋 Plan: ${signal.plan}\n` : ''}\n` +
-               `⏳ Executing trade...`;
-               
+    
+    // Fallback patterns
+    const fallbackPatterns = [
+      /\b([A-Z]{6})\b/g,    // EURCAD, XAUUSD
+      /\b(GOLD|SILVER)\b/gi // GOLD, SILVER
+    ];
+    
+    for (const pattern of fallbackPatterns) {
+      const matches = caption.match(pattern);
+      if (matches && matches.length > 0) {
+        let instrument = matches[0].toUpperCase();
+        
+        // Convert aliases
+        if (instrument === 'GOLD') instrument = 'XAUUSD';
+        if (instrument === 'SILVER') instrument = 'XAGUSD';
+        
+        logger.info(`💰 Instrument extracted (fallback): ${instrument}`);
+        return instrument;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Process chart with Visual ML
+   */
+  private async processWithVisualML(imageBuffer: Buffer, instrument: string, caption: string): Promise<any> {
+    // Analyze chart with Visual ML
+    const visualResult = await this.visualML.analyzeChartImage(imageBuffer);
+    
+    // DEBUG: Log what Visual ML actually returned
+    logger.info('🔍 Visual ML Raw Result:', JSON.stringify({
+      greyEntryZones: visualResult.greyEntryZones,
+      greenTargetZones: visualResult.greenTargetZones,  
+      redStopZones: visualResult.redStopZones,
+      direction: visualResult.direction,
+      confidence: visualResult.confidence
+    }, null, 2));
+    
+    // Override symbol with caption symbol
+    visualResult.symbol = instrument;
+    
+    // Convert to trade signal format
+    const tradeSignal: any = {
+      symbol: instrument,
+      action: visualResult.direction || 'BUY',
+      source: 'VISUAL_ML',
+      confidence: visualResult.confidence || 0,
+      originalCaption: caption.substring(0, 200),
+      entryPrice: undefined,
+      entryZone: undefined,
+      targets: undefined,
+      stopLoss: undefined
+    };
+
+    // Extract price levels from visual analysis
+    if (visualResult.greyEntryZones?.length > 0) {
+      const entryPrices = visualResult.greyEntryZones.map((zone: any) => zone.price);
+      const minEntry = Math.min(...entryPrices);
+      const maxEntry = Math.max(...entryPrices);
+      
+      tradeSignal.entryPrice = minEntry; // Primary entry price
+      
+      // Handle single price vs price range
+      if (entryPrices.length === 1) {
+        // Single price level - create small range around it
+        const singlePrice = entryPrices[0];
+        const spread = singlePrice * 0.0002; // 0.02% spread around single price
+        tradeSignal.entryZone = { 
+          min: singlePrice - spread, 
+          max: singlePrice + spread 
+        };
+      } else {
+        // Multiple price levels - use actual range
+        tradeSignal.entryZone = { 
+          min: minEntry, 
+          max: maxEntry 
+        };
+      }
+    }
+    
+    if (visualResult.greenTargetZones?.length > 0) {
+      tradeSignal.targets = visualResult.greenTargetZones
+        .map((zone: any) => zone.price)
+        .filter((price: number) => price && price > 0) // Filter out invalid prices
+        .sort((a: number, b: number) => a - b);
+    } else {
+      // Fallback: create targets based on entry price if no green zones detected
+      if (tradeSignal.entryPrice) {
+        const basePrice = tradeSignal.entryPrice;
+        const targetDistance = basePrice * 0.005; // 0.5% target distance
+        tradeSignal.targets = tradeSignal.action === 'BUY' ? 
+          [basePrice + targetDistance, basePrice + (targetDistance * 2)] :
+          [basePrice - targetDistance, basePrice - (targetDistance * 2)];
+      }
+    }
+    
+    if (visualResult.redStopZones?.length > 0) {
+      const stopPrices = visualResult.redStopZones.map((zone: any) => zone.price).filter((price: number) => price && price > 0);
+      tradeSignal.stopLoss = tradeSignal.action === 'BUY' ? 
+        Math.min(...stopPrices) : Math.max(...stopPrices);
+    } else {
+      // Fallback: create stop loss based on entry price if no red zones detected
+      if (tradeSignal.entryPrice) {
+        const basePrice = tradeSignal.entryPrice;
+        const stopDistance = basePrice * 0.01; // 1% stop loss
+        tradeSignal.stopLoss = tradeSignal.action === 'BUY' ? 
+          basePrice - stopDistance : basePrice + stopDistance;
+      }
+    }
+
+    logger.info(`🎯 Visual ML signal: ${tradeSignal.symbol} ${tradeSignal.action} @ ${tradeSignal.entry || 'market'}`);
+    return tradeSignal;
+  }
+
+  /**
+   * Format trade signal for display
+   */
+  private formatTradeSignal(signal: any): string {
+    let message = `🎯 **TRADE SIGNAL DETECTED**\n\n`;
+    message += `💰 **Symbol**: ${signal.symbol}\n`;
+    message += `📈 **Action**: ${signal.action || 'BUY'}\n`;
+    
+    if (signal.entryPrice) {
+      message += `🎯 **Entry**: ${signal.entryPrice}\n`;
+    }
+    
+    if (signal.entryZone) {
+      if (typeof signal.entryZone === 'object' && signal.entryZone.min && signal.entryZone.max) {
+        message += `🎯 **Entry Zone**: ${signal.entryZone.min} - ${signal.entryZone.max}\n`;
+      } else {
+        message += `🎯 **Entry Zone**: ${signal.entryZone}\n`;
+      }
+    }
+    
+    if (signal.targets && signal.targets.length > 0) {
+      message += `🟢 **Targets**: ${signal.targets.join(', ')}\n`;
+    }
+    
+    if (signal.stopLoss) {
+      message += `🔴 **Stop Loss**: ${signal.stopLoss}\n`;
+    }
+    
+    if (signal.confidence) {
+      message += `📊 **Confidence**: ${signal.confidence.toFixed(1)}%\n`;
+    }
+    
+    message += `🔗 **Source**: ${signal.source || 'TEXT_PARSER'}\n`;
+    message += `\n⏳ Executing trade...`;
+    
     return message;
+  }
+
+  /**
+   * Format execution result for display
+   */
+  private formatExecutionResult(result: any): string {
+    if (result.success) {
+      let message = `✅ **TRADE EXECUTED SUCCESSFULLY**\n\n`;
+      
+      if (result.results && Array.isArray(result.results)) {
+        message += `📊 **Execution Results** (${result.results.length} accounts):\n`;
+        result.results.forEach((accountResult: any, index: number) => {
+          message += `\n**Account ${index + 1}**: ${accountResult.success ? '✅' : '❌'}\n`;
+          if (accountResult.orderId) {
+            message += `Order ID: ${accountResult.orderId}\n`;
+          }
+          if (accountResult.error) {
+            message += `Error: ${accountResult.error}\n`;
+          }
+        });
+      }
+      
+      return message;
+    } else {
+      return `❌ **TRADE EXECUTION FAILED**\n\nError: ${result.error || 'Unknown error'}`;
+    }
   }
 }

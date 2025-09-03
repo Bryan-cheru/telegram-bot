@@ -261,10 +261,14 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     });
 
     const results: MultiAccountTradeResult['results'] = [];
-    const tradePromises: Promise<void>[] = [];
+    const connectedAccounts = Array.from(this.accounts.entries())
+      .filter(([_, config]) => config.status === 'CONNECTED');
 
-    // Execute trade on each connected account in parallel
+    // Execute trades sequentially with delays to avoid frequency limits
+    let accountIndex = 0;
     for (const [accountId, accountConfig] of this.accounts) {
+      logger.info(`💼 Executing on ${accountConfig.brokerName} ${accountConfig.accountType}...`);
+      
       if (accountConfig.status !== 'CONNECTED') {
         results.push({
           accountId,
@@ -277,11 +281,28 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         continue;
       }
 
-      tradePromises.push(this.executeTradeOnAccount(signal, accountConfig, results));
+      try {
+        await this.executeTradeOnAccount(signal, accountConfig, results);
+        
+        // Add delay between executions (except for the last connected account)
+        if (accountIndex < connectedAccounts.length - 1) {
+          logger.info('⏳ Waiting 6s before next account execution...');
+          await new Promise(resolve => setTimeout(resolve, 6000));
+        }
+        accountIndex++;
+        
+      } catch (error) {
+        logger.error(`❌ Error executing on ${accountConfig.brokerName}:`, error);
+        results.push({
+          accountId,
+          brokerName: accountConfig.brokerName,
+          accountType: accountConfig.accountType,
+          success: false,
+          message: 'Execution error',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     }
-
-    // Wait for all trades to complete
-    await Promise.allSettled(tradePromises);
 
     const successfulTrades = results.filter(r => r.success).length;
     const failedTrades = results.filter(r => !r.success).length;
@@ -313,15 +334,15 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       logger.info(`💼 Executing on ${accountConfig.brokerName} ${accountConfig.accountType}...`);
 
       // Get account balance for safety validation
-      const accountInfo = await accountConfig.connection.getAccountInformation();
-      const accountBalance = accountInfo.balance || 10000; // Fallback to 10k if unavailable
+      const terminalState = accountConfig.connection.terminalState;
+      const accountInfo = terminalState.accountInformation;
+      const accountBalance = accountInfo?.balance || 10000; // Fallback to 10k if unavailable
 
       // Subscribe to market data
       await accountConfig.connection.subscribeToMarketData(signal.symbol);
       await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for market data
 
-      // Check market status with Smart ML Override
-      const terminalState = accountConfig.connection.terminalState;
+      // Check market status with Smart ML Override - reuse terminalState
       const symbolPrice = terminalState.price(signal.symbol);
       
       if (!symbolPrice) {
@@ -392,6 +413,11 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
 
       // Execute the trade based on final order type decision
       let result;
+      
+      // Use simple comment only (no clientId to avoid validation issues)
+      const tradeOptions = {
+        comment: 'Bot Trade'
+      };
 
       if (finalOrderType === 'LIMIT') {
         // Use limit order with specific entry price
@@ -404,10 +430,7 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
             limitPrice,
             signal.stopLoss,
             signal.targets[0], // First target as take profit
-            {
-              comment: 'Multi-Account Bot Limit Trade',
-              clientId: `limit-${Date.now()}-${accountConfig.brokerName}`
-            }
+            tradeOptions
           );
         } else if (signal.action === 'SELL') {
           result = await accountConfig.connection.createLimitSellOrder(
@@ -416,38 +439,73 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
             limitPrice,
             signal.stopLoss,
             signal.targets[0], // First target as take profit
-            {
-              comment: 'Multi-Account Bot Limit Trade',
-              clientId: `limit-${Date.now()}-${accountConfig.brokerName}`
-            }
+            tradeOptions
           );
         }
         
         logger.info(`🎯 Limit order placed at ${limitPrice} for ${signal.symbol} (Current: ${currentPrice})`);
         
       } else {
-        // Default to market order (MARKET or undefined orderType)
+        // Market order - validate stop loss and take profit levels
+        let validStopLoss = signal.stopLoss;
+        let validTakeProfit = signal.targets[0];
+        
+        // Use a conservative minimum stop distance (20 points for most symbols)
+        const minStopDistancePoints = 20;
+        const minStopDistance = minStopDistancePoints * 0.0001; // For most forex pairs
+        
+        // For gold (XAUUSD), use a larger minimum distance
+        const isGold = signal.symbol.includes('XAU') || signal.symbol.includes('GOLD');
+        const adjustedMinDistance = isGold ? 5.0 : minStopDistance;
+        
+        logger.info(`📊 Using min stop distance: ${adjustedMinDistance} for ${signal.symbol}`);
+        
+        // For BUY orders: SL should be below current price, TP should be above
+        // For SELL orders: SL should be above current price, TP should be below
+        if (signal.action === 'BUY') {
+          const minSL = currentPrice - adjustedMinDistance;
+          const minTP = currentPrice + adjustedMinDistance;
+          
+          if (validStopLoss >= currentPrice || (currentPrice - validStopLoss) < adjustedMinDistance) {
+            logger.warn(`⚠️ Adjusting stop loss for BUY order: ${validStopLoss} -> ${minSL}`);
+            validStopLoss = minSL;
+          }
+          if (validTakeProfit <= currentPrice || (validTakeProfit - currentPrice) < adjustedMinDistance) {
+            logger.warn(`⚠️ Adjusting take profit for BUY order: ${validTakeProfit} -> ${minTP}`);
+            validTakeProfit = minTP;
+          }
+        } else if (signal.action === 'SELL') {
+          const minSL = currentPrice + adjustedMinDistance;
+          const minTP = currentPrice - adjustedMinDistance;
+          
+          if (validStopLoss <= currentPrice || (validStopLoss - currentPrice) < adjustedMinDistance) {
+            logger.warn(`⚠️ Adjusting stop loss for SELL order: ${validStopLoss} -> ${minSL}`);
+            validStopLoss = minSL;
+          }
+          if (validTakeProfit >= currentPrice || (currentPrice - validTakeProfit) < adjustedMinDistance) {
+            logger.warn(`⚠️ Adjusting take profit for SELL order: ${validTakeProfit} -> ${minTP}`);
+            validTakeProfit = minTP;
+          }
+        }
+        
+        logger.info(`📊 Final levels: SL=${validStopLoss}, TP=${validTakeProfit}, Current=${currentPrice}`);
+        
+        // Default to market order (MARKET or undefined orderType)        
         if (signal.action === 'BUY') {
           result = await accountConfig.connection.createMarketBuyOrder(
             signal.symbol,
             finalVolume,
-            signal.stopLoss,
-            signal.targets[0], // First target as take profit
-            {
-              comment: 'Multi-Account Bot Market Trade',
-              clientId: `market-${Date.now()}-${accountConfig.brokerName}`
-            }
+            validStopLoss,
+            validTakeProfit,
+            tradeOptions
           );
         } else if (signal.action === 'SELL') {
           result = await accountConfig.connection.createMarketSellOrder(
             signal.symbol,
             finalVolume,
-            signal.stopLoss,
-            signal.targets[0], // First target as take profit
-            {
-              comment: 'Multi-Account Bot Market Trade',
-              clientId: `market-${Date.now()}-${accountConfig.brokerName}`
-            }
+            validStopLoss,
+            validTakeProfit,
+            tradeOptions
           );
         }
         
@@ -469,6 +527,18 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
 
     } catch (error: any) {
       const errorMessage = error.message || error.toString() || 'Unknown error';
+      
+      // Immediate detailed error logging
+      console.error(`\n🔥 DETAILED ERROR FOR ${accountConfig.brokerName}:`);
+      console.error(`   Error Message: ${errorMessage}`);
+      console.error(`   Error Name: ${error.name || 'Unknown'}`);
+      console.error(`   Error Code: ${error.code || 'No code'}`);
+      if (error.stack) {
+        console.error(`   Stack Trace: ${error.stack.split('\n')[0]}`);
+      }
+      console.error(`   Full Error Object:`, JSON.stringify(error, null, 2));
+      console.error(`   Error Type: ${typeof error}`);
+      
       const errorDetails = {
         message: error.message,
         name: error.name,
@@ -526,16 +596,69 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     ticket?: number;
     signalId?: string;
   }> {
-    const multiResult = await this.executeTrade(signal);
+    logger.info('🚀 executeTradeSignal called with signal:', {
+      symbol: signal.symbol,
+      action: signal.action,
+      entryZone: signal.entryZone,
+      stopLoss: signal.stopLoss,
+      targets: signal.targets,
+      orderType: signal.orderType
+    });
     
-    return {
-      success: multiResult.overallSuccess,
-      message: multiResult.overallSuccess 
-        ? `Trade executed on ${multiResult.successfulAccounts}/${multiResult.totalAccounts} accounts`
-        : 'All trades failed',
-      error: multiResult.overallSuccess ? undefined : 'Multi-account execution failed',
-      signalId: `multi-${Date.now()}`
-    };
+    // Check if initialized
+    if (!this.initialized) {
+      logger.error('❌ Multi-Account executor not initialized');
+      return {
+        success: false,
+        error: 'Multi-Account executor not initialized',
+        message: 'Trade executor not ready'
+      };
+    }
+    
+    // Check connection status
+    const connectedAccounts = Array.from(this.accounts.values()).filter(acc => acc.status === 'CONNECTED');
+    logger.info(`📊 Connected accounts: ${connectedAccounts.length}/${this.accounts.size}`);
+    
+    if (connectedAccounts.length === 0) {
+      logger.error('❌ No accounts connected - cannot execute trade');
+      return {
+        success: false,
+        error: 'No connected accounts',
+        message: 'All MetaAPI accounts are disconnected'
+      };
+    }
+    
+    try {
+      logger.info('🔄 Calling executeTrade...');
+      const multiResult = await this.executeTrade(signal);
+      
+      logger.info('📋 executeTrade result:', {
+        overallSuccess: multiResult.overallSuccess,
+        successfulAccounts: multiResult.successfulAccounts,
+        failedAccounts: multiResult.failedAccounts,
+        totalAccounts: multiResult.totalAccounts
+      });
+      
+      const result = {
+        success: multiResult.overallSuccess,
+        message: multiResult.overallSuccess 
+          ? `Trade executed on ${multiResult.successfulAccounts}/${multiResult.totalAccounts} accounts`
+          : `All trades failed (${multiResult.failedAccounts}/${multiResult.totalAccounts} failed)`,
+        error: multiResult.overallSuccess ? undefined : 'Multi-account execution failed',
+        signalId: `multi-${Date.now()}`
+      };
+      
+      logger.info('✅ executeTradeSignal returning result:', result);
+      return result;
+      
+    } catch (error: any) {
+      logger.error('💥 executeTradeSignal caught exception:', error);
+      return {
+        success: false,
+        error: error.message || 'Unknown error',
+        message: 'Trade execution threw an exception'
+      };
+    }
   }
 
   // Required interface method
@@ -558,7 +681,17 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
 
   async isConnected(): Promise<boolean> {
     const connectedAccounts = Array.from(this.accounts.values()).filter(acc => acc.status === 'CONNECTED');
-    return connectedAccounts.length > 0;
+    const isConnected = connectedAccounts.length > 0;
+    
+    // Enhanced logging for debugging
+    logger.info('🔍 Connection status check:', {
+      totalAccounts: this.accounts.size,
+      connectedAccounts: connectedAccounts.length,
+      isConnected,
+      accountStatuses: this.getAccountStatuses()
+    });
+    
+    return isConnected;
   }
 
   // Get account statuses
