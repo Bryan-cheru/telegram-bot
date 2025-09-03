@@ -187,22 +187,37 @@ export class VisualChartAnalysisML {
 
     logger.info(`🎨 Scanning for color highlights in scale region: ${scaleLeft}-${scaleRight}, ${scaleTop}-${scaleBottom}`);
 
-    // Define color ranges for detection (RGB values)
+    // Define color ranges for detection (RGB values) - Enhanced ranges
     const colorRanges = {
       grey: {
-        r: { min: 150, max: 200 },
-        g: { min: 150, max: 200 },
-        b: { min: 150, max: 200 }
+        r: { min: 120, max: 220 },
+        g: { min: 120, max: 220 },
+        b: { min: 120, max: 220 }
+      },
+      lightGrey: {
+        r: { min: 200, max: 240 },
+        g: { min: 200, max: 240 },
+        b: { min: 200, max: 240 }
       },
       green: {
-        r: { min: 0, max: 100 },
-        g: { min: 150, max: 255 },
-        b: { min: 0, max: 100 }
+        r: { min: 0, max: 120 },
+        g: { min: 100, max: 255 },
+        b: { min: 0, max: 120 }
+      },
+      lightGreen: {
+        r: { min: 100, max: 200 },
+        g: { min: 180, max: 255 },
+        b: { min: 100, max: 200 }
       },
       red: {
-        r: { min: 150, max: 255 },
-        g: { min: 0, max: 100 },
-        b: { min: 0, max: 100 }
+        r: { min: 120, max: 255 },
+        g: { min: 0, max: 120 },
+        b: { min: 0, max: 120 }
+      },
+      orange: {
+        r: { min: 200, max: 255 },
+        g: { min: 80, max: 180 },
+        b: { min: 0, max: 80 }
       }
     };
 

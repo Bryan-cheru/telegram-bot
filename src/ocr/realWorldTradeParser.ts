@@ -196,12 +196,20 @@ export class RealWorldTradeParser {
   /**
    * Validate price for symbol
    */
-  private isValidPrice(price: number, symbol: string): boolean {
+  private isValidPrice(price: number, symbol?: string): boolean {
+    if (!symbol) return true; // If no symbol provided, accept any valid number
+    
     const symbolUpper = symbol.toUpperCase();
     
-    if (symbolUpper.includes('XAUUSD')) return price >= 1500 && price <= 5000;
+    // XAGUSD (Silver) price validation - typical range 15-40
+    if (symbolUpper.includes('XAGUSD') || symbolUpper.includes('SILVER')) return price >= 10 && price <= 50;
+    // XAUUSD (Gold) price validation  
+    if (symbolUpper.includes('XAUUSD') || symbolUpper.includes('GOLD')) return price >= 1500 && price <= 5000;
+    // EUR/GBP pairs
     if (symbolUpper.includes('EUR') || symbolUpper.includes('GBP')) return price >= 0.5 && price <= 2.5;
+    // JPY pairs
     if (symbolUpper.includes('JPY')) return price >= 80 && price <= 200;
+    // Indices
     if (symbolUpper.includes('NAS') || symbolUpper.includes('US30')) return price >= 10000 && price <= 50000;
     
     return true;
