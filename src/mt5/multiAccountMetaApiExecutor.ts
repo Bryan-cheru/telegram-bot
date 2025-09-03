@@ -13,6 +13,9 @@ import {
 import { logger } from '../utils/logger';
 import { SmartMarketOverrideML } from '../ml/tradingML';
 import { TradingSafetyControls } from '../utils/tradingSafetyControls';
+import { AdvancedStopTakeManager } from '../utils/advancedStopTakeManagement';
+import { UniversalSymbolSupport } from '../utils/universalSymbolSupport';
+import { EnhancedSymbolDetector } from '../utils/enhancedSymbolDetector';
 
 interface AccountConfig {
   id: string;
@@ -126,6 +129,18 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         throw new Error('Failed to connect to any accounts');
       }
 
+      // Initialize universal symbol support after connections are established
+      logger.info('🌍 Initializing universal symbol support...');
+      
+      // Wait for full synchronization before symbol discovery
+      await this.waitForFullSynchronization();
+      
+      await UniversalSymbolSupport.discoverAllSymbols(this.accounts);
+      
+      // Generate and log symbol report
+      const report = UniversalSymbolSupport.generateSymbolReport();
+      logger.info(report);
+
     } catch (error) {
       logger.error('❌ Failed to initialize Multi-Account MetaAPI:', error);
       throw error;
@@ -148,6 +163,38 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       
       await this.connectAccountWithRetry(accountConfig, 3); // 3 retry attempts
     }
+  }
+
+  private async waitForFullSynchronization(): Promise<void> {
+    logger.info('⏳ Waiting for all accounts to fully synchronize...');
+    
+    const maxWaitTime = 60000; // 60 seconds max wait
+    const checkInterval = 2000; // Check every 2 seconds
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      let allSynchronized = true;
+      
+      for (const [accountId, accountConfig] of this.accounts) {
+        if (accountConfig.status === 'CONNECTED' && accountConfig.connection) {
+          const terminalState = accountConfig.connection.terminalState;
+          if (!terminalState || !terminalState.synchronized) {
+            allSynchronized = false;
+            logger.info(`⏳ Waiting for ${accountConfig.brokerName} to synchronize...`);
+            break;
+          }
+        }
+      }
+      
+      if (allSynchronized) {
+        logger.info('✅ All connected accounts are now fully synchronized!');
+        return;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, checkInterval));
+    }
+    
+    logger.warn('⚠️ Full synchronization timeout - proceeding anyway');
   }
 
   private async connectAccountWithRetry(accountConfig: AccountConfig, maxRetries: number): Promise<void> {
@@ -333,26 +380,51 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     try {
       logger.info(`💼 Executing on ${accountConfig.brokerName} ${accountConfig.accountType}...`);
 
+      // 🌍 Enhanced symbol validation with universal support
+      await UniversalSymbolSupport.updateSymbolCacheIfNeeded(this.accounts);
+      
+      // Validate and potentially correct symbol
+      const detectionResult = await EnhancedSymbolDetector.detectSymbol(signal.symbol, accountConfig.brokerName);
+      
+      let validatedSymbol = signal.symbol;
+      if (detectionResult && detectionResult.confidence > 80) {
+        validatedSymbol = detectionResult.symbol;
+        if (validatedSymbol !== signal.symbol) {
+          logger.info(`🔄 Symbol corrected: ${signal.symbol} → ${validatedSymbol} (${detectionResult.confidence}% confidence)`);
+        }
+      }
+      
+      // Get symbol-specific information from universal support
+      const symbolInfo = UniversalSymbolSupport.getSymbolInfo(validatedSymbol, accountConfig.brokerName);
+      if (!symbolInfo) {
+        logger.warn(`⚠️ Symbol ${validatedSymbol} not found on ${accountConfig.brokerName}, trying anyway...`);
+      } else {
+        logger.info(`✅ Symbol ${validatedSymbol} validated on ${accountConfig.brokerName}: ${symbolInfo.description} (${symbolInfo.type})`);
+      }
+      
+      // Update signal with validated symbol
+      const validatedSignal = { ...signal, symbol: validatedSymbol };
+
       // Get account balance for safety validation
       const terminalState = accountConfig.connection.terminalState;
       const accountInfo = terminalState.accountInformation;
       const accountBalance = accountInfo?.balance || 10000; // Fallback to 10k if unavailable
 
       // Subscribe to market data
-      await accountConfig.connection.subscribeToMarketData(signal.symbol);
+      await accountConfig.connection.subscribeToMarketData(validatedSignal.symbol);
       await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for market data
 
       // Check market status with Smart ML Override - reuse terminalState
-      const symbolPrice = terminalState.price(signal.symbol);
+      const symbolPrice = terminalState.price(validatedSignal.symbol);
       
       if (!symbolPrice) {
-        throw new Error('Symbol price not available');
+        throw new Error(`Symbol price not available for ${validatedSignal.symbol}`);
       }
 
       // 🎯 SMART ORDER TYPE DECISION with current market price
       const currentPrice = (symbolPrice.bid + symbolPrice.ask) / 2;
       
-      logger.info(`💰 Current market data for ${signal.symbol}:`, {
+      logger.info(`💰 Current market data for ${validatedSignal.symbol}:`, {
         bid: symbolPrice.bid,
         ask: symbolPrice.ask,
         midPrice: currentPrice,
@@ -364,29 +436,44 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       let finalOrderType = signal.orderType;
       let finalEntryPrice = signal.entryPrice;
 
-      // If order type wasn't determined during parsing, determine it now with market data
-      if (!finalOrderType || finalOrderType === 'MARKET') {
-        const { OrderTypeDetector } = await import('../utils/orderTypeDetector');
-        const orderDecision = OrderTypeDetector.determineOptimalOrderType(
-          signal,
-          currentPrice,
-          {
-            spread: Math.abs(symbolPrice.ask - symbolPrice.bid),
-            volatility: 'MEDIUM', // Could be enhanced with actual volatility calculation
-            liquidity: 'MEDIUM'   // Could be enhanced with actual liquidity data
-          }
-        );
-        
-        finalOrderType = orderDecision.orderType;
-        finalEntryPrice = orderDecision.entryPrice || finalEntryPrice;
-        
-        logger.info(`🎯 Real-time order type decision: ${finalOrderType}`, {
-          currentPrice,
-          entryZone: signal.entryZone,
-          reason: orderDecision.reason,
-          finalEntryPrice
-        });
+      // 🚫 FORCE LIMIT ORDERS ONLY - Never execute market orders
+      // All entries should be limit orders based on chart levels
+      finalOrderType = 'LIMIT';
+      
+      // Determine optimal limit entry price based on signal direction and entry zone
+      if (!finalEntryPrice) {
+        if (signal.action === 'BUY') {
+          // For BUY limit: Entry price must be BELOW current market price
+          // Use the lower of entry zone max or current price - small buffer
+          const maxBuyPrice = Math.min(signal.entryZone.max, currentPrice - 0.0001);
+          finalEntryPrice = Math.max(signal.entryZone.min, maxBuyPrice);
+        } else if (signal.action === 'SELL') {
+          // For SELL limit: Entry price must be ABOVE current market price
+          // Use the higher of entry zone min or current price + small buffer  
+          const minSellPrice = Math.max(signal.entryZone.min, currentPrice + 0.0001);
+          finalEntryPrice = Math.min(signal.entryZone.max, minSellPrice);
+        } else {
+          // Fallback: Use middle of entry zone
+          finalEntryPrice = (signal.entryZone.min + signal.entryZone.max) / 2;
+        }
       }
+      
+      // Validate limit order price logic
+      const priceValidation = this.validateLimitOrderPrice(signal.action, finalEntryPrice!, currentPrice);
+      if (!priceValidation.isValid) {
+        // Adjust price to be valid
+        finalEntryPrice = priceValidation.suggestedPrice;
+        logger.warn(`⚠️ Adjusted invalid limit price: ${priceValidation.reason}`);
+      }
+      
+      logger.info(`🎯 LIMIT ORDER ONLY - Entry Level: ${finalEntryPrice!}`, {
+        action: signal.action,
+        entryZone: signal.entryZone,
+        currentPrice,
+        priceDistance: Math.abs(currentPrice - finalEntryPrice!),
+        reason: 'Chart-based limit entry enforced',
+        validation: priceValidation.isValid ? 'VALID' : 'ADJUSTED'
+      });
 
       // Calculate proposed volume (replace hardcoded 0.01)
       const riskAmount = accountBalance * 0.02; // 2% risk
@@ -419,98 +506,48 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         comment: 'Bot Trade'
       };
 
-      if (finalOrderType === 'LIMIT') {
-        // Use limit order with specific entry price
-        const limitPrice = finalEntryPrice || (signal.entryZone.min + signal.entryZone.max) / 2;
-        
-        if (signal.action === 'BUY') {
-          result = await accountConfig.connection.createLimitBuyOrder(
-            signal.symbol,
-            finalVolume,
-            limitPrice,
-            signal.stopLoss,
-            signal.targets[0], // First target as take profit
-            tradeOptions
-          );
-        } else if (signal.action === 'SELL') {
-          result = await accountConfig.connection.createLimitSellOrder(
-            signal.symbol,
-            finalVolume,
-            limitPrice,
-            signal.stopLoss,
-            signal.targets[0], // First target as take profit
-            tradeOptions
-          );
-        }
-        
-        logger.info(`🎯 Limit order placed at ${limitPrice} for ${signal.symbol} (Current: ${currentPrice})`);
-        
-      } else {
-        // Market order - validate stop loss and take profit levels
-        let validStopLoss = signal.stopLoss;
-        let validTakeProfit = signal.targets[0];
-        
-        // Use a conservative minimum stop distance (20 points for most symbols)
-        const minStopDistancePoints = 20;
-        const minStopDistance = minStopDistancePoints * 0.0001; // For most forex pairs
-        
-        // For gold (XAUUSD), use a larger minimum distance
-        const isGold = signal.symbol.includes('XAU') || signal.symbol.includes('GOLD');
-        const adjustedMinDistance = isGold ? 5.0 : minStopDistance;
-        
-        logger.info(`📊 Using min stop distance: ${adjustedMinDistance} for ${signal.symbol}`);
-        
-        // For BUY orders: SL should be below current price, TP should be above
-        // For SELL orders: SL should be above current price, TP should be below
-        if (signal.action === 'BUY') {
-          const minSL = currentPrice - adjustedMinDistance;
-          const minTP = currentPrice + adjustedMinDistance;
-          
-          if (validStopLoss >= currentPrice || (currentPrice - validStopLoss) < adjustedMinDistance) {
-            logger.warn(`⚠️ Adjusting stop loss for BUY order: ${validStopLoss} -> ${minSL}`);
-            validStopLoss = minSL;
-          }
-          if (validTakeProfit <= currentPrice || (validTakeProfit - currentPrice) < adjustedMinDistance) {
-            logger.warn(`⚠️ Adjusting take profit for BUY order: ${validTakeProfit} -> ${minTP}`);
-            validTakeProfit = minTP;
-          }
-        } else if (signal.action === 'SELL') {
-          const minSL = currentPrice + adjustedMinDistance;
-          const minTP = currentPrice - adjustedMinDistance;
-          
-          if (validStopLoss <= currentPrice || (validStopLoss - currentPrice) < adjustedMinDistance) {
-            logger.warn(`⚠️ Adjusting stop loss for SELL order: ${validStopLoss} -> ${minSL}`);
-            validStopLoss = minSL;
-          }
-          if (validTakeProfit >= currentPrice || (currentPrice - validTakeProfit) < adjustedMinDistance) {
-            logger.warn(`⚠️ Adjusting take profit for SELL order: ${validTakeProfit} -> ${minTP}`);
-            validTakeProfit = minTP;
-          }
-        }
-        
-        logger.info(`📊 Final levels: SL=${validStopLoss}, TP=${validTakeProfit}, Current=${currentPrice}`);
-        
-        // Default to market order (MARKET or undefined orderType)        
-        if (signal.action === 'BUY') {
-          result = await accountConfig.connection.createMarketBuyOrder(
-            signal.symbol,
-            finalVolume,
-            validStopLoss,
-            validTakeProfit,
-            tradeOptions
-          );
-        } else if (signal.action === 'SELL') {
-          result = await accountConfig.connection.createMarketSellOrder(
-            signal.symbol,
-            finalVolume,
-            validStopLoss,
-            validTakeProfit,
-            tradeOptions
-          );
-        }
-        
-        logger.info(`🚀 Market order executed for ${signal.symbol} at current price ${currentPrice}`);
+      // 🎯 LIMIT ORDERS ONLY - All entries are chart-based levels
+      // Use limit order with specific entry price from chart analysis
+      const limitPrice = finalEntryPrice;
+      
+      // Use advanced stop/take management for optimal levels
+      const optimalLevels = AdvancedStopTakeManager.calculateOptimalLevels(
+        signal, 
+        currentPrice, 
+        0.001 // Base volatility - could be made dynamic
+      );
+      
+      logger.info(`🎯 Advanced SL/TP calculated: SL=${optimalLevels.stopLoss}, TPs=[${optimalLevels.takeProfits.join(',')}], R:R=${optimalLevels.riskRewardRatio.toFixed(2)}, Confidence=${optimalLevels.confidence}%`);
+      
+      // Use the advanced levels with limit entry
+      const validStopLoss = optimalLevels.stopLoss;
+      const validTakeProfit = optimalLevels.takeProfits[0]; // Use first TP
+      
+      logger.info(`📊 LIMIT ORDER - Entry: ${limitPrice}, SL: ${validStopLoss}, TP: ${validTakeProfit}, Current: ${currentPrice}`);
+      
+      if (signal.action === 'BUY') {
+        result = await accountConfig.connection.createLimitBuyOrder(
+          signal.symbol,
+          finalVolume,
+          limitPrice,
+          validStopLoss,
+          validTakeProfit,
+          tradeOptions
+        );
+      } else if (signal.action === 'SELL') {
+        result = await accountConfig.connection.createLimitSellOrder(
+          signal.symbol,
+          finalVolume,
+          limitPrice,
+          validStopLoss,
+          validTakeProfit,
+          tradeOptions
+        );
       }
+      
+      logger.info(`🎯 LIMIT ORDER PLACED: ${signal.action} ${signal.symbol} @ ${limitPrice!} (Current: ${currentPrice}, Distance: ${Math.abs(currentPrice - limitPrice!).toFixed(5)})`);
+
+      // ❌ MARKET ORDERS DISABLED - All orders are now limit orders based on chart levels
 
       // Record the trade for safety tracking
       this.safetyControls.recordTrade(finalVolume);
@@ -1344,6 +1381,42 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         result.status === 'fulfilled' && result.value !== null
       )
       .map(result => result.value);
+  }
+
+  /**
+   * Validate limit order price logic
+   */
+  private validateLimitOrderPrice(action: string, entryPrice: number, currentPrice: number): {
+    isValid: boolean;
+    reason?: string;
+    suggestedPrice: number;
+  } {
+    const minBuffer = 0.0001; // Minimum price buffer
+    
+    if (action === 'BUY') {
+      // BUY limit: Entry price must be BELOW current market price
+      if (entryPrice >= currentPrice) {
+        return {
+          isValid: false,
+          reason: `BUY limit price ${entryPrice} must be below current ${currentPrice}`,
+          suggestedPrice: currentPrice - minBuffer
+        };
+      }
+    } else if (action === 'SELL') {
+      // SELL limit: Entry price must be ABOVE current market price
+      if (entryPrice <= currentPrice) {
+        return {
+          isValid: false,
+          reason: `SELL limit price ${entryPrice} must be above current ${currentPrice}`,
+          suggestedPrice: currentPrice + minBuffer
+        };
+      }
+    }
+    
+    return {
+      isValid: true,
+      suggestedPrice: entryPrice
+    };
   }
 
   /**
