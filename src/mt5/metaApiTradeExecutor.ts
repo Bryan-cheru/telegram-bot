@@ -639,13 +639,13 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
                 logger.info('🤖 Smart Market Override ML Analysis:', {
                   shouldOverride: overrideDecision.shouldOverride,
                   confidence: `${(overrideDecision.confidence * 100).toFixed(1)}%`,
-                  reasoning: overrideDecision.reasoning,
+                  reasoning: overrideDecision.reason,
                   suggestedAction: overrideDecision.suggestedAction
                 });
                 
                 if (overrideDecision.shouldOverride && overrideDecision.confidence > 0.9) {
                   logger.warn('� ML OVERRIDE: Attempting to proceed despite server "Market Closed" error');
-                  logger.warn(`📊 Confidence: ${(overrideDecision.confidence * 100).toFixed(1)}% - ${overrideDecision.reasoning}`);
+                  logger.warn(`📊 Confidence: ${(overrideDecision.confidence * 100).toFixed(1)}% - ${overrideDecision.reason}`);
                   
                   // In future versions, could attempt to retry the trade here
                   // For now, log the decision for analysis

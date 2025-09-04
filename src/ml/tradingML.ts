@@ -1,4 +1,14 @@
 /**
+ * Market Override Decision interface
+ */
+export interface MarketOverrideDecision {
+  shouldOverride: boolean;
+  confidence: number;
+  reason: string;
+  suggestedAction?: string;
+}
+
+/**
  * Smart Market Override ML - Stub implementation
  * Provides basic market analysis for override decisions
  */
@@ -12,7 +22,7 @@ export class SmartMarketOverrideML {
     symbol: string,
     priceDataAvailable: boolean,
     additionalContext?: any
-  ): { shouldOverride: boolean; confidence: number; reason: string } {
+  ): MarketOverrideDecision {
     
     // Simple rule-based logic for now
     // In a real implementation, this would use ML models
@@ -22,7 +32,8 @@ export class SmartMarketOverrideML {
       return {
         shouldOverride: false,
         confidence: 0.8,
-        reason: 'Market is closed - waiting for market open'
+        reason: 'Market is closed - waiting for market open',
+        suggestedAction: 'WAIT_FOR_MARKET_OPEN'
       };
     }
     
@@ -31,7 +42,8 @@ export class SmartMarketOverrideML {
       return {
         shouldOverride: false,
         confidence: 0.7,
-        reason: 'High volatility detected - reducing risk'
+        reason: 'High volatility detected - reducing risk',
+        suggestedAction: 'REDUCE_POSITION_SIZE'
       };
     }
     
@@ -40,7 +52,8 @@ export class SmartMarketOverrideML {
       return {
         shouldOverride: false,
         confidence: 0.9,
-        reason: 'Low liquidity - avoiding trade execution'
+        reason: 'Low liquidity - avoiding trade execution',
+        suggestedAction: 'CANCEL_TRADE'
       };
     }
     
@@ -48,7 +61,8 @@ export class SmartMarketOverrideML {
     return {
       shouldOverride: false,
       confidence: 0.6,
-      reason: 'No override needed - proceeding with normal execution'
+      reason: 'No override needed - proceeding with normal execution',
+      suggestedAction: 'PROCEED'
     };
   }
 }
