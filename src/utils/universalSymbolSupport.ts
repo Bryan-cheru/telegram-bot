@@ -298,6 +298,14 @@ export class UniversalSymbolSupport {
   }
 
   /**
+   * Add fallback broker symbols to cache
+   */
+  static addFallbackBroker(brokerName: string, symbols: Record<string, SymbolInfo>): void {
+    this.symbolCache[brokerName] = symbols;
+    logger.info(`✅ Added fallback broker ${brokerName} with ${Object.keys(symbols).length} symbols`);
+  }
+
+  /**
    * Update symbol cache if needed
    */
   static async updateSymbolCacheIfNeeded(accounts: Map<string, any>): Promise<void> {

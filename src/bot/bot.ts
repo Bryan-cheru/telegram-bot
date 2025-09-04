@@ -25,6 +25,11 @@ export class TelegramBot {
     this.setupHandlers();
   }
 
+  // Getter to share executor with dashboard
+  getTradeExecutor(): MultiAccountMetaApiExecutor {
+    return this.tradeExecutor as MultiAccountMetaApiExecutor;
+  }
+
   private setupHandlers(): void {
     // Command handlers
     this.bot.start((ctx) => this.messageHandler.handleStart(ctx));
@@ -112,6 +117,13 @@ export class TelegramBot {
       logger.info('📨 Processing text message for trading signal');
       logger.debug('Message text:', text);
 
+      // 🎯 Check if this is a manual trading command first
+      if (MessageHandler.isManualTradingCommand(text)) {
+        logger.info('🎯 Manual trading command detected');
+        await this.messageHandler.handleManualCommand(ctx, text, this.tradeExecutor);
+        return;
+      }
+
       // Check if message contains trading signal indicators
       const tradingKeywords = ['#XAUUSD', '#EURUSD', '#GBPUSD', 'zone', 'buy', 'sell', 'target', 'update'];
       const containsTradingSignal = tradingKeywords.some(keyword => 
@@ -188,12 +200,18 @@ export class TelegramBot {
 
   async start(): Promise<void> {
     try {
-      // Initialize Multi-Account trade executor FIRST before starting bot
+      // Initialize Multi-Account trade executor with timeout
       logger.info('🔄 Attempting to initialize Multi-Account MetaAPI Trade Executor...');
       let tradeExecutorReady = false;
       
       try {
-        await this.tradeExecutor.initialize();
+        // Add overall timeout for initialization
+        await Promise.race([
+          this.tradeExecutor.initialize(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Initialization timeout')), 240000) // 4 minutes max
+          )
+        ]);
         
         // Verify the connection after initialization
         const isConnected = await this.tradeExecutor.isConnected();
@@ -201,31 +219,32 @@ export class TelegramBot {
           logger.info('✅ Multi-Account MetaAPI Trade executor initialized and connected successfully');
           tradeExecutorReady = true;
         } else {
-          logger.error('❌ Trade executor initialized but not connected to any accounts');
+          logger.warn('❌ Trade executor initialized but not fully connected - OCR mode available');
           tradeExecutorReady = false;
         }
         
       } catch (error) {
-        logger.error('❌ Multi-Account Trade executor initialization failed:', error);
+        logger.warn('⚠️ Multi-Account Trade executor initialization timeout or failed:', error);
+        logger.info('📊 Bot will continue in OCR-only mode');
         tradeExecutorReady = false;
       }
       
       if (!tradeExecutorReady) {
-        logger.warn('⚠️ Bot will continue running without trade execution');
-        logger.info('ℹ️ OCR and parsing will still work, but trades cannot be executed');
-        logger.info('🔧 Check your MetaAPI configuration and account status');
+        logger.warn('⚠️ Bot running without full trade execution capability');
+        logger.info('ℹ️ OCR and parsing will work, but trades may not execute');
+        logger.info('🔧 Check your MetaAPI configuration and account status in background');
       } else {
         logger.info('🎯 Trade execution is ready and available');
       }
       
-      // Now start the bot after executor is ready
+      // Always start the bot regardless of MetaAPI status
       logger.info('🚀 Launching Telegram bot...');
       this.bot.launch();
       
       // Give it a moment to start, then continue
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Reduced to 1 second
       logger.info('✅ Telegram bot started successfully');
-      logger.info('Bot is running. Press Ctrl+C to stop.');
+      logger.info('📱 Bot is now listening for trading signals...');
       
       // Graceful shutdown
       process.once('SIGINT', () => this.stop());

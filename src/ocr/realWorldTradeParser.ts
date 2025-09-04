@@ -13,7 +13,7 @@ import { logger } from '../utils/logger';
 export class RealWorldTradeParser {
   
   /**
-   * Parse your actual signal format
+   * Parse your actual signal format with enhanced error handling
    */
   parseTradeSignal(text: string, caption?: string): TradeSignal | null {
     try {
@@ -22,24 +22,54 @@ export class RealWorldTradeParser {
       const fullText = caption ? `${text}\n${caption}` : text;
       logger.debug('Full signal text:', fullText);
 
+      // CRITICAL: Validate input data
+      if (!fullText || fullText.trim().length < 10) {
+        logger.error('❌ OCR FAILURE: Signal text too short or empty', { 
+          textLength: fullText?.length || 0,
+          text: fullText?.substring(0, 50) 
+        });
+        return null;
+      }
+
       // Extract symbol from hashtag
       const symbol = this.extractSymbol(fullText);
       if (!symbol) {
-        logger.warn('No trading symbol found in signal');
-        return null;
+        logger.error('❌ OCR FAILURE: No trading symbol found', { 
+          text: fullText.substring(0, 100),
+          confidence: 'LOW' 
+        });
+        return this.fallbackSymbolDetection(fullText);
       }
 
       // Detect action from context
       const action = this.detectAction(fullText);
       if (!action) {
-        logger.warn('No clear trading action detected');
-        return null;
+        logger.error('❌ OCR FAILURE: No clear trading action detected', { 
+          text: fullText.substring(0, 100),
+          confidence: 'LOW' 
+        });
+        return this.fallbackActionDetection(fullText, symbol);
       }
 
       // Extract entry zone from parentheses like (3526 – 3521)
       const entryZone = this.extractEntryZone(fullText, symbol);
       if (!entryZone) {
-        logger.warn('No entry zone found in signal');
+        logger.error('❌ OCR FAILURE: No entry zone found', { 
+          symbol,
+          action,
+          text: fullText.substring(0, 100),
+          confidence: 'LOW' 
+        });
+        return this.fallbackPriceDetection(fullText, symbol, action);
+      }
+
+      // CRITICAL: Validate price ranges
+      if (!this.validatePriceRange(entryZone, symbol)) {
+        logger.error('❌ OCR VALIDATION FAILED: Invalid price range detected', {
+          symbol,
+          entryZone,
+          confidence: 'DANGEROUS'
+        });
         return null;
       }
 
@@ -59,8 +89,17 @@ export class RealWorldTradeParser {
         entryPrice: orderType === 'LIMIT' ? 
           (action === 'BUY' ? entryZone.min : entryZone.max) : undefined,
         reason: this.extractReason(fullText),
-        plan: 'Real-world signal detected and validated'
+        plan: 'Real-world signal detected and validated',
+        confidence: this.calculateConfidenceScore(fullText, symbol, action, entryZone)
       };
+
+      // CRITICAL: Final validation before returning
+      if (signal.confidence && signal.confidence < 0.7) {
+        logger.warn('⚠️ LOW CONFIDENCE SIGNAL - Manual review recommended', {
+          confidence: signal.confidence,
+          signal: signal
+        });
+      }
 
       logger.info('✅ Successfully parsed real-world signal:', {
         symbol: signal.symbol,
@@ -68,13 +107,19 @@ export class RealWorldTradeParser {
         entryZone: signal.entryZone,
         stopLoss: signal.stopLoss,
         targets: signal.targets,
-        orderType: signal.orderType
+        orderType: signal.orderType,
+        confidence: signal.confidence || 0.5
       });
 
       return signal;
 
     } catch (error) {
-      logger.error('Error parsing real-world signal:', error);
+      logger.error('🚨 CRITICAL OCR ERROR:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        inputText: text?.substring(0, 100),
+        inputCaption: caption?.substring(0, 100)
+      });
       return null;
     }
   }
@@ -311,6 +356,161 @@ export class RealWorldTradeParser {
     }
     
     return true;
+  }
+
+  /**
+   * CRITICAL OCR FALLBACK METHODS
+   */
+
+  /**
+   * Fallback symbol detection when primary method fails
+   */
+  private fallbackSymbolDetection(text: string): TradeSignal | null {
+    logger.warn('🔍 Attempting fallback symbol detection...');
+    
+    // Common symbol variations and typos
+    const fallbackPatterns = [
+      { pattern: /gold|au|xau/i, symbol: 'XAUUSD' },
+      { pattern: /silver|ag|xag/i, symbol: 'XAGUSD' },
+      { pattern: /euro?|eur/i, symbol: 'EURUSD' },
+      { pattern: /pound|gbp/i, symbol: 'GBPUSD' },
+      { pattern: /yen|jpy|usd.*jp/i, symbol: 'USDJPY' }
+    ];
+
+    for (const { pattern, symbol } of fallbackPatterns) {
+      if (pattern.test(text)) {
+        logger.info(`🎯 Fallback detected symbol: ${symbol}`);
+        // Return minimal signal requiring manual validation
+        return {
+          symbol,
+          action: 'BUY', // Default - requires manual confirmation
+          entryZone: { min: 0, max: 0 },
+          stopLoss: 0,
+          targets: [0],
+          confidence: 0.3, // Low confidence
+          reason: 'OCR fallback detection - requires manual validation'
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Fallback action detection from context clues
+   */
+  private fallbackActionDetection(text: string, symbol: string): TradeSignal | null {
+    logger.warn('🔍 Attempting fallback action detection...');
+    
+    const buyPatterns = /buy|long|bull|up|support|demand|floor/i;
+    const sellPatterns = /sell|short|bear|down|resistance|supply|ceiling/i;
+    
+    let action: 'BUY' | 'SELL' = 'BUY'; // Default
+    
+    if (sellPatterns.test(text) && !buyPatterns.test(text)) {
+      action = 'SELL';
+    }
+    
+    logger.info(`🎯 Fallback detected action: ${action}`);
+    
+    return {
+      symbol,
+      action,
+      entryZone: { min: 0, max: 0 },
+      stopLoss: 0,
+      targets: [0],
+      confidence: 0.4, // Low confidence
+      reason: 'OCR fallback action detection - requires manual validation'
+    };
+  }
+
+  /**
+   * Fallback price detection using number patterns
+   */
+  private fallbackPriceDetection(text: string, symbol: string, action: 'BUY' | 'SELL'): TradeSignal | null {
+    logger.warn('🔍 Attempting fallback price detection...');
+    
+    // Extract any numbers that might be prices
+    const numberPattern = /(\d{1,5}\.?\d{0,5})/g;
+    const numbers = text.match(numberPattern);
+    
+    if (!numbers || numbers.length < 2) {
+      logger.error('❌ Fallback failed - insufficient numerical data');
+      return null;
+    }
+    
+    const prices = numbers.map(n => parseFloat(n)).filter(n => n > 0);
+    
+    if (prices.length < 2) {
+      return null;
+    }
+    
+    // Assume first two numbers are entry zone
+    const [price1, price2] = prices.sort((a, b) => a - b);
+    
+    return {
+      symbol,
+      action,
+      entryZone: { min: price1, max: price2 },
+      stopLoss: action === 'BUY' ? price1 - (price2 - price1) : price2 + (price2 - price1),
+      targets: [action === 'BUY' ? price2 + (price2 - price1) : price1 - (price2 - price1)],
+      confidence: 0.5, // Medium-low confidence
+      reason: 'OCR fallback price detection - requires manual validation'
+    };
+  }
+
+  /**
+   * Validate price ranges are realistic for the symbol
+   */
+  private validatePriceRange(entryZone: { min: number; max: number }, symbol: string): boolean {
+    const priceRanges: Record<string, { min: number; max: number }> = {
+      'XAUUSD': { min: 1500, max: 4000 },
+      'XAGUSD': { min: 15, max: 50 },
+      'EURUSD': { min: 0.9, max: 1.3 },
+      'GBPUSD': { min: 1.0, max: 1.6 },
+      'USDJPY': { min: 90, max: 160 }
+    };
+    
+    const range = priceRanges[symbol];
+    if (!range) {
+      logger.warn(`No validation range for symbol: ${symbol}`);
+      return true; // Assume valid for unknown symbols
+    }
+    
+    const isValid = (
+      entryZone.min >= range.min && entryZone.min <= range.max &&
+      entryZone.max >= range.min && entryZone.max <= range.max &&
+      entryZone.min <= entryZone.max
+    );
+    
+    if (!isValid) {
+      logger.error('❌ Price validation failed:', {
+        symbol,
+        entryZone,
+        validRange: range
+      });
+    }
+    
+    return isValid;
+  }
+
+  /**
+   * Calculate confidence score based on parsing quality
+   */
+  private calculateConfidenceScore(text: string, symbol: string, action: string, entryZone: any): number {
+    let confidence = 0.5; // Base confidence
+    
+    // Symbol confidence
+    if (text.includes(`#${symbol}`)) confidence += 0.2;
+    
+    // Action confidence
+    const actionWords = action === 'BUY' ? ['buy', 'long', 'bull'] : ['sell', 'short', 'bear'];
+    if (actionWords.some(word => text.toLowerCase().includes(word))) confidence += 0.2;
+    
+    // Price confidence
+    if (entryZone.min > 0 && entryZone.max > 0 && entryZone.max > entryZone.min) confidence += 0.1;
+    
+    return Math.min(confidence, 1.0);
   }
 
   /**

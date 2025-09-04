@@ -36,35 +36,100 @@ export const config = {
 };
 
 export const validateConfig = (): boolean => {
+  console.log('🔍 CRITICAL: Validating configuration for production safety...');
+  
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Required configuration
   const required = [
     { name: 'BOT_TOKEN', value: config.botToken },
     { name: 'ALLOWED_CHANNEL_ID', value: config.allowedChannelId },
     { name: 'METAAPI_TOKEN', value: config.metaApi.token }
   ];
 
-  // Either single account or multi-account configuration must be provided
-  const hasAccountConfig = config.metaApi.accountId || config.metaApi.accounts;
-  if (!hasAccountConfig) {
-    required.push({ 
-      name: 'METAAPI_ACCOUNT_ID or METAAPI_ACCOUNTS', 
-      value: '' 
-    });
-  }
-  
+  // Check required fields
   const missing = required.filter(field => !field.value || field.value.length === 0);
   
   if (missing.length > 0) {
     console.error('❌ Missing required environment variables:');
     missing.forEach(field => {
       console.error(`   - ${field.name}: ${field.value ? 'empty' : 'not set'}`);
+      errors.push(`${field.name} is required`);
     });
-    console.error('');
-    console.error('💡 Please check your .env file and ensure all required fields are set.');
-    console.error('   See .env.example for reference or SETUP_INSTRUCTIONS_FOR_CLIENT.md for help.');
+  }
+
+  // Either single account or multi-account configuration must be provided
+  const hasAccountConfig = config.metaApi.accountId || config.metaApi.accounts;
+  if (!hasAccountConfig) {
+    errors.push('CRITICAL: No MetaAPI account configuration found. Set METAAPI_ACCOUNT_ID or METAAPI_ACCOUNTS');
+    console.error('❌ No MetaAPI account configuration found');
+  }
+
+  // Validate multi-account format if provided
+  if (config.metaApi.accounts) {
+    const accountStrings = config.metaApi.accounts.split(',');
+    accountStrings.forEach((accountStr, index) => {
+      const parts = accountStr.trim().split(':');
+      if (parts.length !== 3) {
+        errors.push(`CRITICAL: Invalid account format at index ${index}: "${accountStr}". Expected format: "accountId:brokerName:accountType"`);
+        console.error(`❌ Invalid account format: ${accountStr}`);
+      } else {
+        const [id, broker, type] = parts;
+        if (!id.trim() || !broker.trim() || !type.trim()) {
+          errors.push(`CRITICAL: Empty values in account config: "${accountStr}"`);
+        }
+        if (!['DEMO', 'LIVE'].includes(type.trim().toUpperCase())) {
+          warnings.push(`WARNING: Account type "${type}" should be DEMO or LIVE`);
+          console.warn(`⚠️ Account type "${type}" should be DEMO or LIVE`);
+        }
+      }
+    });
+  }
+
+  // Validate trading parameters
+  if (config.trading.maxTradeSize <= 0 || config.trading.maxTradeSize > 100) {
+    warnings.push('WARNING: MAX_TRADE_SIZE should be between 0.01 and 100');
+    console.warn('⚠️ MAX_TRADE_SIZE seems unusual:', config.trading.maxTradeSize);
+  }
+
+  if (config.trading.riskPercentage <= 0 || config.trading.riskPercentage > 10) {
+    warnings.push('WARNING: RISK_PERCENTAGE should be between 0.1 and 10');
+    console.warn('⚠️ RISK_PERCENTAGE seems unusual:', config.trading.riskPercentage);
+  }
+
+  // Validate Telegram Channel ID format
+  if (config.allowedChannelId && !config.allowedChannelId.startsWith('-')) {
+    warnings.push('WARNING: ALLOWED_CHANNEL_ID should start with "-" for channel IDs');
+    console.warn('⚠️ Channel ID format may be incorrect:', config.allowedChannelId);
+  }
+
+  // Critical security checks
+  if (config.metaApi.token.length < 50) {
+    errors.push('CRITICAL: METAAPI_TOKEN appears too short - verify it\'s the complete token');
+    console.error('❌ MetaAPI token seems incomplete');
+  }
+
+  if (config.botToken.length < 40) {
+    errors.push('CRITICAL: BOT_TOKEN appears too short - verify it\'s the complete token');
+    console.error('❌ Bot token seems incomplete');
+  }
+
+  // Display results
+  if (errors.length > 0) {
+    console.error('\n🚨 CONFIGURATION ERRORS FOUND:');
+    errors.forEach(error => console.error(`   ${error}`));
+    console.error('\n💡 Please check your .env file and ensure all required fields are set correctly.');
+    console.error('   See SETUP.md for configuration instructions.');
     return false;
   }
-  
-  console.log('✅ All required environment variables are set');
+
+  if (warnings.length > 0) {
+    console.warn('\n⚠️  CONFIGURATION WARNINGS:');
+    warnings.forEach(warning => console.warn(`   ${warning}`));
+  }
+
+  console.log('✅ Configuration validation passed');
   return true;
 };
 

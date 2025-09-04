@@ -3,11 +3,12 @@
 
 import { logger } from './logger';
 import { UniversalSymbolSupport, SymbolInfo } from './universalSymbolSupport';
+import { FallbackSymbolSystem } from './fallbackSymbolSystem';
 
 export interface DetectionResult {
   symbol: string;
   confidence: number;
-  source: 'EXACT_MATCH' | 'FUZZY_MATCH' | 'ALIAS_MATCH' | 'PATTERN_MATCH' | 'OCR_CORRECTION';
+  source: 'EXACT_MATCH' | 'FUZZY_MATCH' | 'ALIAS_MATCH' | 'PATTERN_MATCH' | 'OCR_CORRECTION' | 'FALLBACK';
   brokerName?: string;
   symbolInfo?: SymbolInfo;
 }
@@ -26,6 +27,16 @@ export class EnhancedSymbolDetector {
     'CAC': 'FRA40',
     'NIKKEI': 'JPN225',
     
+    // US30 broker variations (CRITICAL FIX)
+    'US30CASH': 'US30',
+    'DJ30': 'US30',
+    'DJI30': 'US30',
+    'DOW30': 'US30',
+    'USA30': 'US30',
+    'US30M': 'US30',
+    'WALL30': 'US30',
+    'USDJP30': 'US30',
+    
     // OCR common errors
     'XAUUST': 'XAUUSD',
     'XAUUSP': 'XAUUSD',
@@ -37,7 +48,7 @@ export class EnhancedSymbolDetector {
   };
 
   /**
-   * Detect symbol from any input (text, OCR, etc.) with universal support
+   * Detect symbol from any input (text, OCR, etc.) with universal support + fallback
    */
   static async detectSymbol(input: string, brokerName?: string): Promise<DetectionResult | null> {
     if (!input || input.length < 3) {
@@ -47,11 +58,11 @@ export class EnhancedSymbolDetector {
     const cleanInput = input.toUpperCase().replace(/[^A-Z0-9]/g, '');
     logger.info(`🔍 Detecting symbol from input: "${input}" (cleaned: "${cleanInput}")`);
 
-    // 1. Direct exact match
+    // 1. Direct exact match from MetaAPI
     const exactMatch = await this.findExactMatch(cleanInput, brokerName);
     if (exactMatch) return exactMatch;
 
-    // 2. Alias mapping
+    // 2. Alias mapping  
     const aliasMatch = await this.findAliasMatch(cleanInput, brokerName);
     if (aliasMatch) return aliasMatch;
 
@@ -67,18 +78,69 @@ export class EnhancedSymbolDetector {
     const ocrMatch = await this.findOCRCorrection(cleanInput, brokerName);
     if (ocrMatch) return ocrMatch;
 
+    // 6. **NEW**: Fallback symbol system
+    const fallbackMatch = await this.findFallbackMatch(cleanInput);
+    if (fallbackMatch) return fallbackMatch;
+
     logger.warn(`❌ No symbol detected from input: "${input}"`);
     return null;
   }
 
   /**
-   * Find exact symbol match
+   * **NEW**: Find fallback symbol match when MetaAPI discovery fails
+   */
+  private static async findFallbackMatch(cleanInput: string): Promise<DetectionResult | null> {
+    if (FallbackSymbolSystem.hasFallbackSupport(cleanInput)) {
+      const symbolInfo = FallbackSymbolSystem.getFallbackSymbolInfo(cleanInput);
+      if (symbolInfo) {
+        logger.info(`🛡️ Found fallback match: ${cleanInput} → ${symbolInfo.symbol}`);
+        return {
+          symbol: symbolInfo.symbol,
+          confidence: 90, // High confidence for exact fallback matches
+          source: 'FALLBACK',
+          brokerName: 'FALLBACK_BROKER',
+          symbolInfo
+        };
+      }
+    }
+    
+    // Try alias fallback
+    const alias = this.aliasMap[cleanInput];
+    if (alias && FallbackSymbolSystem.hasFallbackSupport(alias)) {
+      const symbolInfo = FallbackSymbolSystem.getFallbackSymbolInfo(alias);
+      if (symbolInfo) {
+        logger.info(`🛡️ Found fallback alias match: ${cleanInput} → ${alias}`);
+        return {
+          symbol: alias,
+          confidence: 85, // Slightly lower confidence for alias fallback
+          source: 'FALLBACK',
+          brokerName: 'FALLBACK_BROKER',
+          symbolInfo
+        };
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Find exact symbol match from MetaAPI first, fallback if needed
+   */
+  /**
+   * Find exact symbol match from MetaAPI first, fallback if needed
    */
   private static async findExactMatch(cleanInput: string, brokerName?: string): Promise<DetectionResult | null> {
     const supportedSymbols = UniversalSymbolSupport.getAllSupportedSymbols();
     
+    // **CRITICAL**: If MetaAPI symbols not available, skip to fallback
+    if (supportedSymbols.length === 0) {
+      logger.warn('⚠️ No MetaAPI symbols available, will try fallback system');
+      return null; // Let fallback system handle it
+    }
+    
     if (supportedSymbols.includes(cleanInput)) {
       const symbolInfo = UniversalSymbolSupport.getSymbolInfo(cleanInput, brokerName);
+      logger.info(`✅ Exact match found: ${cleanInput}`);
       
       return {
         symbol: cleanInput,
@@ -93,75 +155,61 @@ export class EnhancedSymbolDetector {
   }
 
   /**
-   * Find symbol through alias mapping
+   * Find alias match
    */
   private static async findAliasMatch(cleanInput: string, brokerName?: string): Promise<DetectionResult | null> {
-    const mappedSymbol = this.aliasMap[cleanInput];
-    
-    if (mappedSymbol && UniversalSymbolSupport.isSymbolSupported(mappedSymbol)) {
-      const symbolInfo = UniversalSymbolSupport.getSymbolInfo(mappedSymbol, brokerName);
+    const alias = this.aliasMap[cleanInput];
+    if (alias) {
+      const supportedSymbols = UniversalSymbolSupport.getAllSupportedSymbols();
       
-      return {
-        symbol: mappedSymbol,
-        confidence: 95,
-        source: 'ALIAS_MATCH',
-        brokerName: symbolInfo?.brokerName,
-        symbolInfo: symbolInfo || undefined
-      };
+      if (supportedSymbols.includes(alias)) {
+        const symbolInfo = UniversalSymbolSupport.getSymbolInfo(alias, brokerName);
+        logger.info(`🔄 Alias match: ${cleanInput} → ${alias}`);
+        
+        return {
+          symbol: alias,
+          confidence: 95,
+          source: 'ALIAS_MATCH',
+          brokerName: symbolInfo?.brokerName,
+          symbolInfo: symbolInfo || undefined
+        };
+      }
     }
     
     return null;
   }
 
   /**
-   * Find symbol using pattern matching
+   * Find pattern-based matches
    */
   private static async findPatternMatch(input: string, brokerName?: string): Promise<DetectionResult | null> {
     const patterns = [
-      // Chart titles
-      /Gold\s+Spot\s*\/\s*U\.?S\.?\s*Dollar/gi,
-      /Silver\s+Spot\s*\/\s*U\.?S\.?\s*Dollar/gi,
-      /EUR\s*\/\s*USD/gi,
-      /GBP\s*\/\s*USD/gi,
-      /USD\s*\/\s*JPY/gi,
-      
-      // Hashtag patterns
-      /#([A-Z0-9]{5,8})/gi,
-      
-      // 6-letter forex pairs
-      /\b([A-Z]{6})\b/g,
-      
-      // Metal patterns
-      /\b(XAU[A-Z]{3}|XAG[A-Z]{3})\b/gi,
-      
-      // Index patterns
-      /\b(US30|NAS100|SPX?500|DAX30|FTSE100)\b/gi
+      // Major forex pairs
+      /([A-Z]{3}USD|USD[A-Z]{3}|[A-Z]{6})/g,
+      // Metals
+      /(XAU|XAG|GOLD|SILVER)/gi,
+      // Indices
+      /(US30|NAS|SPX|DAX|FTSE|CAC)/gi,
+      // Crypto
+      /(BTC|ETH|BITCOIN|ETHEREUM)/gi
     ];
-
+    
     for (const pattern of patterns) {
       const matches = input.match(pattern);
-      if (matches) {
-        for (const match of matches) {
-          const cleanMatch = match.replace(/[^A-Z0-9]/g, '').toUpperCase();
-          
-          // Check if it's a known symbol
-          if (UniversalSymbolSupport.isSymbolSupported(cleanMatch)) {
-            const symbolInfo = UniversalSymbolSupport.getSymbolInfo(cleanMatch, brokerName);
-            
-            return {
-              symbol: cleanMatch,
-              confidence: 85,
-              source: 'PATTERN_MATCH',
-              brokerName: symbolInfo?.brokerName,
-              symbolInfo: symbolInfo || undefined
-            };
-          }
-          
-          // Check aliases
-          const aliasResult = await this.findAliasMatch(cleanMatch, brokerName);
-          if (aliasResult) {
-            return { ...aliasResult, confidence: 80 };
-          }
+      if (matches && matches.length > 0) {
+        const symbol = matches[0].toUpperCase();
+        const cleanSymbol = symbol.replace(/[^A-Z0-9]/g, '');
+        
+        // Try exact match first
+        const exactMatch = await this.findExactMatch(cleanSymbol, brokerName);
+        if (exactMatch) {
+          return { ...exactMatch, source: 'PATTERN_MATCH', confidence: 80 };
+        }
+        
+        // Try fallback
+        const fallbackMatch = await this.findFallbackMatch(cleanSymbol);
+        if (fallbackMatch) {
+          return { ...fallbackMatch, source: 'PATTERN_MATCH', confidence: 75 };
         }
       }
     }
@@ -170,21 +218,24 @@ export class EnhancedSymbolDetector {
   }
 
   /**
-   * Find symbol using fuzzy matching for typos
+   * Find fuzzy matches for typos
    */
   private static async findFuzzyMatch(cleanInput: string, brokerName?: string): Promise<DetectionResult | null> {
     const supportedSymbols = UniversalSymbolSupport.getAllSupportedSymbols();
     
+    // Skip fuzzy matching if no symbols available
+    if (supportedSymbols.length === 0) {
+      return null;
+    }
+    
     for (const symbol of supportedSymbols) {
-      const similarity = this.calculateSimilarity(cleanInput, symbol);
-      
-      // If very similar (1-2 character difference)
-      if (similarity > 0.8 && Math.abs(cleanInput.length - symbol.length) <= 2) {
+      if (this.calculateSimilarity(cleanInput, symbol) > 0.8) {
         const symbolInfo = UniversalSymbolSupport.getSymbolInfo(symbol, brokerName);
+        logger.info(`🔍 Fuzzy match: ${cleanInput} → ${symbol}`);
         
         return {
           symbol,
-          confidence: Math.floor(similarity * 100),
+          confidence: 70,
           source: 'FUZZY_MATCH',
           brokerName: symbolInfo?.brokerName,
           symbolInfo: symbolInfo || undefined
@@ -196,48 +247,29 @@ export class EnhancedSymbolDetector {
   }
 
   /**
-   * Find symbol using OCR error correction
+   * OCR error correction
    */
   private static async findOCRCorrection(cleanInput: string, brokerName?: string): Promise<DetectionResult | null> {
-    // Check direct OCR corrections
-    if (this.aliasMap[cleanInput]) {
-      const correctedSymbol = this.aliasMap[cleanInput];
-      if (UniversalSymbolSupport.isSymbolSupported(correctedSymbol)) {
-        const symbolInfo = UniversalSymbolSupport.getSymbolInfo(correctedSymbol, brokerName);
-        
-        return {
-          symbol: correctedSymbol,
-          confidence: 75,
-          source: 'OCR_CORRECTION',
-          brokerName: symbolInfo?.brokerName,
-          symbolInfo: symbolInfo || undefined
-        };
-      }
-    }
-    
-    // Common OCR character substitutions
-    const ocrSubstitutions: Record<string, string> = {
-      '0': 'O', '1': 'I', '5': 'S', '8': 'B',
-      'O': '0', 'I': '1', 'S': '5', 'B': '8'
+    const ocrCorrections: Record<string, string> = {
+      'XAUUST': 'XAUUSD',
+      'XAUUSP': 'XAUUSD',
+      'EURUSO': 'EURUSD',
+      'GBPUSO': 'GBPUSD',
+      'USOJPY': 'USDJPY'
     };
     
-    // Try different character substitutions
-    for (let i = 0; i < cleanInput.length; i++) {
-      const char = cleanInput[i];
-      if (ocrSubstitutions[char]) {
-        const corrected = cleanInput.substring(0, i) + ocrSubstitutions[char] + cleanInput.substring(i + 1);
-        
-        if (UniversalSymbolSupport.isSymbolSupported(corrected)) {
-          const symbolInfo = UniversalSymbolSupport.getSymbolInfo(corrected, brokerName);
-          
-          return {
-            symbol: corrected,
-            confidence: 70,
-            source: 'OCR_CORRECTION',
-            brokerName: symbolInfo?.brokerName,
-            symbolInfo: symbolInfo || undefined
-          };
-        }
+    const correction = ocrCorrections[cleanInput];
+    if (correction) {
+      // Try MetaAPI first
+      const exactMatch = await this.findExactMatch(correction, brokerName);
+      if (exactMatch) {
+        return { ...exactMatch, source: 'OCR_CORRECTION', confidence: 85 };
+      }
+      
+      // Try fallback
+      const fallbackMatch = await this.findFallbackMatch(correction);
+      if (fallbackMatch) {
+        return { ...fallbackMatch, source: 'OCR_CORRECTION', confidence: 80 };
       }
     }
     
@@ -308,6 +340,52 @@ export class EnhancedSymbolDetector {
           }
         }
       }
+    }
+
+    return null;
+  }
+
+  /**
+   * Fallback symbol detection for common forex pairs
+   */
+  private static findFallbackSymbol(cleanInput: string): DetectionResult | null {
+    const commonSymbols = [
+      'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
+      'EURJPY', 'GBPJPY', 'EURGBP', 'EURCAD', 'EURAUD', 'EURCHF', 
+      'GBPCAD', 'GBPAUD', 'GBPCHF', 'CADCHF', 'CADJPY', 'CHFJPY',
+      'AUDCAD', 'AUDCHF', 'AUDJPY', 'NZDCAD', 'NZDCHF', 'NZDJPY',
+      'XAUUSD', 'XAGUSD'
+    ];
+
+    if (commonSymbols.includes(cleanInput)) {
+      logger.info(`✅ Fallback symbol detected: ${cleanInput} (85% confidence)`);
+      
+      const symbolType: 'FOREX' | 'METALS' = cleanInput.includes('XAU') || cleanInput.includes('XAG') ? 'METALS' : 'FOREX';
+      
+      return {
+        symbol: cleanInput,
+        confidence: 85,
+        source: 'FALLBACK' as any,
+        brokerName: 'FALLBACK',
+        symbolInfo: {
+          symbol: cleanInput,
+          description: `${cleanInput} (Fallback Support)`,
+          type: symbolType,
+          minDistance: symbolType === 'METALS' ? 100 : 10,
+          maxRiskPips: symbolType === 'METALS' ? 500 : 200,
+          pipValue: symbolType === 'METALS' ? 0.01 : (cleanInput.includes('JPY') ? 0.01 : 0.0001),
+          contractSize: symbolType === 'METALS' ? 100 : 100000,
+          minLot: 0.01,
+          maxLot: 100,
+          lotStep: 0.01,
+          priceRange: {
+            min: symbolType === 'METALS' ? 1000 : 0.5,
+            max: symbolType === 'METALS' ? 3000 : 2.0
+          },
+          isActive: true,
+          brokerName: 'FALLBACK'
+        }
+      };
     }
 
     return null;

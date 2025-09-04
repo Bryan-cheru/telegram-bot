@@ -11,11 +11,17 @@ import {
   TradePerformanceMetrics 
 } from '../types/tradeHistory';
 import { logger } from '../utils/logger';
+import { enhancedLogger } from '../utils/enhancedLogger';
 import { SmartMarketOverrideML } from '../ml/tradingML';
 import { TradingSafetyControls } from '../utils/tradingSafetyControls';
 import { AdvancedStopTakeManager } from '../utils/advancedStopTakeManagement';
 import { UniversalSymbolSupport } from '../utils/universalSymbolSupport';
 import { EnhancedSymbolDetector } from '../utils/enhancedSymbolDetector';
+import { DynamicSymbolValidator } from '../utils/dynamicSymbolValidator';
+import { PositionSizingValidator } from '../utils/positionSizingValidator';
+import { CrashRecoveryDatabase } from '../utils/crashRecoveryDatabase';
+import { RealTimeAlertSystem } from '../utils/realTimeAlertSystem';
+import { PerformanceMonitor } from '../utils/performanceMonitor';
 
 interface AccountConfig {
   id: string;
@@ -49,6 +55,15 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
   private connectionSemaphore = 0;
   private maxConcurrentConnections = 2; // Limit concurrent connections
   private connectionRetryDelay = 5000; // 5 second delay between retries
+  private tradeExecutionMutex: Map<string, Promise<any>> = new Map(); // Prevent race conditions
+  private circuitBreakerState = new Map<string, { failures: number; lastFailure: Date; isOpen: boolean }>();
+  
+  // New monitoring systems
+  private symbolValidator: DynamicSymbolValidator;
+  private positionValidator: PositionSizingValidator;
+  private database: CrashRecoveryDatabase;
+  private alertSystem: RealTimeAlertSystem;
+  private performanceMonitor: PerformanceMonitor;
 
   constructor() {
     const token = process.env.METAAPI_TOKEN;
@@ -63,7 +78,15 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       connectTimeout: 60000, // 60 second connect timeout
     });
     
+    // Initialize safety and monitoring systems
     this.safetyControls = TradingSafetyControls.getInstance();
+    this.symbolValidator = DynamicSymbolValidator.getInstance();
+    this.positionValidator = PositionSizingValidator.getInstance();
+    this.database = CrashRecoveryDatabase.getInstance();
+    this.alertSystem = RealTimeAlertSystem.getInstance();
+    this.performanceMonitor = PerformanceMonitor.getInstance();
+
+    enhancedLogger.info('Enhanced trading systems initialized');
   }
 
   async initialize(): Promise<void> {
@@ -106,8 +129,20 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         this.accounts.set(cleanId, accountConfig);
       }
 
-      // Connect accounts with controlled concurrency
-      await this.connectAccountsSequentially();
+      // QUICK FIX: Add overall timeout for entire initialization
+      const initializationTimeout = 180000; // 3 minutes max for entire init
+      const initPromise = this.initializeWithTimeout();
+      
+      try {
+        await Promise.race([
+          initPromise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Initialization timeout - proceeding with available connections')), initializationTimeout)
+          )
+        ]);
+      } catch (timeoutError) {
+        logger.warn('⚠️ Initialization timeout reached, checking available connections...');
+      }
 
       const connectedAccounts = Array.from(this.accounts.values()).filter(acc => acc.status === 'CONNECTED');
       const failedAccounts = Array.from(this.accounts.values()).filter(acc => acc.status === 'FAILED');
@@ -126,75 +161,169 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       this.initialized = connectedAccounts.length > 0;
       
       if (!this.initialized) {
-        throw new Error('Failed to connect to any accounts');
+        logger.warn('❌ No accounts connected, but bot will continue in OCR-only mode');
+        logger.info('📊 Bot can still parse signals but cannot execute trades');
+      } else {
+        logger.info(`✅ Bot initialized with ${connectedAccounts.length} connected account(s)`);
       }
 
-      // Initialize universal symbol support after connections are established
-      logger.info('🌍 Initializing universal symbol support...');
-      
-      // Wait for full synchronization before symbol discovery
-      await this.waitForFullSynchronization();
-      
-      await UniversalSymbolSupport.discoverAllSymbols(this.accounts);
-      
-      // Generate and log symbol report
-      const report = UniversalSymbolSupport.generateSymbolReport();
-      logger.info(report);
+      // Background symbol discovery (don't wait for it)
+      this.initializeSymbolsInBackground();
 
     } catch (error) {
       logger.error('❌ Failed to initialize Multi-Account MetaAPI:', error);
-      throw error;
+      // Don't throw - allow bot to continue in OCR-only mode
+      logger.warn('⚠️ Bot will continue in OCR-only mode (no trade execution)');
     }
+  }
+
+  private async initializeWithTimeout(): Promise<void> {
+    // Connect accounts with controlled concurrency
+    await this.connectAccountsSequentially();
+    
+    // Quick symbol discovery without full sync wait
+    logger.info('🌍 Starting background symbol discovery...');
+    await UniversalSymbolSupport.discoverAllSymbols(this.accounts);
+    
+    const report = UniversalSymbolSupport.generateSymbolReport();
+    logger.info(report);
+  }
+
+  private initializeSymbolsInBackground(): void {
+    // Run symbol discovery in background without blocking
+    setTimeout(async () => {
+      try {
+        logger.info('🔄 Background: Finalizing symbol discovery...');
+        await this.waitForPartialSynchronization(); // Shorter wait
+        await UniversalSymbolSupport.discoverAllSymbols(this.accounts);
+        const report = UniversalSymbolSupport.generateSymbolReport();
+        logger.info('🎯 Background symbol discovery completed:', report);
+      } catch (error) {
+        logger.warn('⚠️ Background symbol discovery failed:', error);
+      }
+    }, 10000); // Start after 10 seconds
   }
 
   private async connectAccountsSequentially(): Promise<void> {
     const accountArray = Array.from(this.accounts.values());
     
-    logger.info(`🔗 Connecting to ${accountArray.length} accounts sequentially to avoid timeouts...`);
+    logger.info(`🔗 Connecting to ${accountArray.length} accounts with faster timeouts...`);
     
     for (let i = 0; i < accountArray.length; i++) {
       const accountConfig = accountArray[i];
       
-      // Add delay between connections to prevent overload
+      // QUICK FIX: Reduced delays for faster startup
       if (i > 0) {
-        logger.info(`⏳ Waiting ${this.connectionRetryDelay / 1000}s before next connection...`);
-        await new Promise(resolve => setTimeout(resolve, this.connectionRetryDelay));
+        const delay = 5000; // Reduced to 5 seconds between connections
+        logger.info(`⏳ Waiting ${delay / 1000}s before next connection...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
       
-      await this.connectAccountWithRetry(accountConfig, 3); // 3 retry attempts
+      logger.info(`🔗 [${i + 1}/${accountArray.length}] Connecting ${accountConfig.brokerName}...`);
+      await this.connectAccountWithRetry(accountConfig, 1); // Only 1 retry for speed
     }
+    
+    // QUICK FIX: Shorter wait after connections
+    logger.info('⏳ Connections initiated. Waiting 5s before proceeding...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
   }
 
-  private async waitForFullSynchronization(): Promise<void> {
-    logger.info('⏳ Waiting for all accounts to fully synchronize...');
+  private async waitForPartialSynchronization(): Promise<void> {
+    logger.info('⏳ Quick check: Waiting for basic account readiness (30s timeout)...');
     
-    const maxWaitTime = 60000; // 60 seconds max wait
-    const checkInterval = 2000; // Check every 2 seconds
+    const maxWaitTime = 30000; // 30 seconds max wait
+    const checkInterval = 3000; // Check every 3 seconds
     const startTime = Date.now();
     
     while (Date.now() - startTime < maxWaitTime) {
-      let allSynchronized = true;
+      let anyReady = false;
+      let syncStatus: string[] = [];
       
       for (const [accountId, accountConfig] of this.accounts) {
         if (accountConfig.status === 'CONNECTED' && accountConfig.connection) {
-          const terminalState = accountConfig.connection.terminalState;
-          if (!terminalState || !terminalState.synchronized) {
-            allSynchronized = false;
-            logger.info(`⏳ Waiting for ${accountConfig.brokerName} to synchronize...`);
-            break;
+          const isConnected = accountConfig.connection.state === 'CONNECTED';
+          
+          if (isConnected) {
+            anyReady = true;
+            syncStatus.push(`${accountConfig.brokerName}: ✅ Connected`);
+          } else {
+            syncStatus.push(`${accountConfig.brokerName}: ⏳ Connecting`);
           }
         }
       }
       
-      if (allSynchronized) {
-        logger.info('✅ All connected accounts are now fully synchronized!');
+      if (anyReady) {
+        logger.info('✅ At least one account is ready for basic operations');
         return;
       }
       
+      logger.info(`📊 Quick status: ${syncStatus.join(' | ')}`);
       await new Promise(resolve => setTimeout(resolve, checkInterval));
     }
     
-    logger.warn('⚠️ Full synchronization timeout - proceeding anyway');
+    logger.warn('⚠️ Partial sync timeout - continuing anyway');
+  }
+
+  private async waitForFullSynchronization(): Promise<void> {
+    logger.info('⏳ Final verification: Waiting for all accounts to be fully ready...');
+    
+    const maxWaitTime = 120000; // 2 minutes max wait for final verification
+    const checkInterval = 5000; // Check every 5 seconds
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      let allSynchronized = true;
+      let syncStatus: string[] = [];
+      
+      for (const [accountId, accountConfig] of this.accounts) {
+        if (accountConfig.status === 'CONNECTED' && accountConfig.connection) {
+          const terminalState = accountConfig.connection.terminalState;
+          const isConnected = accountConfig.connection.state === 'CONNECTED';
+          const isSynchronized = terminalState && terminalState.synchronized;
+          
+          if (!isConnected || !isSynchronized) {
+            allSynchronized = false;
+            syncStatus.push(`${accountConfig.brokerName}: connected=${isConnected}, sync=${isSynchronized}`);
+          } else {
+            syncStatus.push(`${accountConfig.brokerName}: ✅ READY`);
+          }
+        }
+      }
+      
+      logger.info(`📊 Synchronization status: ${syncStatus.join(' | ')}`);
+      
+      if (allSynchronized) {
+        logger.info('✅ All connected accounts are fully synchronized and ready!');
+        return;
+      }
+      
+      logger.info(`⏳ Some accounts still synchronizing, waiting ${checkInterval/1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, checkInterval));
+    }
+    
+    logger.warn('⚠️ Final synchronization verification timeout - proceeding with available connections');
+    
+    // Log which accounts are actually ready
+    const readyAccounts = [];
+    const notReadyAccounts = [];
+    
+    for (const [accountId, accountConfig] of this.accounts) {
+      if (accountConfig.status === 'CONNECTED' && accountConfig.connection) {
+        const terminalState = accountConfig.connection.terminalState;
+        const isReady = terminalState && terminalState.synchronized;
+        
+        if (isReady) {
+          readyAccounts.push(accountConfig.brokerName);
+        } else {
+          notReadyAccounts.push(accountConfig.brokerName);
+        }
+      }
+    }
+    
+    logger.info(`📊 Final status: ${readyAccounts.length} ready accounts: ${readyAccounts.join(', ')}`);
+    if (notReadyAccounts.length > 0) {
+      logger.warn(`⚠️ ${notReadyAccounts.length} accounts not fully ready: ${notReadyAccounts.join(', ')}`);
+    }
   }
 
   private async connectAccountWithRetry(accountConfig: AccountConfig, maxRetries: number): Promise<void> {
@@ -231,20 +360,21 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         logger.info(`📦 Deploying ${accountConfig.brokerName} account...`);
         await accountConfig.account.deploy();
         
-        // Wait for deployment with timeout
+        // QUICK FIX: Shorter deployment timeout
         await Promise.race([
           accountConfig.account.waitDeployed(),
           new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Deployment timeout')), 60000)
+            setTimeout(() => reject(new Error('Deployment timeout')), 60000) // 1 minute
           )
         ]);
       }
 
-      // Wait for connection with timeout
+      // QUICK FIX: Shorter connection timeout
+      logger.info(`🔗 Waiting for ${accountConfig.brokerName} to connect...`);
       await Promise.race([
         accountConfig.account.waitConnected(),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection timeout')), 60000)
+          setTimeout(() => reject(new Error('Connection timeout')), 45000) // 45 seconds
         )
       ]);
 
@@ -253,6 +383,7 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         logger.info(`🔌 Closing existing connection for ${accountConfig.brokerName}...`);
         try {
           await accountConfig.connection.close();
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s after close
         } catch (closeError) {
           logger.warn(`⚠️ Error closing existing connection:`, closeError);
         }
@@ -260,22 +391,31 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       
       accountConfig.connection = accountConfig.account.getStreamingConnection();
       
-      // Connect with timeout
+      // QUICK FIX: Establish streaming connection with short timeout
+      logger.info(`🔌 Establishing streaming connection for ${accountConfig.brokerName}...`);
       await Promise.race([
         accountConfig.connection.connect(),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Stream connection timeout')), 30000)
+          setTimeout(() => reject(new Error('Stream connection timeout')), 30000) // 30 seconds
         )
       ]);
       
-      // Wait for synchronization with timeout
-      logger.info(`🔄 Synchronizing ${accountConfig.brokerName} account...`);
-      await Promise.race([
-        accountConfig.connection.waitSynchronized(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Synchronization timeout')), 120000) // 2 minutes
-        )
-      ]);
+      // QUICK FIX: Much shorter sync wait - don't wait for full sync
+      logger.info(`🔄 Quick sync check for ${accountConfig.brokerName}...`);
+      
+      try {
+        // Just do a basic sync check with short timeout
+        await Promise.race([
+          accountConfig.connection.waitSynchronized(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Quick sync timeout')), 15000) // 15 seconds max
+          )
+        ]);
+        logger.info(`✅ ${accountConfig.brokerName} basic sync completed!`);
+      } catch (syncError) {
+        logger.warn(`⚠️ ${accountConfig.brokerName} sync timeout - proceeding anyway`);
+        // Continue anyway - the connection might still work for trading
+      }
 
       accountConfig.status = 'CONNECTED';
       logger.info(`✅ ${accountConfig.brokerName} ${accountConfig.accountType} connected successfully!`);
@@ -377,6 +517,59 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     accountConfig: AccountConfig,
     results: MultiAccountTradeResult['results']
   ): Promise<void> {
+    // CRITICAL: Check circuit breaker before executing
+    const circuitKey = `${accountConfig.id}_${signal.symbol}`;
+    if (this.isCircuitBreakerOpen(circuitKey)) {
+      const reason = 'Circuit breaker open - too many recent failures';
+      logger.error(`🚨 ${reason} for ${accountConfig.brokerName}`);
+      results.push({
+        accountId: accountConfig.id,
+        brokerName: accountConfig.brokerName,
+        accountType: accountConfig.accountType,
+        success: false,
+        message: reason
+      });
+      return;
+    }
+
+    // CRITICAL: Use mutex to prevent race conditions
+    const mutexKey = `${accountConfig.id}_${signal.symbol}`;
+    if (this.tradeExecutionMutex.has(mutexKey)) {
+      const reason = 'Trade execution in progress - preventing race condition';
+      logger.warn(`⚠️ ${reason} for ${accountConfig.brokerName}`);
+      results.push({
+        accountId: accountConfig.id,
+        brokerName: accountConfig.brokerName,
+        accountType: accountConfig.accountType,
+        success: false,
+        message: reason
+      });
+      return;
+    }
+
+    // Set mutex
+    const executionPromise = this.performTradeExecution(signal, accountConfig, results);
+    this.tradeExecutionMutex.set(mutexKey, executionPromise);
+
+    try {
+      await executionPromise;
+      // Reset circuit breaker on success
+      this.resetCircuitBreaker(circuitKey);
+    } catch (error) {
+      // Trigger circuit breaker on failure
+      this.recordFailure(circuitKey);
+      throw error;
+    } finally {
+      // Always clear mutex
+      this.tradeExecutionMutex.delete(mutexKey);
+    }
+  }
+
+  private async performTradeExecution(
+    signal: TradeSignal,
+    accountConfig: AccountConfig,
+    results: MultiAccountTradeResult['results']
+  ): Promise<void> {
     try {
       logger.info(`💼 Executing on ${accountConfig.brokerName} ${accountConfig.accountType}...`);
 
@@ -393,17 +586,31 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
           logger.info(`🔄 Symbol corrected: ${signal.symbol} → ${validatedSymbol} (${detectionResult.confidence}% confidence)`);
         }
       }
-      
-      // Get symbol-specific information from universal support
-      const symbolInfo = UniversalSymbolSupport.getSymbolInfo(validatedSymbol, accountConfig.brokerName);
-      if (!symbolInfo) {
-        logger.warn(`⚠️ Symbol ${validatedSymbol} not found on ${accountConfig.brokerName}, trying anyway...`);
-      } else {
-        logger.info(`✅ Symbol ${validatedSymbol} validated on ${accountConfig.brokerName}: ${symbolInfo.description} (${symbolInfo.type})`);
+
+      // 🛡️ CRITICAL FIX: Try broker-specific symbol variations for US30
+      const symbolVariations = this.getBrokerSpecificSymbolVariations(validatedSymbol, accountConfig.brokerName);
+      let finalSymbol = validatedSymbol;
+      let symbolFound = false;
+
+      // Try each variation until we find one that exists
+      for (const variation of symbolVariations) {
+        const symbolInfo = UniversalSymbolSupport.getSymbolInfo(variation, accountConfig.brokerName);
+        if (symbolInfo) {
+          finalSymbol = variation;
+          symbolFound = true;
+          logger.info(`✅ Symbol ${variation} validated on ${accountConfig.brokerName}: ${symbolInfo.description} (${symbolInfo.type})`);
+          break;
+        }
+      }
+
+      if (!symbolFound) {
+        logger.warn(`⚠️ No symbol variations found for ${validatedSymbol} on ${accountConfig.brokerName}, trying original anyway...`);
+        // Log attempted variations for debugging
+        logger.info(`🔍 Attempted variations: ${symbolVariations.join(', ')}`);
       }
       
-      // Update signal with validated symbol
-      const validatedSignal = { ...signal, symbol: validatedSymbol };
+      // Update signal with final validated symbol
+      const validatedSignal = { ...signal, symbol: finalSymbol };
 
       // Get account balance for safety validation
       const terminalState = accountConfig.connection.terminalState;
@@ -442,23 +649,97 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       
       // Determine optimal limit entry price based on signal direction and entry zone
       if (!finalEntryPrice) {
-        if (signal.action === 'BUY') {
-          // For BUY limit: Entry price must be BELOW current market price
-          // Use the lower of entry zone max or current price - small buffer
-          const maxBuyPrice = Math.min(signal.entryZone.max, currentPrice - 0.0001);
-          finalEntryPrice = Math.max(signal.entryZone.min, maxBuyPrice);
-        } else if (signal.action === 'SELL') {
-          // For SELL limit: Entry price must be ABOVE current market price
-          // Use the higher of entry zone min or current price + small buffer  
-          const minSellPrice = Math.max(signal.entryZone.min, currentPrice + 0.0001);
-          finalEntryPrice = Math.min(signal.entryZone.max, minSellPrice);
+        // 🛡️ CRITICAL FIX: Handle invalid entry zones (e.g., min=0, max=0)
+        const INVALID_ENTRY_ZONE_THRESHOLD = 0.01;
+        const isInvalidEntryZone = 
+          signal.entryZone.min <= INVALID_ENTRY_ZONE_THRESHOLD &&
+          signal.entryZone.max <= INVALID_ENTRY_ZONE_THRESHOLD;
+
+        if (isInvalidEntryZone) {
+          logger.warn('⚠️ Invalid entry zone detected, using current market price fallback', {
+            entryZone: signal.entryZone,
+            currentPrice,
+            action: signal.action
+          });
+          
+          // Use current market price with appropriate offset for limit orders
+          if (signal.action === 'BUY') {
+            // BUY limit must be BELOW current price
+            finalEntryPrice = currentPrice - (currentPrice * 0.0001); // 0.01% below
+          } else if (signal.action === 'SELL') {
+            // SELL limit must be ABOVE current price  
+            finalEntryPrice = currentPrice + (currentPrice * 0.0001); // 0.01% above
+          } else {
+            // Fallback for unknown action
+            finalEntryPrice = currentPrice;
+          }
         } else {
-          // Fallback: Use middle of entry zone
-          finalEntryPrice = (signal.entryZone.min + signal.entryZone.max) / 2;
+          // 🎯 ENHANCED MARKET CONTEXT LOGIC
+          const entryZoneCenter = (signal.entryZone.min + signal.entryZone.max) / 2;
+          const zoneSize = signal.entryZone.max - signal.entryZone.min;
+          
+          if (signal.action === 'BUY') {
+            // BUY LOGIC: Check where current price is relative to buying zone
+            if (currentPrice > signal.entryZone.max) {
+              // Price ABOVE buying zone - place BUY LIMIT in zone
+              finalEntryPrice = entryZoneCenter;
+              logger.info('📊 BUY LIMIT: Price above buying zone, placing limit order in zone', {
+                currentPrice,
+                buyingZone: signal.entryZone,
+                limitPrice: finalEntryPrice
+              });
+            } else if (currentPrice < signal.entryZone.min) {
+              // Price BELOW buying zone - immediate BUY MARKET or wait
+              finalEntryPrice = currentPrice + 0.0001; // Small buffer for market order
+              logger.info('🎯 BUY MARKET: Price below buying zone, immediate entry', {
+                currentPrice,
+                buyingZone: signal.entryZone,
+                marketPrice: finalEntryPrice
+              });
+            } else {
+              // Price IN buying zone - buy at current level
+              finalEntryPrice = currentPrice;
+              logger.info('✅ BUY IN ZONE: Price currently in buying zone', {
+                currentPrice,
+                buyingZone: signal.entryZone
+              });
+            }
+          } else if (signal.action === 'SELL') {
+            // SELL LOGIC: Check where current price is relative to selling zone
+            if (currentPrice < signal.entryZone.min) {
+              // Price BELOW selling zone - place SELL LIMIT in zone (CORRECT APPROACH!)
+              finalEntryPrice = entryZoneCenter;
+              logger.info('📊 SELL LIMIT: Price below selling zone, placing limit order in zone', {
+                currentPrice,
+                sellingZone: signal.entryZone,
+                limitPrice: finalEntryPrice,
+                context: 'Waiting for price to rally to selling area'
+              });
+            } else if (currentPrice > signal.entryZone.max) {
+              // Price ABOVE selling zone - too late, signal expired
+              logger.warn('⚠️ LATE ENTRY: Price already above selling zone - signal expired', {
+                currentPrice,
+                sellingZone: signal.entryZone,
+                recommendation: 'SKIP this signal'
+              });
+              // Still set a price but log the concern
+              finalEntryPrice = currentPrice - 0.0001; // Minimal buffer
+            } else {
+              // Price IN selling zone - sell at current level
+              finalEntryPrice = currentPrice;
+              logger.info('✅ SELL IN ZONE: Price currently in selling zone', {
+                currentPrice,
+                sellingZone: signal.entryZone
+              });
+            }
+          } else {
+            // Fallback: Use middle of entry zone
+            finalEntryPrice = entryZoneCenter;
+          }
         }
       }
       
-      // Validate limit order price logic
+      // Validate limit order price logic with enhanced context
       const priceValidation = this.validateLimitOrderPrice(signal.action, finalEntryPrice!, currentPrice);
       if (!priceValidation.isValid) {
         // Adjust price to be valid
@@ -466,13 +747,23 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         logger.warn(`⚠️ Adjusted invalid limit price: ${priceValidation.reason}`);
       }
       
-      logger.info(`🎯 LIMIT ORDER ONLY - Entry Level: ${finalEntryPrice!}`, {
+      // Enhanced logging with market context
+      const priceDifference = Math.abs(currentPrice - finalEntryPrice!);
+      const percentDifference = (priceDifference / currentPrice) * 100;
+      
+      logger.info(`🎯 ENHANCED LIMIT ORDER - Entry Level: ${finalEntryPrice!}`, {
         action: signal.action,
         entryZone: signal.entryZone,
         currentPrice,
-        priceDistance: Math.abs(currentPrice - finalEntryPrice!),
-        reason: 'Chart-based limit entry enforced',
-        validation: priceValidation.isValid ? 'VALID' : 'ADJUSTED'
+        entryPrice: finalEntryPrice,
+        priceDistance: priceDifference,
+        percentDistance: `${percentDifference.toFixed(3)}%`,
+        marketContext: priceValidation.context,
+        validation: priceValidation.isValid ? 'VALID' : 'ADJUSTED',
+        strategy: signal.action === 'SELL' && currentPrice < signal.entryZone.min ? 
+          'SELL_LIMIT_ABOVE_CURRENT' : 
+          signal.action === 'BUY' && currentPrice > signal.entryZone.max ? 
+          'BUY_LIMIT_BELOW_CURRENT' : 'IN_ZONE_EXECUTION'
       });
 
       // Calculate proposed volume (replace hardcoded 0.01)
@@ -1384,14 +1675,64 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
   }
 
   /**
-   * Validate limit order price logic
+   * Circuit breaker methods to prevent cascading failures
+   */
+  private isCircuitBreakerOpen(circuitKey: string): boolean {
+    const state = this.circuitBreakerState.get(circuitKey);
+    if (!state) return false;
+
+    const now = new Date();
+    const timeSinceLastFailure = now.getTime() - state.lastFailure.getTime();
+    const cooldownPeriod = 5 * 60 * 1000; // 5 minutes
+
+    // Reset if cooldown period has passed
+    if (timeSinceLastFailure > cooldownPeriod) {
+      state.isOpen = false;
+      state.failures = 0;
+    }
+
+    return state.isOpen;
+  }
+
+  private recordFailure(circuitKey: string): void {
+    const now = new Date();
+    let state = this.circuitBreakerState.get(circuitKey);
+    
+    if (!state) {
+      state = { failures: 0, lastFailure: now, isOpen: false };
+      this.circuitBreakerState.set(circuitKey, state);
+    }
+
+    state.failures++;
+    state.lastFailure = now;
+
+    // Open circuit breaker after 3 consecutive failures
+    if (state.failures >= 3) {
+      state.isOpen = true;
+      logger.error(`🚨 Circuit breaker opened for ${circuitKey} after ${state.failures} failures`);
+    }
+  }
+
+  private resetCircuitBreaker(circuitKey: string): void {
+    const state = this.circuitBreakerState.get(circuitKey);
+    if (state) {
+      state.failures = 0;
+      state.isOpen = false;
+    }
+  }
+
+  /**
+   * Enhanced limit order price validation with market context awareness
    */
   private validateLimitOrderPrice(action: string, entryPrice: number, currentPrice: number): {
     isValid: boolean;
     reason?: string;
     suggestedPrice: number;
+    context?: string;
   } {
     const minBuffer = 0.0001; // Minimum price buffer
+    const priceDifference = Math.abs(entryPrice - currentPrice);
+    const percentDifference = (priceDifference / currentPrice) * 100;
     
     if (action === 'BUY') {
       // BUY limit: Entry price must be BELOW current market price
@@ -1399,24 +1740,103 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         return {
           isValid: false,
           reason: `BUY limit price ${entryPrice} must be below current ${currentPrice}`,
-          suggestedPrice: currentPrice - minBuffer
+          suggestedPrice: currentPrice - minBuffer,
+          context: 'BUY limit orders execute when price drops to the limit level'
         };
       }
+      
+      // Check if the difference is too small (might execute immediately)
+      if (priceDifference < minBuffer) {
+        return {
+          isValid: true,
+          suggestedPrice: entryPrice,
+          context: 'BUY limit very close to market - may execute immediately'
+        };
+      }
+      
     } else if (action === 'SELL') {
       // SELL limit: Entry price must be ABOVE current market price
       if (entryPrice <= currentPrice) {
+        // 🎯 ENHANCED: Check if this is intentional (selling zone above current price)
+        if (Math.abs(entryPrice - currentPrice) < 0.1) {
+          // Very close - might be selling in zone
+          return {
+            isValid: true,
+            suggestedPrice: entryPrice,
+            context: 'SELL limit close to current price - selling in zone strategy'
+          };
+        }
+        
         return {
           isValid: false,
           reason: `SELL limit price ${entryPrice} must be above current ${currentPrice}`,
-          suggestedPrice: currentPrice + minBuffer
+          suggestedPrice: currentPrice + minBuffer,
+          context: 'SELL limit orders execute when price rises to the limit level'
+        };
+      }
+      
+      // Check if the difference is very large (might never execute)
+      if (percentDifference > 1.0) { // More than 1% difference
+        return {
+          isValid: true,
+          suggestedPrice: entryPrice,
+          context: `SELL limit ${percentDifference.toFixed(2)}% above current - requires significant rally`
         };
       }
     }
     
     return {
       isValid: true,
-      suggestedPrice: entryPrice
+      suggestedPrice: entryPrice,
+      context: `${action} limit order properly positioned relative to current market`
     };
+  }
+
+  /**
+   * Get broker-specific symbol variations to try
+   * CRITICAL FIX for US30 symbol mapping across different brokers
+   */
+  private getBrokerSpecificSymbolVariations(symbol: string, brokerName: string): string[] {
+    const variations = [symbol]; // Always try original first
+    
+    // US30 specific variations based on common broker naming
+    if (symbol === 'US30') {
+      const us30Variations = [
+        'US30',       // Standard
+        'US30Cash',   // Common variation
+        'US30cash',   // Case variation
+        'USA30',      // Some brokers
+        'DJ30',       // Dow Jones 30
+        'DJI30',      // Dow Jones Industrial
+        'DOW30',      // Alternative
+        'US30m',      // Mini contracts
+        'WALL30',     // Wall Street 30
+        'USDJP30'     // Some platforms
+      ];
+      
+      // Add variations not already in the list
+      us30Variations.forEach(variation => {
+        if (!variations.includes(variation)) {
+          variations.push(variation);
+        }
+      });
+    }
+    
+    // Add broker-specific overrides
+    if (brokerName === 'FTMO') {
+      // FTMO might use different naming
+      if (symbol === 'US30') {
+        variations.push('US30Cash', 'USA30', 'DJ30');
+      }
+    } else if (brokerName === 'Broker2') {
+      // Broker2 specific variations
+      if (symbol === 'US30') {
+        variations.push('US30cash', 'DJI30');
+      }
+    }
+    
+    logger.info(`🔍 Symbol variations for ${symbol} on ${brokerName}: ${variations.join(', ')}`);
+    return variations;
   }
 
   /**

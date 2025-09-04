@@ -148,7 +148,46 @@ export class ChartColorAnalysisML {
    * Identify grey entry zone from price distribution (improved logic)
    */
   private static identifyGreyEntryZone(sortedPrices: number[], ocrText: string): { min: number; max: number; confidence: number } | null {
-    if (sortedPrices.length < 3) return null;
+    if (sortedPrices.length < 1) return null;
+
+    // 🎯 ENHANCED: Single Grey Level Detection (for precise chart scale levels)
+    // Look for specific price context that indicates a single entry level
+    const singleEntryPattern = /(?:entry|level|grey|gray|zone).*?(\d{4,6}\.\d{2,5})/gi;
+    const singleEntryMatches = [...ocrText.matchAll(singleEntryPattern)];
+    
+    if (singleEntryMatches.length === 1) {
+      const singlePrice = parseFloat(singleEntryMatches[0][1]);
+      if (sortedPrices.includes(singlePrice)) {
+        const buffer = singlePrice * 0.0005; // 0.05% buffer for single level
+        logger.info(`🎯 Single grey entry level detected: ${singlePrice}`);
+        return {
+          min: singlePrice - buffer,
+          max: singlePrice + buffer,
+          confidence: 0.95 // Very high confidence for single level
+        };
+      }
+    }
+
+    // Original multi-level logic for backward compatibility
+    if (sortedPrices.length < 3) {
+      // Handle case with only 1-2 prices - treat as single entry zone
+      if (sortedPrices.length === 1) {
+        const singlePrice = sortedPrices[0];
+        const buffer = singlePrice * 0.0005;
+        return {
+          min: singlePrice - buffer,
+          max: singlePrice + buffer,
+          confidence: 0.90
+        };
+      }
+      // Two prices - use as min/max
+      const [min, max] = [sortedPrices[0], sortedPrices[1]];
+      return {
+        min: min,
+        max: max,
+        confidence: 0.85
+      };
+    }
 
     // Look for text context that mentions entry/buying/selling area
     const entryKeywords = ['best buying area', 'selling area', 'entry zone', 'grey zone', 'buying zone', 'buying area', 'demand zone'];

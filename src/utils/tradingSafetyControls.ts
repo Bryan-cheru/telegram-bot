@@ -22,6 +22,8 @@ export class TradingSafetyControls {
   private limits: SafetyLimits;
   private state: TradingState;
   private tradeHistory: Array<{ timestamp: Date; pnl: number; volume: number }> = [];
+  private resetTimeout: NodeJS.Timeout | null = null;
+  private dailyResetInterval: NodeJS.Timeout | null = null;
 
   private constructor() {
     // Default safety limits - should be configurable
@@ -215,17 +217,26 @@ export class TradingSafetyControls {
    * Schedule daily reset at midnight
    */
   private scheduleReset(): void {
+    // Clear previous timers if any
+    if (this.resetTimeout) {
+      clearTimeout(this.resetTimeout);
+      this.resetTimeout = null;
+    }
+    if (this.dailyResetInterval) {
+      clearInterval(this.dailyResetInterval);
+      this.dailyResetInterval = null;
+    }
+
     const now = new Date();
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
-    
     const msUntilMidnight = tomorrow.getTime() - now.getTime();
-    
-    setTimeout(() => {
+
+    this.resetTimeout = setTimeout(() => {
       this.resetDailyCounters();
       // Schedule next reset
-      setInterval(() => this.resetDailyCounters(), 24 * 60 * 60 * 1000);
+      this.dailyResetInterval = setInterval(() => this.resetDailyCounters(), 24 * 60 * 60 * 1000);
     }, msUntilMidnight);
   }
 

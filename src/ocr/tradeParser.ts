@@ -43,9 +43,9 @@ export class TradeParser {
       // Combine text and caption for analysis
       const fullText = caption ? `${text}\n${caption}` : text;
       
-      // Check if this is a result/update message that shouldn't be traded
-      if (this.isResultOrUpdateMessage(fullText)) {
-        logger.info('📊 Detected result/update message - skipping trade signal parsing');
+      // Check if this is a RESULT message that shouldn't be traded (UPDATE messages ARE tradeable!)
+      if (this.isResultMessage(fullText)) {
+        logger.info('📊 Detected result message - skipping trade signal parsing');
         return null;
       }
       
@@ -262,12 +262,13 @@ export class TradeParser {
   }
 
   /**
-   * Check if the message is a result/update post that shouldn't trigger trades
+   * Check if the message is a RESULT post that shouldn't trigger trades
+   * UPDATE messages ARE tradeable and should be processed!
    */
-  public isResultOrUpdateMessage(text: string): boolean {
+  public isResultMessage(text: string): boolean {
     const lowerText = text.toLowerCase();
     
-    // Keywords that indicate this is a result/update message
+    // Keywords that indicate this is a RESULT message (completed trades only)
     const resultKeywords = [
       'result update',
       'results update', 
@@ -314,7 +315,7 @@ export class TradeParser {
     const hasCompletedMove = lowerText.includes('entry: ') && lowerText.includes('→') && lowerText.includes('target hit:');
     
     if (hasResultKeyword || hasPastTenseTrading || hasCompletedMove) {
-      logger.info('🚫 Identified result/update message - contains:', {
+      logger.info('🚫 Identified RESULT message (completed trade) - contains:', {
         resultKeyword: hasResultKeyword,
         pastTenseTrading: hasPastTenseTrading,
         completedMove: hasCompletedMove,
@@ -323,6 +324,9 @@ export class TradeParser {
       return true;
     }
     
+    // IMPORTANT: UPDATE messages are NOT results - they are new trade signals!
+    // Messages like "#XAUUSD (Update)" or "Next move on the way" are TRADEABLE
+    logger.debug('✅ Not a result message - proceeding with signal parsing');
     return false;
   }
 

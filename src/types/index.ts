@@ -15,6 +15,7 @@ export interface TradeSignal {
   requiresChartAnalysis?: boolean; // Flag for chart-based signals
   reason?: string;
   plan?: string;
+  confidence?: number; // OCR parsing confidence score (0-1)
   positionSizing?: {
     lotSize: number;
     riskAmount: number;

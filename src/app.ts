@@ -2,20 +2,45 @@ import { TelegramBot } from './bot/bot';
 import { config, validateConfig, debugConfig } from './utils/config';
 import { logger } from './utils/logger';
 import * as http from 'http';
-import dashboardApp, { updateBotStatus, addLog } from './dashboard/server';
+import dashboardApp, { updateBotStatus, addLog, setSharedExecutor } from './dashboard/server';
 
 // Prevent double initialization
 let isInitialized = false;
 
 // Global error handlers to prevent unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', { promise, reason });
+  logger.error('🚨 CRITICAL: Unhandled Rejection detected', { promise, reason });
+  // Don't exit immediately - log the error but continue
+  if (typeof reason === 'object' && reason !== null) {
+    logger.error('Rejection details:', JSON.stringify(reason, null, 2));
+  }
 });
 
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
+  logger.error('🚨 FATAL: Uncaught Exception - System will exit', error);
+  // Try to cleanup before exit
+  setTimeout(() => {
+    process.exit(1);
+  }, 5000); // 5 second grace period for cleanup
 });
+
+// Dead man's switch - monitor bot health
+let lastHeartbeat = Date.now();
+const HEARTBEAT_INTERVAL = 60000; // 1 minute
+const HEARTBEAT_TIMEOUT = 600000; // 10 minutes (increased from 5)
+
+setInterval(() => {
+  const timeSinceLastBeat = Date.now() - lastHeartbeat;
+  if (timeSinceLastBeat > HEARTBEAT_TIMEOUT) {
+    logger.error('🚨 DEAD MAN\'S SWITCH: Bot unresponsive for too long - forcing restart');
+    process.exit(1);
+  }
+}, HEARTBEAT_INTERVAL);
+
+// Function to update heartbeat
+const updateHeartbeat = () => {
+  lastHeartbeat = Date.now();
+};
 
 // Combined server for health check and dashboard
 const createServer = (): http.Server => {
@@ -94,7 +119,14 @@ async function main(): Promise<void> {
     // Create and start bot
     const bot = new TelegramBot();
     
+    // Share the bot's executor with the dashboard
+    setSharedExecutor(bot.getTradeExecutor());
+    
     await bot.start();
+    
+    // Start heartbeat monitoring
+    setInterval(updateHeartbeat, 30000); // Update every 30 seconds
+    updateHeartbeat(); // Initial heartbeat
     
     // Update bot status after successful start
     updateBotStatus({

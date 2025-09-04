@@ -3,7 +3,6 @@ import path from 'path';
 import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
-import { MetaApiTradeExecutor } from '../mt5/metaApiTradeExecutor';
 import { MultiAccountMetaApiExecutor } from '../mt5/multiAccountMetaApiExecutor';
 
 const app = express();
@@ -27,25 +26,38 @@ let botStatus = {
   }
 };
 
-// MT5 Integration - Single instance to maintain connection
-let metaApiExecutor: MetaApiTradeExecutor | null = null;
+// MT5 Integration - Multi-Account for dashboard
 let multiAccountExecutor: MultiAccountMetaApiExecutor | null = null;
-let mt5AccountInfo: any = null;
-let mt5Positions: any[] = [];
+let mt5AccountsData: any[] = [];
 let mt5LastUpdate = 0;
 
-// Initialize MT5 connection
+// Import the shared executor instance
+export const setSharedExecutor = (executor: MultiAccountMetaApiExecutor) => {
+  multiAccountExecutor = executor;
+};
+
+// Initialize MT5 connection for dashboard (use shared instance)
 const initializeMT5 = async () => {
   try {
-    if (!metaApiExecutor) {
-      metaApiExecutor = new MetaApiTradeExecutor();
-      await metaApiExecutor.initialize();
+    if (!multiAccountExecutor) {
+      addLog({
+        level: 'warn',
+        message: '⚠️ No shared MT5 executor available for dashboard'
+      });
+      return false;
+    }
+
+    // Check if the shared executor is already initialized
+    const isConnected = await multiAccountExecutor.isConnected();
+    if (isConnected) {
       addLog({
         level: 'info',
-        message: '📊 MT5 Dashboard Integration initialized'
+        message: '📊 Using shared MT5 executor for dashboard integration'
       });
+      return true;
     }
-    return true;
+
+    return false;
   } catch (error) {
     addLog({
       level: 'error',
@@ -55,68 +67,48 @@ const initializeMT5 = async () => {
   }
 };
 
-// Initialize Multi-Account executor
-const initializeMultiAccount = async () => {
-  try {
-    if (!multiAccountExecutor) {
-      multiAccountExecutor = new MultiAccountMetaApiExecutor();
-      await multiAccountExecutor.initialize();
-      addLog({
-        level: 'info',
-        message: '🌐 Multi-Account Dashboard Integration initialized'
-      });
-    }
-    return true;
-  } catch (error) {
-    addLog({
-      level: 'error',
-      message: `❌ Multi-Account Dashboard Integration failed: ${error}`
-    });
-    return false;
-  }
-};
-
 // Update MT5 data periodically
 const updateMT5Data = async () => {
-  if (!metaApiExecutor) return;
+  if (!multiAccountExecutor) return;
   
   try {
-    const isConnected = await metaApiExecutor.isConnected();
+    const isConnected = await multiAccountExecutor.isConnected();
     if (!isConnected) return;
     
-    // Update account info
-    const accountInfo = await metaApiExecutor.getAccountInfo();
-    if (accountInfo) {
-      mt5AccountInfo = {
-        ...accountInfo,
-        lastUpdate: Date.now()
-      };
-    }
-    
-    // Update positions
-    const positions = await metaApiExecutor.getOpenPositions();
-    mt5Positions = positions.map((pos: any) => ({
-      ...pos,
-      unrealizedProfit: pos.unrealizedProfit || 0,
-      profit: pos.profit || 0,
-      commission: pos.commission || 0,
-      swap: pos.swap || 0,
+    // Get all accounts data (includes balance, equity, positions, etc.)
+    const accountsData = await multiAccountExecutor.getAllAccountsData();
+    mt5AccountsData = accountsData.map((account: any) => ({
+      ...account,
       lastUpdate: Date.now()
     }));
     
     mt5LastUpdate = Date.now();
     
   } catch (error) {
-    console.error('Error updating MT5 data:', error);
+    console.error('Error updating Multi-Account MT5 data:', error);
   }
 };
 
 // Start MT5 data updates
+let updateInterval: NodeJS.Timeout | null = null;
+
 const startMT5Updates = () => {
+  // Clear existing interval if any
+  if (updateInterval) {
+    clearInterval(updateInterval);
+  }
   // Update every 30 seconds instead of 10 to reduce log noise
-  setInterval(updateMT5Data, 30000);
+  updateInterval = setInterval(updateMT5Data, 30000);
   // Initial update
   updateMT5Data();
+};
+
+// Clean shutdown function
+const stopMT5Updates = () => {
+  if (updateInterval) {
+    clearInterval(updateInterval);
+    updateInterval = null;
+  }
 };
 
 // ========== MULTI-ACCOUNT HELPER FUNCTIONS ==========
@@ -126,7 +118,7 @@ const getMultiAccountData = async () => {
   try {
     // Initialize multi-account executor if not already done
     if (!multiAccountExecutor) {
-      const initialized = await initializeMultiAccount();
+      const initialized = await initializeMT5();
       if (!initialized || !multiAccountExecutor) {
         console.log('❌ Multi-account executor not initialized');
         return [];
@@ -275,9 +267,9 @@ app.get('/api/config', (req, res) => {
 // Get MT5 account information (balance, equity, margin, etc.)
 app.get('/api/mt5/account', async (req, res) => {
   try {
-    if (!metaApiExecutor) {
+    if (!multiAccountExecutor) {
       const initialized = await initializeMT5();
-      if (!initialized || !metaApiExecutor) {
+      if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'MT5 connection not available',
           connected: false 
@@ -285,7 +277,7 @@ app.get('/api/mt5/account', async (req, res) => {
       }
     }
 
-    const isConnected = await metaApiExecutor.isConnected();
+    const isConnected = await multiAccountExecutor.isConnected();
     if (!isConnected) {
       return res.status(503).json({ 
         error: 'MT5 not connected',
@@ -294,15 +286,27 @@ app.get('/api/mt5/account', async (req, res) => {
     }
 
     // Return cached data if recent, otherwise fetch fresh
-    const shouldUpdate = !mt5AccountInfo || (Date.now() - mt5LastUpdate) > 30000; // 30 seconds
+    const shouldUpdate = !mt5AccountsData.length || (Date.now() - mt5LastUpdate) > 30000; // 30 seconds
     if (shouldUpdate) {
       await updateMT5Data();
     }
 
+    // Calculate aggregate account data from all accounts
+    const totalBalance = mt5AccountsData.reduce((sum, account) => sum + (account.balance || 0), 0);
+    const totalEquity = mt5AccountsData.reduce((sum, account) => sum + (account.equity || 0), 0);
+    const totalFreeMargin = mt5AccountsData.reduce((sum, account) => sum + (account.freeMargin || 0), 0);
+    
     res.json({
       success: true,
       connected: true,
-      account: mt5AccountInfo || {},
+      accounts: mt5AccountsData,
+      summary: {
+        totalBalance,
+        totalEquity,
+        totalFreeMargin,
+        accountCount: mt5AccountsData.length,
+        connectedAccounts: mt5AccountsData.filter(acc => acc.status === 'CONNECTED').length
+      },
       lastUpdate: mt5LastUpdate
     });
 
@@ -318,9 +322,9 @@ app.get('/api/mt5/account', async (req, res) => {
 // Get MT5 open positions
 app.get('/api/mt5/positions', async (req, res) => {
   try {
-    if (!metaApiExecutor) {
+    if (!multiAccountExecutor) {
       const initialized = await initializeMT5();
-      if (!initialized || !metaApiExecutor) {
+      if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'MT5 connection not available',
           positions: [] 
@@ -328,7 +332,7 @@ app.get('/api/mt5/positions', async (req, res) => {
       }
     }
 
-    const isConnected = await metaApiExecutor.isConnected();
+    const isConnected = await multiAccountExecutor.isConnected();
     if (!isConnected) {
       return res.status(503).json({ 
         error: 'MT5 not connected',
@@ -337,16 +341,27 @@ app.get('/api/mt5/positions', async (req, res) => {
     }
 
     // Return cached data if recent, otherwise fetch fresh
-    const shouldUpdate = !mt5Positions.length || (Date.now() - mt5LastUpdate) > 15000; // 15 seconds
+    const shouldUpdate = !mt5AccountsData.length || (Date.now() - mt5LastUpdate) > 15000; // 15 seconds
     if (shouldUpdate) {
       await updateMT5Data();
     }
 
+    // Aggregate all positions from all accounts
+    const allPositions = mt5AccountsData.reduce((positions: any[], account) => {
+      return positions.concat(account.positions || []);
+    }, []);
+
     res.json({
       success: true,
       connected: true,
-      positions: mt5Positions,
-      count: mt5Positions.length,
+      positions: allPositions,
+      count: allPositions.length,
+      accountBreakdown: mt5AccountsData.map(account => ({
+        brokerName: account.brokerName,
+        accountType: account.accountType,
+        status: account.status,
+        positionCount: account.positions ? account.positions.length : 0
+      })),
       lastUpdate: mt5LastUpdate
     });
 
@@ -362,16 +377,16 @@ app.get('/api/mt5/positions', async (req, res) => {
 // Get MT5 trading summary/statistics
 app.get('/api/mt5/summary', async (req, res) => {
   try {
-    if (!metaApiExecutor) {
+    if (!multiAccountExecutor) {
       const initialized = await initializeMT5();
-      if (!initialized || !metaApiExecutor) {
+      if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'MT5 connection not available' 
         });
       }
     }
 
-    const isConnected = await metaApiExecutor.isConnected();
+    const isConnected = await multiAccountExecutor.isConnected();
     if (!isConnected) {
       return res.status(503).json({ 
         error: 'MT5 not connected' 
@@ -381,43 +396,55 @@ app.get('/api/mt5/summary', async (req, res) => {
     // Ensure we have fresh data
     await updateMT5Data();
 
-    // Calculate summary statistics
-    const totalUnrealizedPL = mt5Positions.reduce((sum, pos) => sum + (pos.unrealizedProfit || 0), 0);
-    const totalCommission = mt5Positions.reduce((sum, pos) => sum + (pos.commission || 0), 0);
-    const totalSwap = mt5Positions.reduce((sum, pos) => sum + (pos.swap || 0), 0);
+    // Aggregate all positions from all accounts
+    const allPositions = mt5AccountsData.reduce((positions: any[], account) => {
+      return positions.concat(account.positions || []);
+    }, []);
+
+    // Calculate summary statistics across all accounts
+    const totalUnrealizedPL = allPositions.reduce((sum: number, pos: any) => sum + (pos.unrealizedProfit || 0), 0);
+    const totalCommission = allPositions.reduce((sum: number, pos: any) => sum + (pos.commission || 0), 0);
+    const totalSwap = allPositions.reduce((sum: number, pos: any) => sum + (pos.swap || 0), 0);
     
-    const buyPositions = mt5Positions.filter(pos => pos.type === 'POSITION_TYPE_BUY').length;
-    const sellPositions = mt5Positions.filter(pos => pos.type === 'POSITION_TYPE_SELL').length;
+    const buyPositions = allPositions.filter((pos: any) => pos.type === 'POSITION_TYPE_BUY').length;
+    const sellPositions = allPositions.filter((pos: any) => pos.type === 'POSITION_TYPE_SELL').length;
     
-    const marginUsed = mt5AccountInfo?.margin || 0;
-    const marginFree = mt5AccountInfo?.freeMargin || 0;
-    const marginLevel = marginUsed > 0 ? ((mt5AccountInfo?.equity || 0) / marginUsed) * 100 : 0;
+    // Aggregate account data
+    const totalBalance = mt5AccountsData.reduce((sum: number, account: any) => sum + (account.balance || 0), 0);
+    const totalEquity = mt5AccountsData.reduce((sum: number, account: any) => sum + (account.equity || 0), 0);
+    const totalMarginUsed = mt5AccountsData.reduce((sum: number, account: any) => sum + (account.margin || 0), 0);
+    const totalFreeMargin = mt5AccountsData.reduce((sum: number, account: any) => sum + (account.freeMargin || 0), 0);
+    const avgMarginLevel = totalMarginUsed > 0 ? (totalEquity / totalMarginUsed) * 100 : 0;
 
     res.json({
       success: true,
       connected: true,
       summary: {
         account: {
-          balance: mt5AccountInfo?.balance || 0,
-          equity: mt5AccountInfo?.equity || 0,
-          margin: marginUsed,
-          freeMargin: marginFree,
-          marginLevel: marginLevel,
-          currency: mt5AccountInfo?.currency || 'USD'
+          totalBalance,
+          totalEquity,
+          totalMargin: totalMarginUsed,
+          totalFreeMargin,
+          avgMarginLevel,
+          accountCount: mt5AccountsData.length,
+          connectedAccounts: mt5AccountsData.filter((acc: any) => acc.status === 'CONNECTED').length
         },
         positions: {
-          total: mt5Positions.length,
+          total: allPositions.length,
           buy: buyPositions,
           sell: sellPositions,
-          totalUnrealizedPL: totalUnrealizedPL,
-          totalCommission: totalCommission,
-          totalSwap: totalSwap
+          totalUnrealizedPL,
+          totalCommission,
+          totalSwap
         },
-        performance: {
-          dailyPL: totalUnrealizedPL, // This would need historical data for actual daily P&L
-          weeklyPL: totalUnrealizedPL, // This would need historical data
-          monthlyPL: totalUnrealizedPL // This would need historical data
-        }
+        accounts: mt5AccountsData.map((account: any) => ({
+          brokerName: account.brokerName,
+          accountType: account.accountType,
+          status: account.status,
+          balance: account.balance || 0,
+          equity: account.equity || 0,
+          positionCount: account.positions ? account.positions.length : 0
+        }))
       },
       lastUpdate: mt5LastUpdate
     });
@@ -431,24 +458,24 @@ app.get('/api/mt5/summary', async (req, res) => {
 });
 
 // Close a specific position
-app.post('/api/mt5/positions/:positionId/close', async (req, res) => {
+app.post('/api/mt5/positions/:accountId/:positionId/close', async (req, res) => {
   try {
-    const { positionId } = req.params;
+    const { accountId, positionId } = req.params;
     
-    if (!metaApiExecutor) {
+    if (!multiAccountExecutor) {
       return res.status(503).json({ 
         error: 'MT5 connection not available' 
       });
     }
 
-    const isConnected = await metaApiExecutor.isConnected();
+    const isConnected = await multiAccountExecutor.isConnected();
     if (!isConnected) {
       return res.status(503).json({ 
         error: 'MT5 not connected' 
       });
     }
 
-    const result = await metaApiExecutor.closePosition(positionId);
+    const result = await multiAccountExecutor.closePosition(accountId, positionId);
     
     if (result) {
       // Update positions after closing
@@ -456,7 +483,7 @@ app.post('/api/mt5/positions/:positionId/close', async (req, res) => {
       
       addLog({
         level: 'info',
-        message: `✅ Position ${positionId} closed via dashboard`
+        message: `✅ Position ${positionId} on account ${accountId} closed via dashboard`
       });
 
       res.json({
@@ -486,7 +513,7 @@ app.get('/api/mt5/status', async (req, res) => {
     let initializationStatus = 'not_initialized';
     
     // First, ensure MT5 is initialized
-    if (!metaApiExecutor) {
+    if (!multiAccountExecutor) {
       console.log('🔄 MT5 not initialized, attempting initialization...');
       const initialized = await initializeMT5();
       initializationStatus = initialized ? 'initialized' : 'failed';
@@ -494,9 +521,9 @@ app.get('/api/mt5/status', async (req, res) => {
       initializationStatus = 'initialized';
     }
     
-    if (metaApiExecutor) {
+    if (multiAccountExecutor) {
       try {
-        connected = await metaApiExecutor.isConnected();
+        connected = await multiAccountExecutor.isConnected();
         if (connected) {
           accountStatus = 'connected';
         } else {
@@ -513,9 +540,11 @@ app.get('/api/mt5/status', async (req, res) => {
       status: accountStatus,
       initialization: initializationStatus,
       lastUpdate: mt5LastUpdate,
-      hasData: !!mt5AccountInfo,
-      positionsCount: mt5Positions.length,
-      executor: !!metaApiExecutor
+      hasData: mt5AccountsData.length > 0,
+      accountsCount: mt5AccountsData.length,
+      connectedAccountsCount: mt5AccountsData.filter((acc: any) => acc.status === 'CONNECTED').length,
+      totalPositions: mt5AccountsData.reduce((sum: number, acc: any) => sum + (acc.positions?.length || 0), 0),
+      executor: !!multiAccountExecutor
     });
 
   } catch (error) {
@@ -532,7 +561,7 @@ app.get('/api/mt5/status', async (req, res) => {
 // Force refresh MT5 data
 app.post('/api/mt5/refresh', async (req, res) => {
   try {
-    if (!metaApiExecutor) {
+    if (!multiAccountExecutor) {
       const initialized = await initializeMT5();
       if (!initialized) {
         return res.status(503).json({ 
@@ -563,7 +592,7 @@ app.post('/api/mt5/refresh', async (req, res) => {
 app.get('/api/mt5/trade-history', async (req, res) => {
   try {
     if (!multiAccountExecutor) {
-      const initialized = await initializeMultiAccount();
+      const initialized = await initializeMT5();
       if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'Multi-account executor not available' 
@@ -613,7 +642,7 @@ app.get('/api/mt5/trade-history', async (req, res) => {
 app.get('/api/mt5/performance/:accountId', async (req, res) => {
   try {
     if (!multiAccountExecutor) {
-      const initialized = await initializeMultiAccount();
+      const initialized = await initializeMT5();
       if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'Multi-account executor not available' 
@@ -661,7 +690,7 @@ app.get('/api/mt5/performance/:accountId', async (req, res) => {
 app.get('/api/mt5/performance-all', async (req, res) => {
   try {
     if (!multiAccountExecutor) {
-      const initialized = await initializeMultiAccount();
+      const initialized = await initializeMT5();
       if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'Multi-account executor not available' 
@@ -702,7 +731,7 @@ app.get('/api/mt5/performance-all', async (req, res) => {
 app.get('/api/mt5/trade-summary', async (req, res) => {
   try {
     if (!multiAccountExecutor) {
-      const initialized = await initializeMultiAccount();
+      const initialized = await initializeMT5();
       if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({ 
           error: 'Multi-account executor not available' 
@@ -820,7 +849,7 @@ app.post('/api/close-trade/:accountId/:tradeId', async (req, res) => {
     
     // Initialize multi-account executor if not already done
     if (!multiAccountExecutor) {
-      const initialized = await initializeMultiAccount();
+      const initialized = await initializeMT5();
       if (!initialized || !multiAccountExecutor) {
         return res.status(503).json({
           success: false,
@@ -949,22 +978,25 @@ app.get('/api/logs/stream', (req, res) => {
 
   // Set up periodic heartbeat
   const heartbeat = setInterval(() => {
-    res.write('data: {"type":"heartbeat","timestamp":"' + new Date().toISOString() + '"}\n\n');
+    try {
+      res.write('data: {"type":"heartbeat","timestamp":"' + new Date().toISOString() + '"}\n\n');
+    } catch (error) {
+      // Client disconnected, clean up
+      clearInterval(heartbeat);
+    }
   }, 30000);
 
   // Store client connection for broadcasting new logs
-  req.on('close', () => {
+  const cleanup = () => {
     clearInterval(heartbeat);
-  });
-
-  // Store the response object to broadcast new logs
-  req.on('close', () => {
     const index = streamClients.indexOf(res);
     if (index !== -1) {
       streamClients.splice(index, 1);
     }
-    clearInterval(heartbeat);
-  });
+  };
+
+  req.on('close', cleanup);
+  req.on('error', cleanup);
   
   streamClients.push(res);
 });
@@ -1225,7 +1257,7 @@ setTimeout(() => {
   });
 
   // Initialize multi-account executor
-  initializeMultiAccount().then((success) => {
+  Promise.resolve(false).then((success) => {
     if (success) {
       addLog({
         level: 'info',
