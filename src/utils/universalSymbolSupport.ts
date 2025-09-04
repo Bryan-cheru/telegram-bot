@@ -274,6 +274,13 @@ export class UniversalSymbolSupport {
   }
 
   /**
+   * Get symbol cache for external access
+   */
+  static getSymbolCache(): BrokerSymbolData {
+    return this.symbolCache;
+  }
+
+  /**
    * Check if symbol is supported by any broker
    */
   static isSymbolSupported(symbol: string): boolean {

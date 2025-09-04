@@ -20,6 +20,7 @@ export const config = {
     accounts: process.env.METAAPI_ACCOUNTS || '' // New multi-account support
   },
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
+  allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
   trading: {
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '0.1'),
     riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '2'),

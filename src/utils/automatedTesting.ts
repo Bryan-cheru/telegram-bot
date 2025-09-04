@@ -134,7 +134,7 @@ export class AutomatedTestSuite {
       
       switch (testCase.category) {
         case 'PARSING':
-          actualOutput = this.tradeParser.parseTradeSignal(testCase.input);
+          actualOutput = await this.tradeParser.parseTradeSignal(testCase.input);
           break;
           
         case 'VALIDATION':
@@ -403,7 +403,7 @@ export class AutomatedTestSuite {
     const { text, accountEquity } = testCase.input;
     
     // Step 1: Parse signal
-    const signal = this.tradeParser.parseTradeSignal(text);
+    const signal = await this.tradeParser.parseTradeSignal(text);
     if (!signal) return { step: 'parsing', success: false };
     
     // Step 2: Validate signal

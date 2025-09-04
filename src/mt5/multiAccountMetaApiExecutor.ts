@@ -22,6 +22,7 @@ import { PositionSizingValidator } from '../utils/positionSizingValidator';
 import { CrashRecoveryDatabase } from '../utils/crashRecoveryDatabase';
 import { RealTimeAlertSystem } from '../utils/realTimeAlertSystem';
 import { PerformanceMonitor } from '../utils/performanceMonitor';
+import { DynamicSymbolExtractor } from '../ocr/dynamicSymbolExtractor';
 
 interface AccountConfig {
   id: string;
@@ -185,6 +186,10 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     logger.info('🌍 Starting background symbol discovery...');
     await UniversalSymbolSupport.discoverAllSymbols(this.accounts);
     
+    // Initialize dynamic symbol extractor with discovered symbols
+    logger.info('🔄 Initializing dynamic symbol extraction...');
+    await DynamicSymbolExtractor.initialize(this.accounts);
+    
     const report = UniversalSymbolSupport.generateSymbolReport();
     logger.info(report);
   }
@@ -196,6 +201,10 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         logger.info('🔄 Background: Finalizing symbol discovery...');
         await this.waitForPartialSynchronization(); // Shorter wait
         await UniversalSymbolSupport.discoverAllSymbols(this.accounts);
+        
+        // Re-initialize dynamic symbol extractor with complete data
+        await DynamicSymbolExtractor.initialize(this.accounts);
+        
         const report = UniversalSymbolSupport.generateSymbolReport();
         logger.info('🎯 Background symbol discovery completed:', report);
       } catch (error) {
@@ -899,7 +908,7 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
         logger.info(`🤖 Smart Override ML (${accountConfig.brokerName}):`, {
           shouldOverride: overrideDecision.shouldOverride,
           confidence: `${(overrideDecision.confidence * 100).toFixed(1)}%`,
-          reasoning: overrideDecision.reasoning
+          reasoning: overrideDecision.reason
         });
       }
 

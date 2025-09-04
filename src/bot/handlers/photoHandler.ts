@@ -85,12 +85,12 @@ export class PhotoHandler {
           } catch (visualError) {
             logger.error('❌ Visual ML failed, trying text-based parsing:', visualError);
             // Fallback to text-based parsing
-            tradeSignal = this.tradeParser.parseTradeSignal(message.caption);
+            tradeSignal = await this.tradeParser.parseTradeSignal(message.caption);
           }
         } else {
           // No instrument in caption, try text-based parsing
           logger.info('No instrument found in caption, using text-based parsing');
-          tradeSignal = this.tradeParser.parseTradeSignal(message.caption);
+          tradeSignal = await this.tradeParser.parseTradeSignal(message.caption);
         }
       } else {
         // No caption, extract text from image using OCR
@@ -105,7 +105,7 @@ export class PhotoHandler {
           return;
         }
         
-        tradeSignal = this.tradeParser.parseTradeSignal(ocrResult.text);
+        tradeSignal = await this.tradeParser.parseTradeSignal(ocrResult.text);
       }
 
       // Validate trade signal

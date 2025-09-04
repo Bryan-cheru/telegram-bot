@@ -1,5 +1,6 @@
 import { TradeSignal, TradeAction, OrderType } from '../types';
 import { logger } from '../utils/logger';
+import { DynamicSymbolExtractor } from './dynamicSymbolExtractor';
 
 /**
  * CLEAN REAL-WORLD TRADE PARSER
@@ -15,7 +16,7 @@ export class RealWorldTradeParser {
   /**
    * Parse your actual signal format with enhanced error handling
    */
-  parseTradeSignal(text: string, caption?: string): TradeSignal | null {
+  async parseTradeSignal(text: string, caption?: string): Promise<TradeSignal | null> {
     try {
       logger.info('🎯 Parsing real-world trading signal...');
       
@@ -31,12 +32,13 @@ export class RealWorldTradeParser {
         return null;
       }
 
-      // Extract symbol from hashtag
-      const symbol = this.extractSymbol(fullText);
+      // Extract symbol from hashtag - USE DYNAMIC BROKER SYMBOLS
+      const symbol = await DynamicSymbolExtractor.extractSymbolFromText(fullText);
       if (!symbol) {
-        logger.error('❌ OCR FAILURE: No trading symbol found', { 
+        logger.error('❌ OCR FAILURE: No trading symbol found in broker symbol lists', { 
           text: fullText.substring(0, 100),
-          confidence: 'LOW' 
+          confidence: 'LOW',
+          availableSymbols: Object.keys(DynamicSymbolExtractor.getAllAvailableSymbols()).length
         });
         return this.fallbackSymbolDetection(fullText);
       }

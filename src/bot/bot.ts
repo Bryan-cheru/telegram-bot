@@ -44,9 +44,19 @@ export class TelegramBot {
 
     // Handle channel posts specifically (channels work differently than groups)
     this.bot.on('channel_post', (ctx) => {
-      logger.info(`Channel post received from ${ctx.chat?.id} (${ctx.chat?.title})`);
-      if (ctx.chat?.id.toString() === config.allowedChannelId) {
-        logger.info('Channel post from configured channel!');
+      logger.info(`Channel post received from ${ctx.chat?.id} (${ctx.chat?.title}) Username: ${(ctx.chat as any)?.username}`);
+      
+      // Check by both channel ID and username
+      const channelUsername = (ctx.chat as any)?.username;
+      const isAllowedChannel = 
+        ctx.chat?.id.toString() === config.allowedChannelId ||
+        (channelUsername && config.allowedChannelUsername && channelUsername === config.allowedChannelUsername);
+      
+      if (isAllowedChannel) {
+        logger.info(`✅ Channel post from configured channel!`);
+        if (channelUsername) {
+          logger.info(`📝 Channel username: @${channelUsername}`);
+        }
         
         // Debug: Log what's in the channel post
         logger.info(`Channel post content type: ${JSON.stringify(Object.keys(ctx.channelPost))}`);
@@ -79,6 +89,41 @@ export class TelegramBot {
 
     // Debug: Log all messages to see what the bot receives
     this.bot.on('message', (ctx) => {
+      // Check if message is forwarded from a channel
+      if (ctx.message && 'forward_from_chat' in ctx.message && ctx.message.forward_from_chat) {
+        const forwardedFrom = ctx.message.forward_from_chat as any;
+        
+        if (forwardedFrom.type === 'channel') {
+          const channelUsername = forwardedFrom.username;
+          const channelId = forwardedFrom.id?.toString();
+          
+          logger.info(`📨 Forwarded message from channel: @${channelUsername} (ID: ${channelId})`);
+          
+          // Check if forwarded from our target channel
+          const isFromTargetChannel = 
+            (config.allowedChannelId && channelId === config.allowedChannelId) ||
+            (config.allowedChannelUsername && channelUsername === config.allowedChannelUsername);
+          
+          if (isFromTargetChannel) {
+            logger.info(`✅ Forwarded message from target channel detected!`);
+            
+            // Handle the forwarded message like a channel post
+            if ('text' in ctx.message && ctx.message.text) {
+              logger.info('📝 Processing forwarded text message');
+              this.handleTextMessage(ctx);
+              return;
+            } else if ('photo' in ctx.message && ctx.message.photo) {
+              logger.info('📸 Processing forwarded photo message');
+              this.photoHandler.handlePhoto(ctx);
+              return;
+            }
+          } else {
+            logger.info(`⚠️ Forwarded from different channel. Expected: @${config.allowedChannelUsername} or ID:${config.allowedChannelId}`);
+          }
+        }
+      }
+
+      // Regular message logging
       logger.info(`Message received from chat ${ctx.chat?.id} (type: ${ctx.chat?.type})`);
       logger.info(`Expected channel ID: ${config.allowedChannelId}`);
       logger.info(`Chat ID matches: ${ctx.chat?.id.toString() === config.allowedChannelId}`);
@@ -99,9 +144,34 @@ export class TelegramBot {
 
   private async handleTextMessage(ctx: any): Promise<void> {
     try {
-      // Check if message is from allowed channel
-      if (ctx.chat?.id.toString() !== config.allowedChannelId) {
-        logger.warn(`Text message received from unauthorized channel: ${ctx.chat?.id}`);
+      // Check if message is from allowed channel (by ID or username)
+      const chatId = ctx.chat?.id.toString();
+      const chatUsername = (ctx.chat as any)?.username;
+      
+      // For forwarded messages, check the original channel
+      let isFromAllowedChannel = false;
+      
+      if (ctx.message && 'forward_from_chat' in ctx.message && ctx.message.forward_from_chat) {
+        const forwardedFrom = ctx.message.forward_from_chat as any;
+        if (forwardedFrom.type === 'channel') {
+          const originalChannelId = forwardedFrom.id?.toString();
+          const originalChannelUsername = forwardedFrom.username;
+          
+          isFromAllowedChannel = 
+            (config.allowedChannelId && originalChannelId === config.allowedChannelId) ||
+            (config.allowedChannelUsername && originalChannelUsername === config.allowedChannelUsername) ||
+            false;
+        }
+      } else {
+        // Direct channel message
+        isFromAllowedChannel = 
+          (config.allowedChannelId && chatId === config.allowedChannelId) ||
+          (config.allowedChannelUsername && chatUsername === config.allowedChannelUsername) ||
+          false;
+      }
+
+      if (!isFromAllowedChannel) {
+        logger.warn(`Text message received from unauthorized source: ID=${chatId}, Username=@${chatUsername}`);
         return;
       }
 
@@ -125,7 +195,11 @@ export class TelegramBot {
       }
 
       // Check if message contains trading signal indicators
-      const tradingKeywords = ['#XAUUSD', '#EURUSD', '#GBPUSD', 'zone', 'buy', 'sell', 'target', 'update'];
+      const tradingKeywords = [
+        '#XAUUSD', '#EURUSD', '#GBPUSD', '#USDJPY', '#AUDUSD', '#USDCAD', '#NZDUSD', '#EURGBP',
+        '#US30', '#NAS100', '#SPX500', '#UK100', '#GER30', '#XAGUSD',
+        'zone', 'buy', 'sell', 'target', 'update', 'entry', 'stop', 'tp'
+      ];
       const containsTradingSignal = tradingKeywords.some(keyword => 
         text.toLowerCase().includes(keyword.toLowerCase())
       );
@@ -139,7 +213,7 @@ export class TelegramBot {
       const { RealWorldTradeParser } = await import('../ocr/realWorldTradeParser');
       const tradeParser = new RealWorldTradeParser();
       
-      const tradeSignal = tradeParser.parseTradeSignal(text);
+      const tradeSignal = await tradeParser.parseTradeSignal(text);
       
       if (!tradeSignal) {
         logger.warn('No valid trade signal found in text message');
@@ -245,6 +319,20 @@ export class TelegramBot {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Reduced to 1 second
       logger.info('✅ Telegram bot started successfully');
       logger.info('📱 Bot is now listening for trading signals...');
+      
+      // Log monitoring configuration
+      if (config.allowedChannelId) {
+        logger.info(`🎯 Monitoring channel by ID: ${config.allowedChannelId}`);
+      }
+      if (config.allowedChannelUsername) {
+        logger.info(`🎯 Monitoring channel by username: @${config.allowedChannelUsername}`);
+      }
+      if (!config.allowedChannelId && !config.allowedChannelUsername) {
+        logger.warn('⚠️ No channel configured for monitoring. Set ALLOWED_CHANNEL_ID or ALLOWED_CHANNEL_USERNAME');
+      }
+      
+      logger.info('💡 TIP: You can also forward messages from any channel to this bot!');
+      logger.info('Bot is running. Press Ctrl+C to stop.');
       
       // Graceful shutdown
       process.once('SIGINT', () => this.stop());
