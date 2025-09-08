@@ -520,12 +520,13 @@ class TradingDashboard {
 
   async updateMT5Dashboard() {
     try {
-      // Get MT5 summary data
+      // Get MT5 summary data with multi-account information
       const summaryResponse = await fetch('/api/mt5/summary');
       const summaryData = await summaryResponse.json();
       
       if (summaryData.success && summaryData.summary) {
         this.updateDashboardStats(summaryData.summary);
+        this.updateAccountsGrid(summaryData.summary.accounts);
       }
 
       // Get MT5 status
@@ -537,42 +538,139 @@ class TradingDashboard {
     } catch (error) {
       console.error('Error updating MT5 dashboard:', error);
       this.updateConnectionStatus({ connected: false, status: 'error' });
+      this.showAccountsError();
     }
+  }
+
+  updateAccountsGrid(accounts) {
+    const accountsGrid = document.getElementById('accounts-grid');
+    if (!accountsGrid) return;
+
+    if (!accounts || accounts.length === 0) {
+      accountsGrid.innerHTML = `
+        <div class="account-error">
+          <i class="fas fa-exclamation-triangle"></i>
+          <span>No accounts connected</span>
+        </div>
+      `;
+      return;
+    }
+
+    // Generate account cards for live accounts
+    accountsGrid.innerHTML = accounts.map(account => {
+      const isConnected = account.status === 'CONNECTED';
+      const statusClass = isConnected ? 'connected' : 'disconnected';
+      const statusIcon = isConnected ? 'fa-check-circle' : 'fa-times-circle';
+      const statusText = isConnected ? 'Connected' : 'Disconnected';
+      
+      // Show live account warning
+      const isLive = account.accountType === 'LIVE';
+      const accountTypeClass = isLive ? 'live-account' : 'demo-account';
+      const warningIcon = isLive ? '<i class="fas fa-exclamation-triangle text-danger"></i>' : '';
+      
+      return `
+        <div class="account-card ${accountTypeClass}">
+          <div class="account-header">
+            <div class="account-info">
+              <h3>${account.brokerName}</h3>
+              <div class="account-badges">
+                <span class="badge ${accountTypeClass}">
+                  ${warningIcon}
+                  ${account.accountType}
+                </span>
+                <span class="badge status-${statusClass}">
+                  <i class="fas ${statusIcon}"></i>
+                  ${statusText}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="account-stats">
+            <div class="stat-row">
+              <span class="stat-label">Balance:</span>
+              <span class="stat-value">${this.formatCurrency(account.balance)}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Equity:</span>
+              <span class="stat-value">${this.formatCurrency(account.equity)}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Open Positions:</span>
+              <span class="stat-value">${account.positionCount || 0}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">P&L:</span>
+              <span class="stat-value ${(account.equity - account.balance) >= 0 ? 'positive' : 'negative'}">
+                ${this.formatCurrency(account.equity - account.balance)}
+              </span>
+            </div>
+          </div>
+          ${isLive ? `
+            <div class="live-warning">
+              <i class="fas fa-exclamation-triangle"></i>
+              <span>Live Trading - Real Money</span>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  showAccountsError() {
+    const accountsGrid = document.getElementById('accounts-grid');
+    if (!accountsGrid) return;
+    
+    accountsGrid.innerHTML = `
+      <div class="account-error">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>Failed to load account information</span>
+        <button class="btn btn-outline btn-sm" onclick="window.dashboard.updateMT5Dashboard()">
+          <i class="fas fa-sync-alt"></i> Retry
+        </button>
+      </div>
+    `;
   }
 
   updateDashboardStats(summary) {
     const { account, positions } = summary;
     
-    // Update account balance
-    const balanceElement = document.getElementById('account-balance');
+    // Update total balance across all accounts
+    const balanceElement = document.getElementById('total-balance');
     if (balanceElement && account) {
-      balanceElement.textContent = this.formatCurrency(account.balance, account.currency);
+      balanceElement.textContent = this.formatCurrency(account.totalBalance);
     }
     
-    // Update account equity
-    const equityElement = document.getElementById('account-equity');
+    // Update total equity across all accounts
+    const equityElement = document.getElementById('total-equity');
     if (equityElement && account) {
-      equityElement.textContent = this.formatCurrency(account.equity, account.currency);
+      equityElement.textContent = this.formatCurrency(account.totalEquity);
     }
     
-    // Update unrealized P&L
-    const plElement = document.getElementById('unrealized-pl');
+    // Update unrealized P&L across all accounts
+    const plElement = document.getElementById('total-unrealized-pl');
     if (plElement && positions) {
       const plValue = positions.totalUnrealizedPL || 0;
-      plElement.textContent = this.formatCurrency(plValue, account.currency);
+      const plText = plValue >= 0 ? `+${this.formatCurrency(plValue)}` : this.formatCurrency(plValue);
+      plElement.textContent = `${plText} P&L`;
       plElement.className = plValue >= 0 ? 'stat-change positive' : 'stat-change negative';
     }
     
-    // Update open positions count
-    const positionsElement = document.getElementById('open-positions');
+    // Update total open positions across all accounts
+    const positionsElement = document.getElementById('total-positions');
     if (positionsElement && positions) {
       positionsElement.textContent = positions.total || 0;
     }
     
     // Update positions breakdown
-    const breakdownElement = document.getElementById('positions-breakdown');
+    const breakdownElement = document.getElementById('total-positions-breakdown');
     if (breakdownElement && positions) {
       breakdownElement.textContent = `${positions.buy || 0} Buy • ${positions.sell || 0} Sell`;
+    }
+
+    // Update connected accounts count
+    const accountsElement = document.getElementById('total-accounts');
+    if (accountsElement && account) {
+      accountsElement.textContent = `${account.connectedAccounts}/${account.accountCount} Connected`;
     }
     
     // Update account summary section
@@ -843,6 +941,41 @@ window.closePosition = async function(positionId) {
     console.error('Error closing position:', error);
     if (window.dashboard) {
       window.dashboard.showNotification('Failed to close position: ' + error.message, 'error');
+    }
+  }
+};
+
+// Global functions for dashboard interaction
+window.refreshAllAccountData = async function() {
+  if (window.dashboard) {
+    const btn = document.getElementById('refresh-all-accounts');
+    if (btn) {
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+      btn.disabled = true;
+      
+      try {
+        await window.dashboard.updateMT5Dashboard();
+        window.dashboard.showNotification('Account data refreshed successfully', 'success');
+      } catch (error) {
+        console.error('Error refreshing account data:', error);
+        window.dashboard.showNotification('Failed to refresh account data', 'error');
+      } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
+    }
+  }
+};
+
+window.refreshTradesData = async function() {
+  if (window.dashboard) {
+    try {
+      await window.dashboard.loadTradeHistory();
+      window.dashboard.showNotification('Trade data refreshed', 'success');
+    } catch (error) {
+      console.error('Error refreshing trade data:', error);
+      window.dashboard.showNotification('Failed to refresh trade data', 'error');
     }
   }
 };

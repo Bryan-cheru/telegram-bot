@@ -316,10 +316,12 @@ export class VisualChartAnalysisML {
     const lines = ocrText.split('\n');
     
     lines.forEach((line, index) => {
-      const linePrice = this.extractPricesFromText(line);
-      if (linePrice.length === 0) return;
+      // Use simple regex to extract price from line instead of recursive call
+      const priceMatch = line.match(/\b[1-9]\d{3,4}\.?\d{0,2}\b/);
+      if (!priceMatch) return;
 
-      const price = linePrice[0];
+      const price = parseFloat(priceMatch[0]);
+      if (!price || !this.isValidPriceForInstrument(price)) return;
       
       // Determine zone type based on context keywords
       let colorType: 'grey' | 'green' | 'red' = 'grey'; // Default
@@ -363,8 +365,12 @@ export class VisualChartAnalysisML {
       logger.info(`Pattern ${index + 1}: Found ${matches.length} matches: [${matches.slice(0, 5).join(', ')}${matches.length > 5 ? '...' : ''}]`);
       
       matches.forEach(match => {
-        const price = parseFloat(match);
+        let price = parseFloat(match);
         if (!isNaN(price) && price > 0) {
+          
+          // INTELLIGENT PRICE RECONSTRUCTION based on context and other extracted prices
+          price = this.reconstructTruncatedPrice(price, prices, text);
+          
           // Additional filtering based on instrument type
           if (this.isValidPriceForInstrument(price)) {
             prices.push(price);
@@ -397,6 +403,80 @@ export class VisualChartAnalysisML {
     if (price < 0.1 || price > 10000) return false;
     
     return true;
+  }
+
+  /**
+   * Intelligently reconstruct truncated prices based on context and existing valid prices
+   */
+  private reconstructTruncatedPrice(price: number, existingPrices: number[], text: string): number {
+    const originalPrice = price;
+    
+    // Get symbol context
+    const isGoldContext = /gold|xau|au/i.test(text);
+    const isSilverContext = /silver|xag|ag/i.test(text);
+    const isBitcoinContext = /bitcoin|btc/i.test(text);
+    const isForexContext = /eur|gbp|usd|jpy|cad|aud|nzd|chf/i.test(text);
+    
+    // Find existing valid prices to determine the expected range
+    const validPrices = existingPrices.filter(p => this.isValidPriceForInstrument(p));
+    
+    if (validPrices.length > 0) {
+      const avgPrice = validPrices.reduce((a, b) => a + b, 0) / validPrices.length;
+      const priceRange = Math.max(...validPrices) - Math.min(...validPrices);
+      
+      // Context-based reconstruction
+      if (isGoldContext && price >= 200 && price <= 999) {
+        // Gold: 590 → 3590, 2450 → 2450 (already valid)
+        const thousandsDigit = Math.floor(avgPrice / 1000);
+        const reconstructed = thousandsDigit * 1000 + price;
+        
+        if (Math.abs(reconstructed - avgPrice) <= priceRange * 2) {
+          logger.info(`🔧 Gold price reconstruction: ${originalPrice} → ${reconstructed} (context: avg=${avgPrice.toFixed(0)})`);
+          return reconstructed;
+        }
+      }
+      
+      if (isSilverContext && price >= 10 && price <= 99) {
+        // Silver: 45 → 25.45 or 2545 depending on context
+        if (avgPrice > 1000) {
+          // High Silver prices (2545.50 format)
+          const reconstructed = 2000 + price;
+          if (Math.abs(reconstructed - avgPrice) <= priceRange * 2) {
+            logger.info(`🔧 Silver price reconstruction: ${originalPrice} → ${reconstructed}`);
+            return reconstructed;
+          }
+        } else {
+          // Normal Silver prices (25.45 format)
+          const reconstructed = price / 10; // 250 → 25.0
+          if (reconstructed >= 15 && reconstructed <= 60) {
+            logger.info(`🔧 Silver price reconstruction: ${originalPrice} → ${reconstructed}`);
+            return reconstructed;
+          }
+        }
+      }
+      
+      // Generic approach: try adding missing leading digits
+      if (price >= 100 && price <= 999) {
+        // Try adding 1, 2, 3, 4 as leading digit
+        for (let leadingDigit = 1; leadingDigit <= 4; leadingDigit++) {
+          const reconstructed = leadingDigit * 1000 + price;
+          if (Math.abs(reconstructed - avgPrice) <= priceRange * 2 && 
+              this.isValidPriceForInstrument(reconstructed)) {
+            logger.info(`🔧 Generic price reconstruction: ${originalPrice} → ${reconstructed} (leading digit: ${leadingDigit})`);
+            return reconstructed;
+          }
+        }
+      }
+    }
+    
+    // Fallback: Symbol-specific hard-coded reconstruction for common cases
+    if (isGoldContext && price >= 500 && price <= 700) {
+      const reconstructed = 3000 + price;
+      logger.info(`🔧 Gold fallback reconstruction: ${originalPrice} → ${reconstructed}`);
+      return reconstructed;
+    }
+    
+    return originalPrice; // Return unchanged if no reconstruction possible
   }
 
   /**

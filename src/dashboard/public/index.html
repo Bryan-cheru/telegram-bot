@@ -62,17 +62,28 @@
                 <div class="multi-account-overview">
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-building-columns"></i> Multi-Account Overview</h2>
-                            <button class="btn btn-outline btn-sm" id="refresh-all-accounts" onclick="refreshAllAccountData()">
-                                <i class="fas fa-sync-alt"></i> Refresh All
-                            </button>
+                            <h2><i class="fas fa-building-columns"></i> Live Trading Accounts</h2>
+                            <div class="header-controls">
+                                <div class="live-indicator">
+                                    <i class="fas fa-circle text-danger"></i>
+                                    <span class="text-danger">LIVE TRADING ACTIVE</span>
+                                </div>
+                                <button class="btn btn-outline btn-sm" id="refresh-all-accounts" onclick="refreshAllAccountData()">
+                                    <i class="fas fa-sync-alt"></i> Refresh All
+                                </button>
+                            </div>
                         </div>
                         <div class="card-body">
+                            <!-- Live Trading Warning -->
+                            <div class="alert alert-warning mb-3">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                <strong>Live Trading Mode:</strong> All connected accounts are live trading accounts. Real money is at risk.
+                            </div>
                             <div class="accounts-grid" id="accounts-grid">
                                 <!-- Account cards will be dynamically populated here -->
                                 <div class="account-loading">
                                     <i class="fas fa-spinner fa-spin"></i>
-                                    <span>Loading account information...</span>
+                                    <span>Loading live account information...</span>
                                 </div>
                             </div>
                         </div>

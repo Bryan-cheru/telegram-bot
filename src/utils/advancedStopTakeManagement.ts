@@ -43,14 +43,24 @@ export class AdvancedStopTakeManager {
       maxRisk
     );
     
-    // 5. Calculate multiple take profits with optimal R:R ratios
-    const takeProfits = this.calculateMultipleTakeProfits(
-      validatedStopLoss,
-      baseTakeProfit,
-      currentPrice,
-      signal.action,
-      minDistance
-    );
+    // 5. Use original signal targets when available, fallback to calculated R:R targets
+    let takeProfits: number[];
+    
+    if (signal.targets && signal.targets.length > 0) {
+      // PRESERVE original signal targets - these are from actual chart analysis
+      takeProfits = [...signal.targets];
+      logger.info(`📊 Using original signal targets: [${takeProfits.join(',')}]`);
+    } else {
+      // Calculate multiple take profits with optimal R:R ratios only if no targets provided
+      takeProfits = this.calculateMultipleTakeProfits(
+        validatedStopLoss,
+        baseTakeProfit,
+        currentPrice,
+        signal.action,
+        minDistance
+      );
+      logger.info(`📊 Calculated R:R-based targets: [${takeProfits.join(',')}]`);
+    }
     
     // 6. Calculate risk-reward ratio
     const riskDistance = Math.abs(currentPrice - validatedStopLoss);
