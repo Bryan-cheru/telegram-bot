@@ -72,23 +72,14 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       throw new Error('METAAPI_TOKEN environment variable is required');
     }
     
-    // Configure MetaAPI options for optimal memory usage and compliance
+    // Configure MetaAPI options for better connection management
     this.api = new MetaApi(token, {
       application: 'TelegramTradingBot',
       requestTimeout: 60000, // 60 second timeout
       connectTimeout: 60000, // 60 second connect timeout
       packetOrderingTimeout: 60000, // Prevent packet ordering memory buildup
-      synchronizationThrottler: {
-        maxConcurrentSynchronizations: 2, // Limit concurrent syncs
-        queueTimeoutInSeconds: 300 // 5 minute queue timeout
-      },
-      // Enhanced connection pool management
-      maxConnections: 10, // Limit total connections
       retryOpts: {
-        retries: 3,
-        minTimeout: 1000,
-        maxTimeout: 30000,
-        randomize: true
+        retries: 3
       }
     });
     
