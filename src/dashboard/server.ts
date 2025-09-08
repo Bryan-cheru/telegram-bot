@@ -957,7 +957,7 @@ app.get('/api/statistics', (req, res) => {
   res.json(stats);
 });
 
-// Real-time log streaming endpoint
+// Real-time log streaming endpoint with proper memory management
 app.get('/api/logs/stream', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -976,27 +976,61 @@ app.get('/api/logs/stream', (req, res) => {
     res.write(`data: ${JSON.stringify(log)}\n\n`);
   });
 
-  // Set up periodic heartbeat
+  // Set up periodic heartbeat with proper error handling
   const heartbeat = setInterval(() => {
     try {
-      res.write('data: {"type":"heartbeat","timestamp":"' + new Date().toISOString() + '"}\n\n');
+      // Check if response is still writable
+      if (res.writable && !res.destroyed) {
+        res.write('data: {"type":"heartbeat","timestamp":"' + new Date().toISOString() + '"}\n\n');
+      } else {
+        // Connection is dead, clean up immediately
+        clearInterval(heartbeat);
+        cleanup();
+      }
     } catch (error) {
-      // Client disconnected, clean up
+      // Client disconnected, clean up immediately
       clearInterval(heartbeat);
+      cleanup();
     }
   }, 30000);
 
-  // Store client connection for broadcasting new logs
+  // Add client to active connections list
+  streamClients.push({ res, heartbeat, created: Date.now() });
+
+  // Enhanced cleanup function
   const cleanup = () => {
-    clearInterval(heartbeat);
-    const index = streamClients.indexOf(res);
-    if (index !== -1) {
-      streamClients.splice(index, 1);
+    // Clear heartbeat interval
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
+    
+    // Remove from active clients
+    const clientIndex = streamClients.findIndex(client => client.res === res);
+    if (clientIndex !== -1) {
+      streamClients.splice(clientIndex, 1);
+    }
+    
+    // Force close response if still open
+    if (!res.destroyed) {
+      try {
+        res.end();
+      } catch (e) {
+        // Ignore errors on forced close
+      }
     }
   };
 
+  // Enhanced connection monitoring
   req.on('close', cleanup);
   req.on('error', cleanup);
+  req.on('aborted', cleanup);
+  
+  // Automatic cleanup for stale connections (after 10 minutes)
+  setTimeout(() => {
+    if (streamClients.some(client => client.res === res)) {
+      cleanup();
+    }
+  }, 600000);
   
   streamClients.push(res);
 });

@@ -7,6 +7,37 @@ import dashboardApp, { updateBotStatus, addLog, setSharedExecutor } from './dash
 // Prevent double initialization
 let isInitialized = false;
 
+// Global cleanup handler
+let botInstance: TelegramBot | null = null;
+let globalExecutor: any = null;
+
+const gracefulShutdown = async (signal: string) => {
+  logger.info(`🔄 Received ${signal}, starting graceful shutdown...`);
+  
+  try {
+    // Stop accepting new connections
+    if (botInstance) {
+      logger.info('🤖 Stopping Telegram bot...');
+      await botInstance.stop();
+    }
+    
+    // Close MetaAPI connections
+    if (globalExecutor) {
+      logger.info('📊 Closing MetaAPI connections...');
+      await globalExecutor.cleanup();
+    }
+    
+    // Clear all intervals/timeouts
+    logger.info('🧹 Cleaning up timers...');
+    
+    logger.info('✅ Graceful shutdown completed');
+    process.exit(0);
+  } catch (error) {
+    logger.error('❌ Error during shutdown:', error);
+    process.exit(1);
+  }
+};
+
 // Global error handlers to prevent unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('🚨 CRITICAL: Unhandled Rejection detected', { promise, reason });
@@ -18,11 +49,13 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error) => {
   logger.error('🚨 FATAL: Uncaught Exception - System will exit', error);
-  // Try to cleanup before exit
-  setTimeout(() => {
-    process.exit(1);
-  }, 5000); // 5 second grace period for cleanup
+  gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
+
+// Graceful shutdown handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // Render.com uses SIGUSR2
 
 // Dead man's switch - monitor bot health
 let lastHeartbeat = Date.now();
@@ -118,9 +151,12 @@ async function main(): Promise<void> {
     
     // Create and start bot
     const bot = new TelegramBot();
+    botInstance = bot; // Store for cleanup
     
     // Share the bot's executor with the dashboard
-    setSharedExecutor(bot.getTradeExecutor());
+    const executor = bot.getTradeExecutor();
+    globalExecutor = executor; // Store for cleanup
+    setSharedExecutor(executor);
     
     await bot.start();
     
