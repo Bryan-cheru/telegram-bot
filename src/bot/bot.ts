@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { MessageHandler } from './handlers/messageHandler';
 import { PhotoHandler } from './handlers/photoHandler';
-import { MultiAccountMetaApiExecutor } from '../mt5/multiAccountMetaApiExecutor';
+import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
@@ -15,9 +15,9 @@ export class TelegramBot {
   constructor() {
     this.bot = new Telegraf(config.botToken);
     
-    // Using Multi-Account MetaAPI for trade execution across multiple brokers
-    logger.info('🌐 Using Multi-Account MetaAPI for simultaneous trade execution');
-    this.tradeExecutor = new MultiAccountMetaApiExecutor();
+    // Using Clean Multi-Account Executor - follows MetaAPI documentation exactly
+    logger.info('🌐 Using Clean Multi-Account Executor for reliable trade execution');
+    this.tradeExecutor = new CleanMultiAccountExecutor();
     
     this.messageHandler = new MessageHandler();
     this.photoHandler = new PhotoHandler(this.tradeExecutor);
@@ -26,8 +26,8 @@ export class TelegramBot {
   }
 
   // Getter to share executor with dashboard
-  getTradeExecutor(): MultiAccountMetaApiExecutor {
-    return this.tradeExecutor as MultiAccountMetaApiExecutor;
+  getTradeExecutor(): CleanMultiAccountExecutor {
+    return this.tradeExecutor as CleanMultiAccountExecutor;
   }
 
   private setupHandlers(): void {
@@ -210,18 +210,17 @@ export class TelegramBot {
       }
 
       // Use the clean real-world parser
-      const { RealWorldTradeParser } = await import('../ocr/realWorldTradeParser');
-      const tradeParser = new RealWorldTradeParser();
+      const { CleanRealWorldTradeParser } = await import('../ocr/cleanRealWorldTradeParser');
       
-      const tradeSignal = await tradeParser.parseTradeSignal(text);
+      const tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(text);
       
       if (!tradeSignal) {
         logger.warn('No valid trade signal found in text message');
         return;
       }
 
-      // Validate trade signal
-      if (!tradeParser.validateTradeSignal(tradeSignal)) {
+      // Validate trade signal  
+      if (!CleanRealWorldTradeParser.validateTradeSignal(tradeSignal)) {
         logger.warn('Invalid trade signal in text message:', tradeSignal);
         return;
       }

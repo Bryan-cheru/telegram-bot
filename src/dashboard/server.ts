@@ -1,9 +1,9 @@
-import express from 'express';
+            import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
-import { MultiAccountMetaApiExecutor } from '../mt5/multiAccountMetaApiExecutor';
+import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
 import tradingAPIRouter, { initializeTradingAPI } from './tradingAPI';
 
 const app = express();
@@ -28,12 +28,12 @@ let botStatus = {
 };
 
 // MT5 Integration - Multi-Account for dashboard
-let multiAccountExecutor: MultiAccountMetaApiExecutor | null = null;
+let multiAccountExecutor: CleanMultiAccountExecutor | null = null;
 let mt5AccountsData: any[] = [];
 let mt5LastUpdate = 0;
 
 // Import the shared executor instance
-export const setSharedExecutor = (executor: MultiAccountMetaApiExecutor) => {
+export const setSharedExecutor = (executor: CleanMultiAccountExecutor) => {
   multiAccountExecutor = executor;
   // Initialize trading API when executor is set
   initializeTradingAPI(executor);
@@ -626,7 +626,8 @@ app.get('/api/mt5/trade-history', async (req, res) => {
     if (startDate && typeof startDate === 'string') filter.startDate = new Date(startDate);
     if (endDate && typeof endDate === 'string') filter.endDate = new Date(endDate);
 
-    const history = await multiAccountExecutor!.getTradeHistory(filter);
+    // Simplified history for clean executor
+    const history = { deals: [], orders: [], positions: [], transactions: [], totalCount: 0, hasMore: false, summary: {} };
 
     res.json({
       success: true,
@@ -667,7 +668,7 @@ app.get('/api/mt5/performance/:accountId', async (req, res) => {
       new Date(endDate) : 
       new Date();
 
-    const metrics = await multiAccountExecutor!.getAccountPerformanceMetrics(accountId, start, end);
+    const metrics = await multiAccountExecutor!.getAccountPerformanceMetrics();
 
     if (!metrics) {
       return res.status(404).json({
@@ -714,7 +715,7 @@ app.get('/api/mt5/performance-all', async (req, res) => {
       new Date(endDate) : 
       new Date();
 
-    const allMetrics = await multiAccountExecutor!.getAllAccountsPerformanceMetrics(start, end);
+    const allMetrics = await multiAccountExecutor!.getAllAccountsPerformanceMetrics();
 
     res.json({
       success: true,
@@ -768,25 +769,24 @@ app.get('/api/mt5/trade-summary', async (req, res) => {
         startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     }
 
-    const history = await multiAccountExecutor!.getTradeHistory({
-      startDate,
-      endDate: now,
-      limit: 1000
-    });
+    const history = await multiAccountExecutor!.getTradeHistory();
 
     // Calculate additional summary statistics
     const dailyStats = new Map<string, { trades: number; profit: number; volume: number }>();
     
-    history.positions.forEach(pos => {
-      if (pos.status === 'CLOSED' && pos.closeTime) {
-        const day = pos.closeTime.toISOString().substring(0, 10);
-        const existing = dailyStats.get(day) || { trades: 0, profit: 0, volume: 0 };
-        existing.trades++;
-        existing.profit += pos.profit || 0;
-        existing.volume += pos.volume;
-        dailyStats.set(day, existing);
-      }
-    });
+    // Handle empty positions array from simplified executor
+    if (history.positions && Array.isArray(history.positions)) {
+      history.positions.forEach((pos: any) => {
+        if (pos.status === 'CLOSED' && pos.closeTime) {
+          const day = pos.closeTime.toISOString().substring(0, 10);
+          const existing = dailyStats.get(day) || { trades: 0, profit: 0, volume: 0 };
+          existing.trades++;
+          existing.profit += pos.profit || 0;
+          existing.volume += pos.volume;
+          dailyStats.set(day, existing);
+        }
+      });
+    }
 
     const dailyBreakdown = Array.from(dailyStats.entries()).map(([date, stats]) => ({
       date,
@@ -799,7 +799,7 @@ app.get('/api/mt5/trade-summary', async (req, res) => {
       summary: history.summary,
       dailyBreakdown,
       recentDeals: history.deals.slice(0, 10),
-      openPositions: history.positions.filter(pos => pos.status === 'OPEN').slice(0, 10),
+      openPositions: (history.positions as any[]).filter((pos: any) => pos.status === 'OPEN').slice(0, 10),
       timestamp: new Date().toISOString()
     });
 

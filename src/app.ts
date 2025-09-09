@@ -2,7 +2,7 @@ import { TelegramBot } from './bot/bot';
 import { config, validateConfig, debugConfig } from './utils/config';
 import { logger } from './utils/logger';
 import * as http from 'http';
-import dashboardApp, { updateBotStatus, addLog, setSharedExecutor } from './dashboard/server';
+import dashboardApp, { updateBotStatus, addLog, setSharedExecutor } from './dashboard/simpleDashboard';
 
 // Prevent double initialization
 let isInitialized = false;

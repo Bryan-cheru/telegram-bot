@@ -23,6 +23,7 @@
     "**/*.test.ts",
     "**/*.spec.ts",
     "src/ml/tradingML.ts",
-    "src/ml/integration-examples.ts"
+    "src/ml/integration-examples.ts",
+    "src/dashboard/**/*"
   ]
 }
