@@ -167,7 +167,7 @@ export class VisualChartAnalysisML {
   }
 
   /**
-   * Detect colored highlights in the chart using computer vision
+   * Detect colored highlights in the chart using computer vision - ENHANCED FOR ALL SYMBOLS
    */
   private async detectColorHighlights(imageBuffer: Buffer, priceScale: any): Promise<ColorZone[]> {
     const zones: ColorZone[] = [];
@@ -187,18 +187,26 @@ export class VisualChartAnalysisML {
 
     logger.info(`🎨 Scanning for color highlights in scale region: ${scaleLeft}-${scaleRight}, ${scaleTop}-${scaleBottom}`);
 
-    // Define color ranges for detection (RGB values) - Enhanced ranges
+    // ENHANCED color ranges for better detection across different chart themes
     const colorRanges = {
+      // Grey/Dark highlights (entry zones) - broader range for different chart themes
       grey: {
-        r: { min: 120, max: 220 },
-        g: { min: 120, max: 220 },
-        b: { min: 120, max: 220 }
+        r: { min: 100, max: 180 },
+        g: { min: 100, max: 180 },
+        b: { min: 100, max: 180 }
+      },
+      darkGrey: {
+        r: { min: 80, max: 120 },
+        g: { min: 80, max: 120 },
+        b: { min: 80, max: 120 }
       },
       lightGrey: {
-        r: { min: 200, max: 240 },
-        g: { min: 200, max: 240 },
-        b: { min: 200, max: 240 }
+        r: { min: 180, max: 240 },
+        g: { min: 180, max: 240 },
+        b: { min: 180, max: 240 }
       },
+      
+      // Green highlights (target zones) - enhanced for different shades
       green: {
         r: { min: 0, max: 120 },
         g: { min: 100, max: 255 },
@@ -209,15 +217,39 @@ export class VisualChartAnalysisML {
         g: { min: 180, max: 255 },
         b: { min: 100, max: 200 }
       },
+      darkGreen: {
+        r: { min: 0, max: 80 },
+        g: { min: 120, max: 200 },
+        b: { min: 0, max: 80 }
+      },
+      
+      // Red highlights (stop loss zones) - enhanced for different shades
       red: {
-        r: { min: 120, max: 255 },
-        g: { min: 0, max: 120 },
-        b: { min: 0, max: 120 }
+        r: { min: 150, max: 255 },
+        g: { min: 0, max: 100 },
+        b: { min: 0, max: 100 }
+      },
+      darkRed: {
+        r: { min: 100, max: 180 },
+        g: { min: 0, max: 60 },
+        b: { min: 0, max: 60 }
       },
       orange: {
         r: { min: 200, max: 255 },
         g: { min: 80, max: 180 },
         b: { min: 0, max: 80 }
+      },
+      
+      // Additional color variations for different chart themes
+      yellow: {
+        r: { min: 200, max: 255 },
+        g: { min: 200, max: 255 },
+        b: { min: 0, max: 100 }
+      },
+      blue: {
+        r: { min: 0, max: 100 },
+        g: { min: 100, max: 200 },
+        b: { min: 150, max: 255 }
       }
     };
 
@@ -248,12 +280,18 @@ export class VisualChartAnalysisML {
             );
 
             if (!existingZone) {
+              // Map color variations to main categories
+              const mainColorType = this.mapToMainColorType(colorType);
+              
               zones.push({
                 price: Math.round(price * 100) / 100, // Round to 2 decimal places
-                confidence: 0.8, // Base confidence for color detection
+                confidence: this.calculateColorConfidence(colorType, r, g, b),
                 region: { x, y, width: 10, height: 10 },
-                colorType: colorType as 'grey' | 'green' | 'red'
+                colorType: mainColorType
               });
+            } else {
+              // Increase confidence for repeated detections
+              existingZone.confidence = Math.min(1.0, existingZone.confidence + 0.1);
             }
           }
         }
@@ -672,4 +710,57 @@ export class VisualChartAnalysisML {
       source: 'VISUAL_ML'
     };
   }
+
+  /**
+   * Map color variations to main categories
+   */
+  private mapToMainColorType(colorType: string): 'grey' | 'green' | 'red' {
+    const colorMapping: { [key: string]: 'grey' | 'green' | 'red' } = {
+      'grey': 'grey',
+      'darkGrey': 'grey',
+      'lightGrey': 'grey',
+      'green': 'green',
+      'lightGreen': 'green',
+      'darkGreen': 'green',
+      'yellow': 'green', // Often used for targets
+      'blue': 'grey',    // Often used for entry zones
+      'red': 'red',
+      'darkRed': 'red',
+      'orange': 'red'    // Often used for stops
+    };
+    
+    return colorMapping[colorType] || 'grey';
+  }
+
+  /**
+   * Calculate confidence based on color intensity and type
+   */
+  private calculateColorConfidence(colorType: string, r: number, g: number, b: number): number {
+    // Base confidence
+    let confidence = 0.6;
+    
+    // Increase confidence for stronger colors
+    const intensity = (r + g + b) / 3;
+    const colorStrength = Math.max(r, g, b) - Math.min(r, g, b);
+    
+    // Strong colors get higher confidence
+    if (colorStrength > 100) confidence += 0.2;
+    if (colorStrength > 150) confidence += 0.1;
+    
+    // Specific color type bonuses
+    switch (colorType) {
+      case 'green':
+      case 'red':
+        confidence += 0.1; // Primary colors are more reliable
+        break;
+      case 'grey':
+      case 'darkGrey':
+        confidence += 0.05; // Grey is common for entry zones
+        break;
+    }
+    
+    return Math.min(1.0, confidence);
+  }
+
+
 }
