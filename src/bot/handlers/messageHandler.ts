@@ -445,11 +445,19 @@ Target 2: 2620\`
    * Convert manual command to trade signal format
    */
   private convertManualCommandToTradeSignal(command: ManualTradeCommand): any {
+    // Create entryZone for manual commands - use current market price or specified price
+    const entryPrice = command.price || 0; // Will be determined by market price if not specified
+    const entryZone = {
+      min: entryPrice - 0.0001, // Small spread around entry
+      max: entryPrice + 0.0001
+    };
+
     return {
       symbol: command.symbol,
       action: command.action.toLowerCase(),
       volume: command.volume,
       entry: command.price,
+      entryZone: entryZone, // 🚨 CRITICAL FIX: Add entryZone for manual trades
       stopLoss: command.stopLoss,
       targets: command.takeProfit ? [command.takeProfit] : [],
       isManual: true,

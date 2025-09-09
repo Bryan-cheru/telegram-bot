@@ -563,10 +563,14 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     
     logger.info(`📊 Ensuring market data for ${symbol} on ${accountConfig.brokerName}...`);
     
-    // Subscribe to market data
+    // Subscribe to market data with error handling
     try {
       await connection.subscribeToMarketData(symbol);
-    } catch (error) {
+    } catch (error: any) {
+      // Check if it's a symbol not found error
+      if (error.message && error.message.includes('symbol does not exist')) {
+        throw new Error(`Symbol ${symbol} does not exist on ${accountConfig.brokerName}. Please check symbol spelling or try different variations.`);
+      }
       logger.warn(`⚠️ Market data subscription warning for ${symbol}:`, error);
     }
     
@@ -684,6 +688,23 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
 
       // Try each variation until we find one that exists
       for (const variation of symbolVariations) {
+        try {
+          // Check if symbol exists by trying to get symbol specification
+          const terminalState = accountConfig.connection.terminalState;
+          const symbolSpec = terminalState.specification(variation);
+          
+          if (symbolSpec) {
+            finalSymbol = variation;
+            symbolFound = true;
+            logger.info(`✅ Symbol ${variation} exists on ${accountConfig.brokerName}: ${symbolSpec.description || 'No description'}`);
+            break;
+          }
+        } catch (error) {
+          // Continue to next variation
+          logger.debug(`Symbol ${variation} not found on ${accountConfig.brokerName}`);
+        }
+        
+        // Fallback: Check UniversalSymbolSupport
         const symbolInfo = UniversalSymbolSupport.getSymbolInfo(variation, accountConfig.brokerName);
         if (symbolInfo) {
           finalSymbol = variation;
@@ -694,13 +715,40 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       }
 
       if (!symbolFound) {
-        logger.warn(`⚠️ No symbol variations found for ${validatedSymbol} on ${accountConfig.brokerName}, trying original anyway...`);
-        // Log attempted variations for debugging
+        logger.warn(`⚠️ No symbol variations found for ${validatedSymbol} on ${accountConfig.brokerName}`);
         logger.info(`🔍 Attempted variations: ${symbolVariations.join(', ')}`);
+        
+        // Try to get available symbols for debugging
+        try {
+          const terminalState = accountConfig.connection.terminalState;
+          const availableSymbols = terminalState.symbols || [];
+          const goldSymbols = availableSymbols.filter((s: any) => 
+            s.symbol && (s.symbol.includes('XAU') || s.symbol.includes('GOLD'))
+          ).map((s: any) => s.symbol);
+          
+          if (goldSymbols.length > 0) {
+            logger.info(`� Available gold symbols on ${accountConfig.brokerName}: ${goldSymbols.join(', ')}`);
+            // Use the first available gold symbol
+            finalSymbol = goldSymbols[0];
+            symbolFound = true;
+            logger.info(`🔄 Using available gold symbol: ${finalSymbol}`);
+          }
+        } catch (error) {
+          logger.debug('Could not retrieve available symbols');
+        }
       }
       
       // Update signal with final validated symbol
       const validatedSignal = { ...signal, symbol: finalSymbol };
+
+      // 🚨 CRITICAL FIX: Ensure entryZone exists for manual trades
+      if (!validatedSignal.entryZone || typeof validatedSignal.entryZone !== 'object') {
+        logger.warn(`⚠️ Signal missing entryZone, creating default zone for ${validatedSignal.symbol}`);
+        validatedSignal.entryZone = {
+          min: 0,
+          max: 0
+        };
+      }
 
       // 🚨 CRITICAL FIX: Ensure market data is available before trading
       const symbolPrice = await this.ensureMarketDataAvailable(accountConfig, validatedSignal.symbol);
@@ -1881,6 +1929,32 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
   private getBrokerSpecificSymbolVariations(symbol: string, brokerName: string): string[] {
     const variations = [symbol]; // Always try original first
     
+    // XAUUSD (Gold) specific variations based on common broker naming
+    if (symbol === 'XAUUSD' || symbol === 'GOLD') {
+      const goldVariations = [
+        'XAUUSD',     // Standard
+        'GOLD',       // Common alternative
+        'GOLDUSD',    // Some brokers
+        'XAU/USD',    // With separator
+        'XAU_USD',    // Underscore
+        'GOLD.USD',   // Dot notation
+        'GOLD_USD',   // Underscore
+        'XAUUSDm',    // Mini
+        'GOLDm',      // Mini gold
+        'XAUUSD.',    // Trailing dot
+        'XAUUSD#',    // Hash symbol
+        'GOLDCash',   // Cash symbol
+        'XAUUSDCash'  // Cash variation
+      ];
+      
+      // Add variations not already in the list
+      goldVariations.forEach(variation => {
+        if (!variations.includes(variation)) {
+          variations.push(variation);
+        }
+      });
+    }
+    
     // US30 specific variations based on common broker naming
     if (symbol === 'US30') {
       const us30Variations = [
@@ -1905,15 +1979,26 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     }
     
     // Add broker-specific overrides
-    if (brokerName === 'FTMO') {
-      // FTMO might use different naming
+    if (brokerName.includes('FTMO')) {
+      // FTMO specific variations
       if (symbol === 'US30') {
         variations.push('US30Cash', 'USA30', 'DJ30');
       }
-    } else if (brokerName === 'Broker2') {
-      // Broker2 specific variations
+      if (symbol === 'XAUUSD') {
+        variations.push('GOLD', 'GOLDUSD', 'XAU/USD');
+      }
+    } else if (brokerName.includes('IFPro')) {
+      // IFPro specific variations  
       if (symbol === 'US30') {
         variations.push('US30cash', 'DJI30');
+      }
+      if (symbol === 'XAUUSD') {
+        variations.push('GOLD', 'XAU_USD', 'GOLD.USD', 'GOLDm');
+      }
+    } else if (brokerName.includes('Pepperstone')) {
+      // Pepperstone specific variations
+      if (symbol === 'XAUUSD') {
+        variations.push('GOLD', 'XAUUSD#', 'XAUUSDm');
       }
     }
     
