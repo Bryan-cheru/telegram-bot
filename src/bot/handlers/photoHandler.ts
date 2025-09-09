@@ -4,25 +4,39 @@ import { logger } from '../../utils/logger';
 import { config } from '../../utils/config';
 import { CleanRealWorldTradeParser } from '../../ocr/cleanRealWorldTradeParser';
 import { TextExtractor } from '../../ocr/textExtractor';
+import { DistributedTracing, Traced } from '../../monitoring/distributedTracing';
+import { MetricsExporter } from '../../monitoring/metricsExporter';
 
 export class PhotoHandler {
   private tradeExecutor: ITradeExecutor;
   private textExtractor: TextExtractor;
   private tradeParser: CleanRealWorldTradeParser;
+  private metrics: MetricsExporter;
 
   constructor(tradeExecutor: ITradeExecutor) {
     this.tradeExecutor = tradeExecutor;
     this.textExtractor = new TextExtractor();
     this.tradeParser = new CleanRealWorldTradeParser();
+    this.metrics = MetricsExporter.getInstance();
   }
 
   async handlePhoto(ctx: Context): Promise<void> {
+    const tracer = DistributedTracing.getInstance();
+    const traceId = tracer.startSpan('photo-processing', undefined, {
+      chatId: ctx.chat?.id,
+      userId: ctx.from?.id,
+      messageId: ctx.message?.message_id
+    });
+
     try {
       logger.info('📸 Processing photo message...');
+      tracer.logToSpan(traceId, 'Starting photo processing');
+      this.metrics.recordSignal(ctx.chat?.id.toString() || 'direct', 'photo');
 
       // Check if message has photos
       if (!ctx.message || !('photo' in ctx.message)) {
         logger.warn('No photo found in message');
+        tracer.logToSpan(traceId, 'No photo found in message', 'warn');
         return;
       }
 
@@ -45,14 +59,22 @@ export class PhotoHandler {
       logger.info(`📸 Processing photo: ${photo.file_id} (${photo.width}x${photo.height})`);
 
       // Download image and extract text
+      tracer.logToSpan(traceId, 'Downloading image from Telegram');
       const fileUrl = await ctx.telegram.getFileLink(photo.file_id);
       const response = await fetch(fileUrl.href);
       const imageBuffer = Buffer.from(await response.arrayBuffer());
       
+      tracer.logToSpan(traceId, 'Starting OCR extraction');
       const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
+      tracer.addTagsToSpan(traceId, { 
+        extractedTextLength: ocrResult.text?.length || 0,
+        ocrConfidence: ocrResult.confidence 
+      });
+      this.metrics.recordOCR('tesseract', !!ocrResult.text);
       
       if (!ocrResult.text || ocrResult.text.trim().length === 0) {
         logger.warn('No text extracted from image');
+        tracer.logToSpan(traceId, 'No text extracted from image', 'warn');
         await ctx.reply('❌ Could not extract text from image');
         return;
       }
@@ -64,6 +86,7 @@ export class PhotoHandler {
       const caption = ctx.message.caption || '';
       
       // Parse trade signal using ML-enhanced method with image buffer
+      tracer.logToSpan(traceId, 'Starting trade signal parsing');
       const tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(
         ocrResult.text, 
         caption, 
@@ -73,9 +96,16 @@ export class PhotoHandler {
       
       if (!tradeSignal) {
         logger.warn('No valid trade signal found in image');
+        tracer.logToSpan(traceId, 'No valid trade signal detected', 'warn');
         await ctx.reply('❌ No valid trade signal detected in image');
         return;
       }
+
+      tracer.addTagsToSpan(traceId, { 
+        symbol: tradeSignal.symbol,
+        action: tradeSignal.action,
+        orderType: tradeSignal.orderType 
+      });
 
       logger.info('✅ Trade signal parsed from image:', {
         symbol: tradeSignal.symbol,
@@ -102,20 +132,45 @@ export class PhotoHandler {
       await ctx.reply(confirmationMessage, { parse_mode: 'Markdown' });
 
       // Execute trade
+      tracer.logToSpan(traceId, 'Executing trade signal');
+      const executionStart = Date.now();
       const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+      const executionTime = Date.now() - executionStart;
+      
+      tracer.addTagsToSpan(traceId, { 
+        tradeExecuted: result.success,
+        executionResult: result.success ? 'success' : 'failure',
+        executionTimeMs: executionTime
+      });
+
+      // Record trade metrics
+      this.metrics.recordTrade(
+        'default', 
+        tradeSignal.symbol, 
+        tradeSignal.action, 
+        result.success, 
+        executionTime
+      );
 
       // Send result message
       if (result.success) {
         await ctx.reply(`✅ Trade executed successfully!\n${result.message || ''}`);
         logger.info('✅ Trade executed successfully from image signal');
+        tracer.logToSpan(traceId, 'Trade executed successfully');
       } else {
         await ctx.reply(`❌ Trade execution failed: ${result.error || 'Unknown error'}`);
         logger.error('❌ Trade execution failed:', result.error);
+        tracer.logToSpan(traceId, `Trade execution failed: ${result.error}`, 'error');
+        this.metrics.recordError('trade_execution', 'PhotoHandler', 'high');
       }
 
     } catch (error) {
       logger.error('Error processing photo:', error);
+      tracer.addTagsToSpan(traceId, { success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+      tracer.logToSpan(traceId, `Error processing photo: ${error}`, 'error');
       await ctx.reply('❌ Error processing image. Please try again.');
+    } finally {
+      tracer.finishSpan(traceId);
     }
   }
 }

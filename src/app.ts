@@ -5,6 +5,8 @@ import * as http from 'http';
 import express from 'express';
 import app, { setSharedExecutor } from './dashboard/server';
 import { addLog, updateBotStatus } from './dashboard/simpleDashboard';
+import { HealthCheckService } from './monitoring/healthChecks';
+import { DistributedTracing, Traced } from './monitoring/distributedTracing';
 
 // Prevent double initialization
 let isInitialized = false;
@@ -79,16 +81,50 @@ const updateHeartbeat = () => {
 
 // Combined server for health check and dashboard
 const createServer = (): http.Server => {
-  const server = http.createServer((req, res) => {
+  const healthCheckService = HealthCheckService.getInstance();
+  
+  const server = http.createServer(async (req, res) => {
     if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
-        status: 'healthy', 
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        version: '1.0.1',
-        dashboard: 'available'
-      }));
+      try {
+        const healthStatus = await healthCheckService.getOverallHealth();
+        const statusCode = healthStatus.status === 'healthy' ? 200 : 503;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(healthStatus));
+      } catch (error) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'error', 
+          error: 'Health check failed',
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } else if (req.url === '/health/detailed') {
+      try {
+        const detailedHealth = await healthCheckService.getDetailedHealth();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(detailedHealth));
+      } catch (error) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'error', 
+          error: 'Detailed health check failed',
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } else if (req.url === '/ready') {
+      const isReady = healthCheckService.isReady();
+      const statusCode = isReady ? 200 : 503;
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ready: isReady }));
+    } else if (req.url === '/metrics') {
+      // Prometheus metrics endpoint (placeholder until prom-client is installed)
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(`# Enterprise metrics available after installing prom-client package
+# Current status: Basic monitoring active
+# Install: npm install prom-client
+trading_bot_status 1 ${Date.now()}
+trading_bot_uptime ${process.uptime()} ${Date.now()}
+      `.trim());
     } else {
       // Delegate to comprehensive dashboard app
       app(req, res);
@@ -150,6 +186,14 @@ async function main(): Promise<void> {
     }
     
     addLog({ level: 'success', message: 'Configuration validated successfully' });
+    
+    // Initialize enterprise monitoring
+    const healthCheckService = HealthCheckService.getInstance();
+    healthCheckService.setupDefaultHealthChecks();
+    logger.info('🏥 Health check service initialized');
+    
+    const tracer = DistributedTracing.getInstance();
+    logger.info('🔍 Distributed tracing initialized');
     
     // Create and start bot
     const bot = new TelegramBot();
