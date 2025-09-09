@@ -973,15 +973,22 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       // Record the trade for safety tracking
       this.safetyControls.recordTrade(finalVolume);
 
+      // 🚨 CRITICAL FIX: Check if result exists before accessing properties
+      if (!result) {
+        throw new Error(`Trade execution failed: No result returned for ${signal.action} action`);
+      }
+
+      const ticketId = result.positionId || result.orderId || result.ticket || 'Unknown';
+
       results.push({
         accountId: accountConfig.id,
         brokerName: accountConfig.brokerName,
         accountType: accountConfig.accountType,
         success: true,
-        message: `Trade executed successfully. Ticket: ${result.positionId || result.orderId}`
+        message: `Trade executed successfully. Ticket: ${ticketId}`
       });
 
-      logger.info(`✅ Trade successful on ${accountConfig.brokerName}: ${result.positionId || result.orderId}`);
+      logger.info(`✅ Trade successful on ${accountConfig.brokerName}: ${ticketId}`);
 
     } catch (error: any) {
       const errorMessage = error.message || error.toString() || 'Unknown error';

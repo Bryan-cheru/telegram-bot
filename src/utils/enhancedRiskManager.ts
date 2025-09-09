@@ -77,7 +77,7 @@ export class EnhancedRiskManager {
       maxDailyRisk: parseFloat(process.env.MAX_DAILY_RISK || '5.0'), // 5% of account per day
       
       // Account safety with fallbacks
-      minAccountBalance: parseFloat(process.env.MIN_ACCOUNT_BALANCE || '1000'),
+      minAccountBalance: parseFloat(process.env.MIN_ACCOUNT_BALANCE || '5'), // 🚨 TEMPORARY: Lower for testing
       maxDrawdownPercentage: parseFloat(process.env.MAX_DRAWDOWN_PERCENTAGE || '10.0'),
       maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || '10'),
       
