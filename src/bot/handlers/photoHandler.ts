@@ -21,7 +21,7 @@ export class PhotoHandler {
       logger.info('📸 Processing photo message...');
 
       // Check if message has photos
-      if (!('photo' in ctx.message!)) {
+      if (!ctx.message || !('photo' in ctx.message)) {
         logger.warn('No photo found in message');
         return;
       }
