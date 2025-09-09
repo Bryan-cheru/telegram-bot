@@ -2,7 +2,9 @@ import { TelegramBot } from './bot/bot';
 import { config, validateConfig, debugConfig } from './utils/config';
 import { logger } from './utils/logger';
 import * as http from 'http';
-import dashboardApp, { updateBotStatus, addLog, setSharedExecutor } from './dashboard/simpleDashboard';
+import express from 'express';
+import app, { setSharedExecutor } from './dashboard/server';
+import { addLog, updateBotStatus } from './dashboard/simpleDashboard';
 
 // Prevent double initialization
 let isInitialized = false;
@@ -88,8 +90,8 @@ const createServer = (): http.Server => {
         dashboard: 'available'
       }));
     } else {
-      // Delegate to dashboard app
-      dashboardApp(req, res);
+      // Delegate to comprehensive dashboard app
+      app(req, res);
     }
   });
   
