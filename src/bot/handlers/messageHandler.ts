@@ -389,16 +389,48 @@ Target 2: 2620\`
       // Convert to trade signal format for execution
       const tradeSignal = this.convertManualCommandToTradeSignal(command);
       
-      logger.info('� Executing manual trade command...');
-      const result = await tradeExecutor.executeTradeSignal(tradeSignal);
+      logger.info('🎯 Executing manual trade command with synchronization fixes...');
+      // Use manual trade retry method if available
+      const result = await (tradeExecutor.executeManualTradeWithRetry ? 
+        tradeExecutor.executeManualTradeWithRetry(tradeSignal, 3) : 
+        tradeExecutor.executeTradeSignal(tradeSignal));
       
-      if (result.success) {
-        const successMessage = `✅ **Manual Trade Executed Successfully!**\n📝 Command: ${formattedCommand}\n🎯 Signal ID: ${result.signalId || 'N/A'}`;
+      // Handle both single and multi-account result formats
+      const isMultiAccountResult = result.overallSuccess !== undefined;
+      const success = isMultiAccountResult ? result.overallSuccess : result.success;
+      
+      if (success) {
+        let successMessage = `✅ **Manual Trade Executed Successfully!**\n📝 Command: ${formattedCommand}`;
+        
+        if (isMultiAccountResult) {
+          successMessage += `\n📊 Accounts: ${result.successfulAccounts}/${result.totalAccounts} successful`;
+          // Show account-specific results
+          result.results?.forEach((accountResult: any) => {
+            const status = accountResult.success ? '✅' : '❌';
+            successMessage += `\n${status} ${accountResult.brokerName}: ${accountResult.message}`;
+          });
+        } else {
+          successMessage += `\n🎯 Signal ID: ${result.signalId || 'N/A'}`;
+        }
+        
         logger.info('✅ Manual trade executed successfully');
         await ctx.reply(successMessage);
       } else {
-        const errorMessage = `❌ **Manual Trade Failed**\n📝 Command: ${formattedCommand}\n� Error: ${result.error || result.message}`;
-        logger.error('❌ Manual trade execution failed:', result.error);
+        let errorMessage = `❌ **Manual Trade Failed**\n📝 Command: ${formattedCommand}`;
+        
+        if (isMultiAccountResult) {
+          errorMessage += `\n📊 Failed on ${result.failedAccounts}/${result.totalAccounts} accounts`;
+          // Show account-specific errors
+          result.results?.forEach((accountResult: any) => {
+            if (!accountResult.success) {
+              errorMessage += `\n❌ ${accountResult.brokerName}: ${accountResult.error || accountResult.message}`;
+            }
+          });
+        } else {
+          errorMessage += `\n🚨 Error: ${result.error || result.message}`;
+        }
+        
+        logger.error('❌ Manual trade execution failed:', isMultiAccountResult ? 'Multi-account failure' : result.error);
         await ctx.reply(errorMessage);
       }
       

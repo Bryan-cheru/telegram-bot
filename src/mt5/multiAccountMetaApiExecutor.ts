@@ -525,6 +525,77 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     return overallResult;
   }
 
+  // 🚨 CRITICAL: Wait for account synchronization before trading
+  private async waitForAccountSynchronization(accountConfig: AccountConfig, timeoutMs = 20000): Promise<boolean> {
+    const startTime = Date.now();
+    const connection = accountConfig.connection;
+    
+    logger.info(`⏳ Waiting for ${accountConfig.brokerName} synchronization...`);
+    
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        // Check if connection is synchronized
+        if (connection.synchronized) {
+          // Additional check: ensure we have account information
+          const accountInfo = connection.terminalState.accountInformation;
+          if (accountInfo && accountInfo.balance !== undefined) {
+            logger.info(`✅ ${accountConfig.brokerName} fully synchronized (Balance: $${accountInfo.balance})`);
+            return true;
+          }
+        }
+        
+        // Wait 500ms before checking again
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        logger.warn(`⚠️ Synchronization check error for ${accountConfig.brokerName}:`, error);
+      }
+    }
+    
+    logger.error(`❌ ${accountConfig.brokerName} synchronization timeout after ${timeoutMs}ms`);
+    return false;
+  }
+
+  // 🚨 CRITICAL: Ensure market data is available before trading
+  private async ensureMarketDataAvailable(accountConfig: AccountConfig, symbol: string, timeoutMs = 15000): Promise<any> {
+    const startTime = Date.now();
+    const connection = accountConfig.connection;
+    const terminalState = connection.terminalState;
+    
+    logger.info(`📊 Ensuring market data for ${symbol} on ${accountConfig.brokerName}...`);
+    
+    // Subscribe to market data
+    try {
+      await connection.subscribeToMarketData(symbol);
+    } catch (error) {
+      logger.warn(`⚠️ Market data subscription warning for ${symbol}:`, error);
+    }
+    
+    // Wait for price data to be available
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const symbolPrice = terminalState.price(symbol);
+        
+        if (symbolPrice && symbolPrice.bid && symbolPrice.ask) {
+          logger.info(`✅ Market data available for ${symbol}: Bid=${symbolPrice.bid}, Ask=${symbolPrice.ask}`);
+          return symbolPrice;
+        }
+        
+        // Wait 300ms before checking again
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } catch (error) {
+        logger.warn(`⚠️ Market data check error for ${symbol}:`, error);
+      }
+    }
+    
+    // Final attempt with error details
+    const symbolPrice = terminalState.price(symbol);
+    if (!symbolPrice) {
+      throw new Error(`Market data timeout: Symbol ${symbol} price not available after ${timeoutMs}ms on ${accountConfig.brokerName}`);
+    }
+    
+    return symbolPrice;
+  }
+
   private async executeTradeOnAccount(
     signal: TradeSignal,
     accountConfig: AccountConfig,
@@ -586,6 +657,12 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     try {
       logger.info(`💼 Executing on ${accountConfig.brokerName} ${accountConfig.accountType}...`);
 
+      // 🚨 CRITICAL FIX: Ensure account is fully synchronized before trading
+      const isSync = await this.waitForAccountSynchronization(accountConfig, 20000); // 20 second timeout
+      if (!isSync) {
+        throw new Error(`Account ${accountConfig.brokerName} not fully synchronized - cannot execute trade`);
+      }
+
       // 🌍 Enhanced symbol validation with universal support
       await UniversalSymbolSupport.updateSymbolCacheIfNeeded(this.accounts);
       
@@ -625,21 +702,13 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
       // Update signal with final validated symbol
       const validatedSignal = { ...signal, symbol: finalSymbol };
 
+      // 🚨 CRITICAL FIX: Ensure market data is available before trading
+      const symbolPrice = await this.ensureMarketDataAvailable(accountConfig, validatedSignal.symbol);
+      
       // Get account balance for safety validation
       const terminalState = accountConfig.connection.terminalState;
       const accountInfo = terminalState.accountInformation;
       const accountBalance = accountInfo?.balance || 10000; // Fallback to 10k if unavailable
-
-      // Subscribe to market data
-      await accountConfig.connection.subscribeToMarketData(validatedSignal.symbol);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for market data
-
-      // Check market status with Smart ML Override - reuse terminalState
-      const symbolPrice = terminalState.price(validatedSignal.symbol);
-      
-      if (!symbolPrice) {
-        throw new Error(`Symbol price not available for ${validatedSignal.symbol}`);
-      }
 
       // 🎯 SMART ORDER TYPE DECISION with current market price
       const currentPrice = (symbolPrice.bid + symbolPrice.ask) / 2;
@@ -1878,5 +1947,56 @@ export class MultiAccountMetaApiExecutor implements ITradeExecutor {
     await Promise.allSettled(disconnectPromises);
     this.accounts.clear();
     this.initialized = false;
+  }
+
+  // 🚨 CRITICAL: Enhanced manual trade execution with synchronization fixes
+  async executeManualTradeWithRetry(signal: TradeSignal, maxRetries = 3): Promise<MultiAccountTradeResult> {
+    logger.info('🎯 Starting manual trade execution with synchronization fixes...');
+    
+    const results: MultiAccountTradeResult['results'] = [];
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
+      attempt++;
+      logger.info(`🔄 Manual trade attempt ${attempt}/${maxRetries}`);
+      
+      try {
+        // Execute trade with current fixes
+        const tradeResult = await this.executeTrade(signal);
+        
+        // Check if any trades succeeded
+        const successfulTrades = tradeResult.results.filter(r => r.success);
+        
+        if (successfulTrades.length > 0) {
+          logger.info(`✅ Manual trade successful on ${successfulTrades.length} accounts`);
+          return tradeResult;
+        } else {
+          logger.warn(`⚠️ Manual trade attempt ${attempt} failed on all accounts`);
+          
+          // If it's not the last attempt, wait and retry
+          if (attempt < maxRetries) {
+            logger.info('⏳ Waiting 10s before retry...');
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+        }
+      } catch (error) {
+        logger.error(`❌ Manual trade attempt ${attempt} error:`, error);
+        
+        if (attempt < maxRetries) {
+          logger.info('⏳ Waiting 10s before retry...');
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+      }
+    }
+    
+    // All attempts failed
+    logger.error(`❌ Manual trade failed after ${maxRetries} attempts`);
+    return {
+      overallSuccess: false,
+      totalAccounts: this.accounts.size,
+      successfulAccounts: 0,
+      failedAccounts: this.accounts.size,
+      results: []
+    };
   }
 }
