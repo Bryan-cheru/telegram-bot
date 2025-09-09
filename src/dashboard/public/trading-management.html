@@ -1,0 +1,603 @@
+<!-- Advanced Trading Management Dashboard -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Management - FTMO Bot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #ffd700, #ffed4e);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.8;
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 5px;
+            margin-bottom: 30px;
+            overflow-x: auto;
+        }
+
+        .tab-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: 12px 20px;
+            background: transparent;
+            border: none;
+            color: #ffffff;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(45deg, #ffd700, #ffed4e);
+            color: #1e3c72;
+        }
+
+        .tab-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Cards */
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .card h3 {
+            color: #ffd700;
+            margin-bottom: 20px;
+            font-size: 1.4rem;
+        }
+
+        /* Account Summary */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .summary-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .summary-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #ffd700;
+            margin-bottom: 5px;
+        }
+
+        .summary-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.1);
+            font-weight: 600;
+            color: #ffd700;
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Status Indicators */
+        .status-positive {
+            color: #4ade80;
+        }
+
+        .status-negative {
+            color: #ef4444;
+        }
+
+        .status-neutral {
+            color: #94a3b8;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            margin: 2px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #ffd700, #ffed4e);
+            color: #1e3c72;
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #ef4444, #dc2626);
+            color: white;
+        }
+
+        .btn-success {
+            background: linear-gradient(45deg, #10b981, #059669);
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 0.875rem;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #ffd700;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #ffd700;
+            box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.2);
+        }
+
+        .form-input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        /* Emergency Controls */
+        .emergency-panel {
+            background: linear-gradient(45deg, #dc2626, #991b1b);
+            border: 2px solid #ef4444;
+        }
+
+        .emergency-panel h3 {
+            color: #ffffff;
+        }
+
+        /* Risk Meter */
+        .risk-meter {
+            position: relative;
+            width: 100%;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .risk-fill {
+            height: 100%;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .risk-low { background: linear-gradient(90deg, #10b981, #059669); }
+        .risk-medium { background: linear-gradient(90deg, #f59e0b, #d97706); }
+        .risk-high { background: linear-gradient(90deg, #ef4444, #dc2626); }
+
+        /* Loading States */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid #ffd700;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .tab-nav {
+                flex-direction: column;
+            }
+
+            .tab-btn {
+                margin-bottom: 5px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .summary-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            table {
+                font-size: 0.875rem;
+            }
+
+            th, td {
+                padding: 8px 10px;
+            }
+        }
+
+        /* Toast Notifications */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast.success {
+            background: linear-gradient(45deg, #10b981, #059669);
+        }
+
+        .toast.error {
+            background: linear-gradient(45deg, #ef4444, #dc2626);
+        }
+
+        .toast.warning {
+            background: linear-gradient(45deg, #f59e0b, #d97706);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Trading Management</h1>
+            <p>Advanced MetaAPI Multi-Account Trading Control Center</p>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="showTab('dashboard')">📊 Dashboard</button>
+            <button class="tab-btn" onclick="showTab('positions')">📈 Positions</button>
+            <button class="tab-btn" onclick="showTab('orders')">📋 Orders</button>
+            <button class="tab-btn" onclick="showTab('risk')">🛡️ Risk</button>
+            <button class="tab-btn" onclick="showTab('accounts')">🏦 Accounts</button>
+            <button class="tab-btn" onclick="showTab('emergency')">🚨 Emergency</button>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="summary-grid" id="summaryGrid">
+                <!-- Will be populated by JavaScript -->
+            </div>
+
+            <div class="card">
+                <h3>📊 Account Overview</h3>
+                <div class="table-container">
+                    <table id="accountsTable">
+                        <thead>
+                            <tr>
+                                <th>Account</th>
+                                <th>Broker</th>
+                                <th>Balance</th>
+                                <th>Equity</th>
+                                <th>P&L</th>
+                                <th>Positions</th>
+                                <th>Risk %</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Positions Tab -->
+        <div id="positions" class="tab-content">
+            <div class="card">
+                <h3>📈 Active Positions</h3>
+                <div style="margin-bottom: 20px;">
+                    <button class="btn btn-danger btn-sm" onclick="closeAllPositions()">Close All Positions</button>
+                    <button class="btn btn-primary btn-sm" onclick="refreshPositions()">🔄 Refresh</button>
+                </div>
+                <div class="table-container">
+                    <table id="positionsTable">
+                        <thead>
+                            <tr>
+                                <th>Account</th>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Volume</th>
+                                <th>Open Price</th>
+                                <th>Current Price</th>
+                                <th>P&L</th>
+                                <th>Pips</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orders Tab -->
+        <div id="orders" class="tab-content">
+            <div class="card">
+                <h3>📋 New Order</h3>
+                <form id="newOrderForm" class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Account</label>
+                        <select class="form-input" id="orderAccount">
+                            <option value="">All Accounts</option>
+                            <!-- Will be populated by JavaScript -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Symbol</label>
+                        <input type="text" class="form-input" id="orderSymbol" placeholder="EURUSD" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Type</label>
+                        <select class="form-input" id="orderType" required>
+                            <option value="BUY">Market Buy</option>
+                            <option value="SELL">Market Sell</option>
+                            <option value="BUY_LIMIT">Buy Limit</option>
+                            <option value="SELL_LIMIT">Sell Limit</option>
+                            <option value="BUY_STOP">Buy Stop</option>
+                            <option value="SELL_STOP">Sell Stop</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Volume (Lots)</label>
+                        <input type="number" class="form-input" id="orderVolume" step="0.01" min="0.01" value="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Entry Price (Optional)</label>
+                        <input type="number" class="form-input" id="orderPrice" step="0.00001" placeholder="Leave empty for market">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Stop Loss (Optional)</label>
+                        <input type="number" class="form-input" id="orderSL" step="0.00001" placeholder="Stop Loss">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Take Profit (Optional)</label>
+                        <input type="number" class="form-input" id="orderTP" step="0.00001" placeholder="Take Profit">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Comment</label>
+                        <input type="text" class="form-input" id="orderComment" placeholder="Web Dashboard Order">
+                    </div>
+                </form>
+                <button type="submit" class="btn btn-primary" onclick="placeOrder()">📈 Place Order</button>
+            </div>
+
+            <div class="card">
+                <h3>📋 Pending Orders</h3>
+                <button class="btn btn-primary btn-sm" onclick="refreshOrders()">🔄 Refresh</button>
+                <div class="table-container">
+                    <table id="ordersTable">
+                        <thead>
+                            <tr>
+                                <th>Account</th>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Volume</th>
+                                <th>Entry Price</th>
+                                <th>SL</th>
+                                <th>TP</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Risk Management Tab -->
+        <div id="risk" class="tab-content">
+            <div class="card">
+                <h3>🛡️ Risk Settings</h3>
+                <form id="riskForm" class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Account</label>
+                        <select class="form-input" id="riskAccount" required>
+                            <!-- Will be populated by JavaScript -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Risk Per Trade (%)</label>
+                        <input type="number" class="form-input" id="maxRiskPerTrade" step="0.1" min="0.1" max="10" value="2">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Daily Risk (%)</label>
+                        <input type="number" class="form-input" id="maxDailyRisk" step="0.1" min="0.1" max="20" value="6">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Positions</label>
+                        <input type="number" class="form-input" id="maxPositions" min="1" max="20" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Auto Stop Loss (Pips)</label>
+                        <input type="number" class="form-input" id="autoSLDistance" min="10" max="500" value="50">
+                    </div>
+                </form>
+                <button class="btn btn-primary" onclick="updateRiskSettings()">💾 Save Settings</button>
+            </div>
+
+            <div class="card">
+                <h3>📊 Risk Exposure</h3>
+                <div id="riskExposure">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Accounts Tab -->
+        <div id="accounts" class="tab-content">
+            <div class="card">
+                <h3>🏦 Account Details</h3>
+                <div id="accountDetails">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Emergency Tab -->
+        <div id="emergency" class="tab-content">
+            <div class="card emergency-panel">
+                <h3>🚨 Emergency Controls</h3>
+                <p style="margin-bottom: 20px; color: #ffffff;">
+                    ⚠️ These actions will immediately affect all trading activities. Use with extreme caution.
+                </p>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+                    <button class="btn btn-danger" onclick="emergencyCloseAll()" style="padding: 20px;">
+                        🛑 CLOSE ALL POSITIONS
+                    </button>
+                    <button class="btn btn-danger" onclick="emergencyCancelAll()" style="padding: 20px;">
+                        ❌ CANCEL ALL ORDERS
+                    </button>
+                    <button class="btn btn-danger" onclick="emergencyPause()" style="padding: 20px;">
+                        ⏸️ PAUSE ALL TRADING
+                    </button>
+                    <button class="btn btn-success" onclick="emergencyResume()" style="padding: 20px;">
+                        ▶️ RESUME TRADING
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="text-align: center; color: white;">
+            <div class="loading" style="width: 50px; height: 50px; margin-bottom: 20px;"></div>
+            <h3>Processing...</h3>
+        </div>
+    </div>
+
+    <script src="trading-management.js"></script>
+</body>
+</html>

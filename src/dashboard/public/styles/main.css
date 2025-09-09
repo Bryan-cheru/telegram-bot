@@ -568,10 +568,74 @@ select:focus {
   font-style: italic;
 }
 
-/* Responsive Design */
+/* ========== ENHANCED MOBILE-FIRST RESPONSIVE DESIGN ========== */
+
+/* Mobile Navigation Improvements */
+.mobile-nav-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+  backdrop-filter: blur(4px);
+}
+
+.mobile-nav-overlay.active {
+  display: block;
+}
+
+/* Touch-friendly improvements */
+.nav-link,
+.btn,
+.status-badge {
+  min-height: 44px; /* Apple's recommended touch target size */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Enhanced Mobile Header */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  backdrop-filter: blur(10px);
+  background: rgba(30, 41, 59, 0.95);
+  border-bottom: 1px solid var(--gray-600);
+}
+
+/* Tablet Styles (768px - 1024px) */
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 240px;
+  }
+  
+  .main-content {
+    margin-left: 240px;
+  }
+  
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-lg);
+  }
+  
+  .card-body {
+    padding: var(--space-lg);
+  }
+}
+
+/* Mobile Styles (768px and below) */
 @media (max-width: 768px) {
+  /* Sidebar becomes slide-over on mobile */
   .sidebar {
     transform: translateX(-100%);
+    width: 280px;
+    box-shadow: var(--shadow-lg);
+    background: var(--gray-800);
+    border-right: none;
   }
   
   .sidebar.open {
@@ -580,40 +644,429 @@ select:focus {
   
   .main-content {
     margin-left: 0;
+    width: 100%;
   }
   
   .menu-toggle {
-    display: block;
+    display: flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.2s ease;
   }
   
+  .menu-toggle:hover {
+    background: var(--primary-hover);
+    transform: scale(1.05);
+  }
+  
+  /* Header improvements for mobile */
+  .header {
+    padding: var(--space-md);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+  
+  .header-left {
+    flex: 1;
+    min-width: 200px;
+  }
+  
+  .header-right {
+    flex-shrink: 0;
+  }
+  
+  /* Single column layout for mobile */
   .stats-grid {
     grid-template-columns: 1fr;
+    gap: var(--space-md);
   }
   
   .content {
     padding: var(--space-md);
   }
   
-  .card-header,
+  /* Card improvements for mobile */
+  .card {
+    margin-bottom: var(--space-lg);
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+  }
+  
+  .card-header {
+    padding: var(--space-lg) var(--space-md);
+    background: var(--gray-700);
+    border-bottom: 1px solid var(--gray-600);
+  }
+  
   .card-body {
     padding: var(--space-md);
   }
+  
+  /* Better stat cards for mobile */
+  .stat-card {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-lg);
+    background: linear-gradient(135deg, var(--gray-700), var(--gray-600));
+    border-radius: var(--border-radius-lg);
+    border: 1px solid var(--gray-500);
+    min-height: 80px;
+  }
+  
+  .stat-icon {
+    width: 48px;
+    height: 48px;
+    background: var(--primary-light);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+    font-size: 20px;
+  }
+  
+  .stat-content {
+    flex: 1;
+    text-align: right;
+  }
+  
+  .stat-label {
+    font-size: var(--font-size-sm);
+    color: var(--gray-300);
+    margin-bottom: var(--space-xs);
+  }
+  
+  .stat-value {
+    font-size: var(--font-size-xl);
+    font-weight: 700;
+    color: var(--white);
+  }
 }
 
+/* Small Mobile Styles (480px and below) */
 @media (max-width: 480px) {
+  /* Even more compact header */
   .header {
-    padding: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
   }
   
   .header-left h1 {
-    font-size: var(--font-size-xl);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+  }
+  
+  /* Smaller sidebar for very small screens */
+  .sidebar {
+    width: 100vw;
+    max-width: 320px;
+  }
+  
+  /* Tighter content spacing */
+  .content {
+    padding: var(--space-sm);
+  }
+  
+  /* Compact stat cards */
+  .stat-card {
+    padding: var(--space-md);
+    min-height: 70px;
+  }
+  
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+  
+  .stat-value {
+    font-size: var(--font-size-lg);
+  }
+  
+  /* Better button spacing */
+  .btn {
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--font-size-sm);
+    min-height: 44px;
+  }
+  
+  /* Improved form elements */
+  .form-group {
+    margin-bottom: var(--space-lg);
+  }
+  
+  .form-control {
+    padding: var(--space-md);
+    font-size: var(--font-size-base);
+    border-radius: var(--border-radius);
+    min-height: 44px;
+  }
+  
+  /* Better table responsiveness */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -var(--space-sm);
+  }
+  
+  .table {
+    min-width: 600px;
+    font-size: var(--font-size-sm);
+  }
+  
+  .table th,
+  .table td {
+    padding: var(--space-sm);
+    white-space: nowrap;
+  }
+}
+
+/* Extra small screens (360px and below) */
+@media (max-width: 360px) {
+  .header-left h1 {
+    font-size: var(--font-size-base);
   }
   
   .stat-card {
     flex-direction: column;
     text-align: center;
-    gap: var(--space-md);
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-sm);
   }
+  
+  .stat-content {
+    text-align: center;
+  }
+}
+
+/* Landscape orientation on mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+  .header {
+    padding: var(--space-sm) var(--space-md);
+  }
+  
+  .sidebar {
+    height: 100vh;
+    overflow-y: auto;
+  }
+  
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Dark mode mobile optimizations */
+@media (prefers-color-scheme: dark) {
+  .mobile-nav-overlay {
+    background: rgba(0, 0, 0, 0.7);
+  }
+  
+  .header {
+    background: rgba(15, 23, 42, 0.95);
+    border-bottom-color: var(--gray-700);
+  }
+}
+
+/* ========== MOBILE NOTIFICATIONS & LOADING STATES ========== */
+
+/* Enhanced mobile notifications */
+.notification {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 40px);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--border-radius-lg);
+  color: white;
+  font-weight: 600;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateX(-50%) translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
+
+.notification.success {
+  background: linear-gradient(135deg, var(--success), #059669);
+}
+
+.notification.error {
+  background: linear-gradient(135deg, var(--danger), #dc2626);
+}
+
+.notification.info {
+  background: linear-gradient(135deg, var(--info), #0891b2);
+}
+
+.notification.warning {
+  background: linear-gradient(135deg, var(--warning), #d97706);
+}
+
+/* Mobile loading states */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(4px);
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid var(--gray-600);
+  border-top: 4px solid var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+  margin-top: var(--space-md);
+  color: var(--gray-300);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+/* Mobile-specific button enhancements */
+@media (max-width: 768px) {
+  .btn {
+    min-height: 48px;
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--font-size-base);
+    border-radius: var(--border-radius-lg);
+    transition: all 0.2s ease;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  .btn:active {
+    transform: scale(0.98);
+  }
+  
+  .btn-primary {
+    background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+    border: none;
+    color: white;
+    font-weight: 600;
+  }
+  
+  .btn-primary:hover,
+  .btn-primary:focus {
+    background: linear-gradient(135deg, var(--primary-hover), #1d4ed8);
+    box-shadow: 0 0 0 3px var(--primary-light);
+  }
+  
+  .btn-secondary {
+    background: var(--gray-600);
+    color: white;
+    border: 1px solid var(--gray-500);
+  }
+  
+  .btn-secondary:hover,
+  .btn-secondary:focus {
+    background: var(--gray-500);
+    border-color: var(--gray-400);
+  }
+}
+
+/* Table scroll indicators */
+.table-responsive {
+  position: relative;
+}
+
+.table-responsive::before,
+.table-responsive::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 20px;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+  transition: opacity 0.2s ease;
+}
+
+.table-responsive::before {
+  left: 0;
+  background: linear-gradient(90deg, var(--gray-800), transparent);
+  opacity: 0;
+}
+
+.table-responsive::after {
+  right: 0;
+  background: linear-gradient(-90deg, var(--gray-800), transparent);
+  opacity: 0;
+}
+
+.table-responsive.scrolled-left::before {
+  opacity: 1;
+}
+
+.table-responsive.has-more-right::after {
+  opacity: 1;
+}
+
+/* Pull-to-refresh indicator */
+.pull-to-refresh {
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+  background: var(--primary);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  opacity: 0;
+  transition: all 0.3s ease;
+}
+
+.pull-to-refresh.visible {
+  opacity: 1;
+  top: 20px;
+}
+
+.pull-to-refresh i {
+  transition: transform 0.3s ease;
+}
+
+.pull-to-refresh.loading i {
+  animation: spin 1s linear infinite;
 }
 
 /* ========== MT5 TRADING DASHBOARD STYLES ========== */
@@ -941,6 +1394,21 @@ select:focus {
 @media (max-width: 768px) {
   .account-summary {
     grid-template-columns: 1fr;
+    gap: var(--space-md);
+  }
+  
+  .summary-item {
+    padding: var(--space-lg);
+    background: linear-gradient(135deg, var(--gray-700), var(--gray-600));
+    border-radius: var(--border-radius-lg);
+    border: 1px solid var(--gray-500);
+    transition: all 0.2s ease;
+    min-height: 60px;
+  }
+  
+  .summary-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
   }
   
   .positions-table {
@@ -950,14 +1418,88 @@ select:focus {
   .positions-table th,
   .positions-table td {
     padding: var(--space-sm);
+    min-width: 80px;
+  }
+  
+  /* Horizontal scroll for tables on mobile */
+  .positions-table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -var(--space-md);
+    padding: 0 var(--space-md);
+  }
+  
+  .positions-table {
+    min-width: 600px;
   }
   
   .performance-stats {
     gap: var(--space-md);
+    grid-template-columns: 1fr;
   }
   
   .perf-item {
     padding: var(--space-md);
+    background: var(--gray-700);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--gray-600);
+  }
+  
+  .perf-value {
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+  }
+  
+  .perf-label {
+    font-size: var(--font-size-sm);
+    color: var(--gray-300);
+  }
+  
+  /* Mobile trade actions */
+  .trade-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+  }
+  
+  .trade-actions .btn {
+    width: 100%;
+    padding: var(--space-md) var(--space-lg);
+    min-height: 48px;
+    border-radius: var(--border-radius-lg);
+    font-weight: 600;
+  }
+}
+
+/* Small mobile specific adjustments */
+@media (max-width: 480px) {
+  .trading-overview {
+    margin-top: var(--space-md);
+  }
+  
+  .summary-item {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--space-xs);
+    padding: var(--space-md);
+    min-height: auto;
+  }
+  
+  .summary-item .label {
+    font-size: var(--font-size-xs);
+  }
+  
+  .summary-item .value {
+    font-size: var(--font-size-base);
+  }
+  
+  .performance-stats {
+    gap: var(--space-sm);
+  }
+  
+  .perf-item {
+    padding: var(--space-sm);
   }
   
   .perf-value {
@@ -1477,29 +2019,225 @@ select:focus {
   margin-bottom: var(--space-sm);
 }
 
-/* Responsive Design */
+/* ========== ENHANCED MULTI-ACCOUNT MOBILE RESPONSIVENESS ========== */
+
+/* Tablet adjustments */
+@media (max-width: 1024px) {
+  .accounts-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-lg);
+  }
+  
+  .account-card {
+    min-height: 250px;
+  }
+  
+  .account-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Mobile Design */
 @media (max-width: 768px) {
   .accounts-grid {
     grid-template-columns: 1fr;
+    gap: var(--space-md);
+  }
+  
+  .account-card {
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+  
+  .account-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+  }
+  
+  .account-name {
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+  }
+  
+  .account-status {
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
   
   .account-metrics {
     grid-template-columns: 1fr;
+    gap: var(--space-sm);
   }
   
-  .trades-table-container {
+  .metric-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--gray-600);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--gray-500);
+  }
+  
+  .metric-label {
     font-size: var(--font-size-sm);
+    color: var(--gray-300);
+    font-weight: 500;
+  }
+  
+  .metric-value {
+    font-size: var(--font-size-base);
+    font-weight: 700;
+    color: var(--white);
+  }
+  
+  .metric-value.positive {
+    color: var(--success);
+  }
+  
+  .metric-value.negative {
+    color: var(--danger);
+  }
+  
+  /* Enhanced table responsiveness */
+  .trades-table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: var(--space-md) -var(--space-md) 0;
+    padding: 0 var(--space-md);
+    font-size: var(--font-size-sm);
+  }
+  
+  .trades-table {
+    min-width: 700px;
+    width: 100%;
   }
   
   .trades-table th,
   .trades-table td {
     padding: var(--space-sm);
+    white-space: nowrap;
+    min-width: 80px;
   }
   
+  .trades-table th {
+    background: var(--gray-700);
+    font-weight: 600;
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .trades-table td {
+    border-bottom: 1px solid var(--gray-600);
+  }
+  
+  /* Mobile header actions */
   .header-actions {
     flex-direction: column;
     align-items: stretch;
     gap: var(--space-sm);
+    width: 100%;
+  }
+  
+  .header-actions .btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 44px;
+    padding: var(--space-md);
+    border-radius: var(--border-radius-lg);
+    font-weight: 600;
+  }
+  
+  /* Mobile filters and controls */
+  .filters-container {
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--gray-700);
+    border-radius: var(--border-radius-lg);
+    margin-bottom: var(--space-lg);
+  }
+  
+  .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+  
+  .filter-label {
+    font-size: var(--font-size-sm);
+    color: var(--gray-300);
+    font-weight: 500;
+  }
+  
+  .filter-control {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--gray-600);
+    border: 1px solid var(--gray-500);
+    border-radius: var(--border-radius);
+    color: var(--white);
+    min-height: 40px;
+  }
+}
+
+/* Small mobile adjustments */
+@media (max-width: 480px) {
+  .account-card {
+    padding: var(--space-sm);
+  }
+  
+  .account-header {
+    margin-bottom: var(--space-sm);
+  }
+  
+  .account-name {
+    font-size: var(--font-size-base);
+  }
+  
+  .metric-item {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
+  }
+  
+  .metric-label {
+    font-size: var(--font-size-xs);
+  }
+  
+  .metric-value {
+    font-size: var(--font-size-sm);
+  }
+  
+  .trades-table {
+    min-width: 500px;
+  }
+  
+  .trades-table th,
+  .trades-table td {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--font-size-xs);
+  }
+}
+
+/* Landscape mobile adjustments */
+@media (max-width: 768px) and (orientation: landscape) {
+  .accounts-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .account-metrics {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 

@@ -24,11 +24,14 @@ class TradingDashboard {
       link.addEventListener('click', this.handleNavigation.bind(this));
     });
 
-    // Mobile menu toggle
+    // Enhanced mobile menu toggle
     const menuToggle = document.getElementById('menu-toggle');
     if (menuToggle) {
       menuToggle.addEventListener('click', this.toggleSidebar.bind(this));
     }
+
+    // Mobile navigation enhancements
+    this.setupMobileEnhancements();
 
     // Account form
     const accountForm = document.getElementById('account-form');
@@ -47,6 +50,171 @@ class TradingDashboard {
     if (clearLogsBtn) {
       clearLogsBtn.addEventListener('click', this.clearLogs.bind(this));
     }
+
+    // Touch and swipe gestures for mobile
+    this.setupTouchGestures();
+    
+    // Responsive table handling
+    this.setupResponsiveTables();
+  }
+
+  setupMobileEnhancements() {
+    // Create mobile overlay for sidebar
+    if (!document.querySelector('.mobile-nav-overlay')) {
+      const overlay = document.createElement('div');
+      overlay.className = 'mobile-nav-overlay';
+      overlay.addEventListener('click', () => this.closeSidebar());
+      document.body.appendChild(overlay);
+    }
+
+    // Handle orientation changes
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        this.handleOrientationChange();
+      }, 100);
+    });
+
+    // Handle resize events for responsive adjustments
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        this.handleResize();
+      }, 250);
+    });
+
+    // Prevent zoom on double tap for better mobile UX
+    let lastTouchEnd = 0;
+    document.addEventListener('touchend', (event) => {
+      const now = (new Date()).getTime();
+      if (now - lastTouchEnd <= 300) {
+        event.preventDefault();
+      }
+      lastTouchEnd = now;
+    }, false);
+  }
+
+  setupTouchGestures() {
+    let startX = 0;
+    let startY = 0;
+    let isScrolling = false;
+
+    document.addEventListener('touchstart', (e) => {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      isScrolling = false;
+    });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!startX || !startY) return;
+
+      const diffX = e.touches[0].clientX - startX;
+      const diffY = e.touches[0].clientY - startY;
+
+      if (Math.abs(diffY) > Math.abs(diffX)) {
+        isScrolling = true;
+        return;
+      }
+
+      // Swipe right to open sidebar (only if closed and near left edge)
+      if (diffX > 50 && startX < 20 && !isScrolling && window.innerWidth <= 768) {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar && !sidebar.classList.contains('open')) {
+          this.openSidebar();
+        }
+      }
+
+      // Swipe left to close sidebar (only if open)
+      if (diffX < -50 && !isScrolling && window.innerWidth <= 768) {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar && sidebar.classList.contains('open')) {
+          this.closeSidebar();
+        }
+      }
+    });
+
+    document.addEventListener('touchend', () => {
+      startX = 0;
+      startY = 0;
+      isScrolling = false;
+    });
+  }
+
+  setupResponsiveTables() {
+    // Add horizontal scroll indicators for tables on mobile
+    const tables = document.querySelectorAll('.table-responsive');
+    tables.forEach(table => {
+      table.addEventListener('scroll', (e) => {
+        const scrollLeft = e.target.scrollLeft;
+        const scrollWidth = e.target.scrollWidth;
+        const clientWidth = e.target.clientWidth;
+
+        // Add/remove scroll indicators
+        if (scrollLeft > 0) {
+          e.target.classList.add('scrolled-left');
+        } else {
+          e.target.classList.remove('scrolled-left');
+        }
+
+        if (scrollLeft + clientWidth < scrollWidth - 5) {
+          e.target.classList.add('has-more-right');
+        } else {
+          e.target.classList.remove('has-more-right');
+        }
+      });
+
+      // Initial scroll position check
+      const event = new Event('scroll');
+      table.dispatchEvent(event);
+    });
+  }
+
+  handleOrientationChange() {
+    // Recalculate layouts after orientation change
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar && window.innerWidth <= 768) {
+      sidebar.classList.remove('open');
+      this.updateOverlay(false);
+    }
+
+    // Refresh charts if they exist
+    if (typeof this.refreshCharts === 'function') {
+      setTimeout(() => {
+        this.refreshCharts();
+      }, 300);
+    }
+  }
+
+  handleResize() {
+    const sidebar = document.getElementById('sidebar');
+    
+    // Auto-close sidebar on desktop
+    if (window.innerWidth > 768 && sidebar) {
+      sidebar.classList.remove('open');
+      this.updateOverlay(false);
+    }
+
+    // Update responsive elements
+    this.updateResponsiveElements();
+  }
+
+  updateResponsiveElements() {
+    // Update table containers
+    const tables = document.querySelectorAll('.table-responsive');
+    tables.forEach(table => {
+      const event = new Event('scroll');
+      table.dispatchEvent(event);
+    });
+
+    // Update card layouts
+    const cards = document.querySelectorAll('.stat-card, .account-card');
+    cards.forEach(card => {
+      if (window.innerWidth <= 480) {
+        card.classList.add('compact');
+      } else {
+        card.classList.remove('compact');
+      }
+    });
   }
 
   handleNavigation(e) {
@@ -452,7 +620,44 @@ class TradingDashboard {
 
   toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('open');
+    const isOpen = sidebar.classList.contains('open');
+    
+    if (isOpen) {
+      this.closeSidebar();
+    } else {
+      this.openSidebar();
+    }
+  }
+
+  openSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.add('open');
+    this.updateOverlay(true);
+    
+    // Prevent body scroll on mobile when sidebar is open
+    if (window.innerWidth <= 768) {
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  closeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.remove('open');
+    this.updateOverlay(false);
+    
+    // Restore body scroll
+    document.body.style.overflow = '';
+  }
+
+  updateOverlay(show) {
+    const overlay = document.querySelector('.mobile-nav-overlay');
+    if (overlay) {
+      if (show && window.innerWidth <= 768) {
+        overlay.classList.add('active');
+      } else {
+        overlay.classList.remove('active');
+      }
+    }
   }
 
   showNotification(message, type = 'info') {

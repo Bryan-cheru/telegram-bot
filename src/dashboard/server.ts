@@ -4,6 +4,7 @@ import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
 import { MultiAccountMetaApiExecutor } from '../mt5/multiAccountMetaApiExecutor';
+import tradingAPIRouter, { initializeTradingAPI } from './tradingAPI';
 
 const app = express();
 
@@ -34,6 +35,8 @@ let mt5LastUpdate = 0;
 // Import the shared executor instance
 export const setSharedExecutor = (executor: MultiAccountMetaApiExecutor) => {
   multiAccountExecutor = executor;
+  // Initialize trading API when executor is set
+  initializeTradingAPI(executor);
 };
 
 // Initialize MT5 connection for dashboard (use shared instance)
@@ -241,6 +244,9 @@ app.get('/', (req, res) => {
 app.get('/api/status', (req, res) => {
   res.json(botStatus);
 });
+
+// Mount Trading Management API
+app.use('/api/trading', tradingAPIRouter);
 
 app.get('/api/logs', (req, res) => {
   const limit = parseInt(req.query.limit as string) || 100;

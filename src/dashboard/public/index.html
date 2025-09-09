@@ -2,11 +2,34 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Enhanced mobile viewport with better touch handling -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+    
+    <!-- PWA and mobile app meta tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TradingBot Pro">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="msapplication-navbutton-color" content="#3b82f6">
+    
+    <!-- Better mobile experience -->
+    <meta name="format-detection" content="telephone=no">
+    <meta name="msapplication-tap-highlight" content="no">
+    
     <title>TradingBot Pro - Professional Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Preload critical fonts for better performance -->
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"></noscript>
+    
+    <!-- Icons and stylesheets -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="styles/main.css">
+    
+    <!-- Favicon for mobile -->
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'><path d='M3 13h8V3H9v6H3v4zm6 8h8v-8h-2v6H9v2z'/></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'><path d='M3 13h8V3H9v6H3v4zm6 8h8v-8h-2v6H9v2z'/></svg>">
 </head>
 <body>
     <!-- Navigation -->
@@ -23,6 +46,9 @@
             </a></li>
             <li><a href="#trading" class="nav-link" data-page="trading">
                 <i class="fas fa-chart-candlestick"></i> Live Trading
+            </a></li>
+            <li><a href="trading-management.html" class="nav-link" target="_blank">
+                <i class="fas fa-cogs"></i> Trading Control
             </a></li>
             <li><a href="#accounts" class="nav-link" data-page="accounts">
                 <i class="fas fa-wallet"></i> Account Settings
@@ -356,7 +382,40 @@
     </main>
 
     <!-- Scripts -->
+    <script src="scripts/mobile-enhancements.js"></script>
     <script src="scripts/dashboard.js"></script>
     <script src="scripts/multiAccountDashboard.js"></script>
+    
+    <!-- Service Worker for better mobile performance (optional) -->
+    <!-- Trading Management Floating Action Button -->
+    <div class="fab" onclick="window.open('trading-management.html', '_blank')" 
+         title="Open Trading Management" style="
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 60px;
+        height: 60px;
+        background: linear-gradient(45deg, #ffd700, #ffed4e);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(255, 215, 0, 0.4);
+        z-index: 1000;
+        transition: all 0.3s ease;
+        color: #1e3c72;
+        font-size: 20px;
+    " onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">
+        <i class="fas fa-cogs"></i>
+    </div>
+
+    <script>
+        if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
+            navigator.serviceWorker.register('/sw.js').catch(() => {
+                // Service worker registration failed (optional feature)
+            });
+        }
+    </script>
 </body>
 </html>
