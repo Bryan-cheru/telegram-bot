@@ -47,12 +47,12 @@ export class CleanSymbolManager {
     if (brokerName === 'IFPro-Trade') {
       logger.info(`🔧 IFPro-Trade Debug - Terminal State:`);
       logger.info(`   - Connected: ${connection.terminalState.connected}`);
-      logger.info(`   - Synchronized: ${connection.synchronized}`);
+      logger.info(`   - Synchronized: ${connection.terminalState.synchronized}`);
       logger.info(`   - Specifications count: ${Object.keys(connection.terminalState.specifications || {}).length}`);
     }
 
-    // Step 1: Ensure terminal is synchronized
-    if (!connection.synchronized) {
+    // Step 1: Ensure terminal is synchronized (critical for IFPro-Trade)
+    if (!connection.terminalState.synchronized) {
       logger.info('⏳ Waiting for terminal synchronization...');
       await Promise.race([
         connection.waitSynchronized(),
@@ -60,16 +60,24 @@ export class CleanSymbolManager {
           setTimeout(() => reject(new Error('Synchronization timeout')), 30000)
         )
       ]);
+      
+      // Verify synchronization completed
+      if (brokerName === 'IFPro-Trade') {
+        logger.info(`🔧 IFPro-Trade - Post-sync specifications count: ${Object.keys(connection.terminalState.specifications || {}).length}`);
+      }
     }
 
     // Step 2: Get symbol variations to try
     const variations = this.getSymbolVariations(inputSymbol, brokerName);
     logger.debug(`Trying variations: ${variations.join(', ')}`);
 
-    // Step 3: Test each variation using MetaAPI specification method
+    // Step 3: Test each variation using direct specifications access (more reliable)
+    const specifications = connection.terminalState.specifications || {};
+    
     for (const symbol of variations) {
       try {
-        const specification = connection.terminalState.specification(symbol);
+        // Try direct access first (more reliable for IFPro-Trade)
+        const specification = specifications[symbol];
         
         // Enhanced debugging for IFPro-Trade
         if (brokerName === 'IFPro-Trade') {
