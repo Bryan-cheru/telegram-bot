@@ -115,13 +115,18 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       accountConfig.connection = accountConfig.account.getStreamingConnection();
       await accountConfig.connection.connect();
       
-      // Wait for synchronization - simple timeout with Promise.race
-      await Promise.race([
-        accountConfig.connection.waitSynchronized(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Synchronization timeout')), 30000)
-        )
-      ]);
+      // Use enhanced synchronization with retry logic
+      await CleanSymbolManager.ensureConnectionReady(
+        accountConfig.connection, 
+        accountConfig.brokerName,
+        3 // max retries
+      );
+
+      // Initialize symbol learning for this broker
+      await CleanSymbolManager.initializeBrokerLearning(
+        accountConfig.connection,
+        accountConfig.brokerName
+      );
 
       accountConfig.status = 'CONNECTED';
       logger.info(`✅ ${accountConfig.brokerName} connected successfully`);
