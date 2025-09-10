@@ -209,6 +209,27 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         throw new Error('Connection not available');
       }
 
+      // Enhanced connection status check for IFPro-Trade debugging
+      if (accountConfig.brokerName === 'IFPro-Trade') {
+        const terminalState = accountConfig.connection.terminalState;
+        const accountInfo = terminalState.accountInformation;
+        logger.info(`🔍 IFPro-Trade connection status:`);
+        logger.info(`   - Connected: ${terminalState.connected}`);
+        logger.info(`   - ConnectedToBroker: ${terminalState.connectedToBroker}`);
+        logger.info(`   - Synchronized: ${accountConfig.connection.synchronized}`);
+        logger.info(`   - Account Info Available: ${!!accountInfo}`);
+        if (accountInfo) {
+          logger.info(`   - Balance: ${accountInfo.balance}`);
+          logger.info(`   - Equity: ${accountInfo.equity}`);
+          logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
+          logger.info(`   - Margin Mode: ${accountInfo.marginMode}`);
+          logger.info(`   - Currency: ${accountInfo.currency}`);
+          logger.info(`   - Server: ${accountInfo.server}`);
+          logger.info(`   - Name: ${accountInfo.name}`);
+          logger.info(`   - Login: ${accountInfo.login}`);
+        }
+      }
+
       // Step 1: Get valid symbol using clean symbol manager
       const validSymbol = await CleanSymbolManager.getValidSymbol(
         signal.symbol,
@@ -278,14 +299,19 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       };
 
     } catch (error: any) {
-      logger.error(`❌ Trade failed on ${accountConfig.brokerName}:`, error.message);
+      // Enhanced error logging for IFPro-Trade debugging
+      logger.error(`❌ Trade failed on ${accountConfig.brokerName}:`);
+      logger.error(`❌ Error message: ${error.message}`);
+      logger.error(`❌ Error details: ${JSON.stringify(error.details || {}, null, 2)}`);
+      logger.error(`❌ Error code: ${error.stringCode || 'N/A'}`);
+      logger.error(`❌ Full error:`, error);
       
       return {
         accountId: accountConfig.id,
         brokerName: accountConfig.brokerName,
         success: false,
         message: 'Trade execution failed',
-        error: error.message
+        error: error.message || 'Unknown error'
       };
     }
   }

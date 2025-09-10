@@ -43,6 +43,14 @@ export class CleanSymbolManager {
   ): Promise<string> {
     logger.info(`🔍 Validating symbol ${inputSymbol} for ${brokerName}...`);
 
+    // Enhanced debugging for IFPro-Trade
+    if (brokerName === 'IFPro-Trade') {
+      logger.info(`🔧 IFPro-Trade Debug - Terminal State:`);
+      logger.info(`   - Connected: ${connection.terminalState.connected}`);
+      logger.info(`   - Synchronized: ${connection.synchronized}`);
+      logger.info(`   - Specifications count: ${Object.keys(connection.terminalState.specifications || {}).length}`);
+    }
+
     // Step 1: Ensure terminal is synchronized
     if (!connection.synchronized) {
       logger.info('⏳ Waiting for terminal synchronization...');
@@ -55,13 +63,25 @@ export class CleanSymbolManager {
     }
 
     // Step 2: Get symbol variations to try
-    const variations = this.getSymbolVariations(inputSymbol);
+    const variations = this.getSymbolVariations(inputSymbol, brokerName);
     logger.debug(`Trying variations: ${variations.join(', ')}`);
 
     // Step 3: Test each variation using MetaAPI specification method
     for (const symbol of variations) {
       try {
         const specification = connection.terminalState.specification(symbol);
+        
+        // Enhanced debugging for IFPro-Trade
+        if (brokerName === 'IFPro-Trade') {
+          logger.info(`🔧 IFPro-Trade - Testing symbol: ${symbol}`);
+          logger.info(`   - Specification found: ${!!specification}`);
+          if (specification) {
+            logger.info(`   - Description: ${specification.description}`);
+            logger.info(`   - Trade allowed: ${specification.tradeAllowed !== false}`);
+            logger.info(`   - Digits: ${specification.digits}`);
+            logger.info(`   - Contract size: ${specification.contractSize}`);
+          }
+        }
         
         if (specification && specification.tradeAllowed !== false) {
           logger.info(`✅ Found valid symbol: ${symbol} (${specification.description})`);
@@ -71,8 +91,11 @@ export class CleanSymbolManager {
           
           return symbol;
         }
-      } catch (error) {
+      } catch (error: any) {
         // Symbol doesn't exist, continue to next variation
+        if (brokerName === 'IFPro-Trade') {
+          logger.info(`🔧 IFPro-Trade - Symbol ${symbol} failed: ${error?.message || 'Unknown error'}`);
+        }
         logger.debug(`Symbol ${symbol} not found on ${brokerName}`);
       }
     }
@@ -133,15 +156,20 @@ export class CleanSymbolManager {
   /**
    * Get symbol variations to try, based on common broker naming conventions
    * @param inputSymbol - Original symbol
+   * @param brokerName - Broker name for specific variations
    * @returns Array of symbol variations to try
    */
-  private static getSymbolVariations(inputSymbol: string): string[] {
+  private static getSymbolVariations(inputSymbol: string, brokerName?: string): string[] {
     const symbol = inputSymbol.toUpperCase();
     const variations = [symbol]; // Always try original first
 
-    // Gold variations
+    // Gold variations (including numeric symbols used by some brokers like IFPro-Trade)
     if (symbol === 'GOLD' || symbol === 'XAUUSD') {
-      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm');
+      // For IFPro-Trade, try numeric symbol first since that's what they use
+      if (brokerName === 'IFPro-Trade') {
+        variations.unshift('66'); // Add at beginning to try first
+      }
+      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash', '66');
     }
     // Silver variations
     else if (symbol === 'SILVER' || symbol === 'XAGUSD') {
