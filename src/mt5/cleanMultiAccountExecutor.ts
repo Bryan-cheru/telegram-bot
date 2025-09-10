@@ -385,18 +385,76 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Basic dashboard compatibility methods (simplified)
+   * Get real account data for dashboard (balance, equity, positions, etc.)
    */
   async getAllAccountsData() {
-    return this.getAccountStatuses().map(acc => ({
-      ...acc,
-      balance: 0,
-      equity: 0,
-      freeMargin: 0,
-      marginLevel: 0,
-      positions: [],
-      lastUpdate: Date.now()
-    }));
+    const accountStatuses = this.getAccountStatuses();
+    
+    return accountStatuses.map(acc => {
+      const accountConfig = this.accounts.get(acc.id);
+      
+      // If account is not connected or no connection, return basic info with zeros
+      if (acc.status !== 'CONNECTED' || !accountConfig?.connection?.terminalState) {
+        return {
+          ...acc,
+          balance: 0,
+          equity: 0,
+          freeMargin: 0,
+          marginLevel: 0,
+          positions: [],
+          lastUpdate: Date.now()
+        };
+      }
+      
+      try {
+        // Get real account information from MetaAPI terminal state
+        const accountInfo = accountConfig.connection.terminalState.accountInformation || {};
+        const positions = accountConfig.connection.terminalState.positions || [];
+        
+        // Extract real financial data
+        const balance = accountInfo.balance || 0;
+        const equity = accountInfo.equity || balance;
+        const freeMargin = accountInfo.freeMargin || 0;
+        const marginLevel = accountInfo.marginLevel || 0;
+        
+        // Format positions with essential info for dashboard
+        const formattedPositions = positions.map((pos: any) => ({
+          id: pos.id,
+          symbol: pos.symbol,
+          type: pos.type,
+          volume: pos.volume,
+          openPrice: pos.openPrice,
+          currentPrice: pos.currentPrice || pos.openPrice,
+          profit: pos.profit || 0,
+          swap: pos.swap || 0,
+          commission: pos.commission || 0,
+          openTime: pos.openTime
+        }));
+        
+        return {
+          ...acc,
+          balance: parseFloat(balance.toFixed(2)),
+          equity: parseFloat(equity.toFixed(2)),
+          freeMargin: parseFloat(freeMargin.toFixed(2)),
+          marginLevel: parseFloat(marginLevel.toFixed(2)),
+          positions: formattedPositions,
+          lastUpdate: Date.now()
+        };
+        
+      } catch (error) {
+        logger.error(`Error getting account data for ${acc.brokerName}:`, error);
+        return {
+          ...acc,
+          balance: 0,
+          equity: 0,
+          freeMargin: 0,
+          marginLevel: 0,
+          positions: [],
+          lastUpdate: Date.now(),
+          error: 'Failed to fetch account data'
+        };
+      }
+    });
   }
 
   async closePosition(accountId: string, positionId: string) {
