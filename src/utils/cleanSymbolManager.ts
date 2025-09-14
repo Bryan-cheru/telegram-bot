@@ -191,6 +191,14 @@ export class CleanSymbolManager {
         }
         
         if (specification && specification.tradeAllowed !== false) {
+          // Validate that the found symbol actually matches what we're looking for
+          const isValidMatch = this.validateSymbolMatch(inputSymbol, symbol, specification.description);
+          
+          if (!isValidMatch) {
+            logger.warn(`⚠️ ${symbol} found but description doesn't match ${inputSymbol}: ${specification.description}`);
+            continue; // Try next variation
+          }
+          
           // Additional validation for production safety
           if (specification.minVolume && specification.minVolume > 100) {
             logger.warn(`⚠️ ${symbol} has high minimum volume: ${specification.minVolume}`);
@@ -320,9 +328,13 @@ export class CleanSymbolManager {
       }
     }
 
-    // Gold variations (including numeric symbols used by some brokers like IFPro-Trade)
+    // Gold variations - only add numeric symbols for specific brokers
     if (symbol === 'GOLD' || symbol === 'XAUUSD') {
-      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash', '67', '66');
+      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash');
+      // Only add numeric symbols for brokers that actually use them for Gold
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('67'); // IFPro-Trade specific Gold symbol
+      }
     }
     // Silver variations
     else if (symbol === 'SILVER' || symbol === 'XAGUSD') {
@@ -603,9 +615,9 @@ export class CleanSymbolManager {
     const upperSymbol = symbol.toUpperCase();
     const desc = description?.toLowerCase() || '';
     
-    // Gold symbols
+    // Gold symbols - REMOVED numeric assumption (66 varies by broker)
     if (upperSymbol.includes('XAU') || upperSymbol.includes('GOLD') || 
-        desc.includes('gold') || upperSymbol === '66') {
+        desc.includes('gold')) {
       return 'GOLD';
     }
     
@@ -688,7 +700,7 @@ export class CleanSymbolManager {
 
     if (symbol === 'GOLD' || symbol === 'XAUUSD') {
       if (brokerName === 'IFPro-Trade') {
-        variations.push('66');
+        variations.push('67'); // IFPro-Trade uses 67 for Gold, 66 for Silver
       }
       variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash');
     }
@@ -764,5 +776,43 @@ export class CleanSymbolManager {
     } catch (error: any) {
       return { valid: false, reason: error.message };
     }
+  }
+
+  /**
+   * Validate that a found symbol actually matches the requested instrument
+   * @param requestedSymbol - The symbol we're looking for (e.g., XAUUSD)
+   * @param foundSymbol - The symbol we found on the broker
+   * @param description - The description of the found symbol
+   * @returns True if it's a valid match
+   */
+  private static validateSymbolMatch(requestedSymbol: string, foundSymbol: string, description: string): boolean {
+    const requested = requestedSymbol.toUpperCase();
+    const desc = description.toLowerCase();
+    
+    // If symbols match exactly or are known variations, it's valid
+    if (foundSymbol.toUpperCase() === requested) {
+      return true;
+    }
+    
+    // For Gold/XAUUSD requests
+    if (requested === 'GOLD' || requested === 'XAUUSD') {
+      // Must contain gold-related terms in description
+      return desc.includes('gold') || desc.includes('xau') || 
+             (desc.includes('troy ounce') && desc.includes('gold'));
+    }
+    
+    // For Silver/XAGUSD requests  
+    if (requested === 'SILVER' || requested === 'XAGUSD') {
+      return desc.includes('silver') || desc.includes('xag');
+    }
+    
+    // For forex pairs, be more lenient with exact matches
+    if (requested.length === 6 && requested.match(/^[A-Z]{6}$/)) {
+      return desc.includes(requested.substring(0,3)) && desc.includes(requested.substring(3,6));
+    }
+    
+    // For other symbols, be conservative - require description to contain the symbol name
+    return desc.includes(requested.toLowerCase()) || 
+           foundSymbol.toUpperCase().includes(requested);
   }
 }
