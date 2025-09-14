@@ -119,7 +119,7 @@ export class PhotoHandler {
         return;
       }
 
-      if (ocrResult.confidence < 0.7) {
+      if (ocrResult.confidence < 0.5) {
         logger.warn(`❌ OCR confidence too low: ${(ocrResult.confidence * 100).toFixed(1)}%`);
         tracer.logToSpan(traceId, `Low OCR confidence: ${ocrResult.confidence}`, 'warn');
         if (!ctx.channelPost) {
