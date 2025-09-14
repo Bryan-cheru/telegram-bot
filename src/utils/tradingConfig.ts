@@ -83,6 +83,10 @@ class TradingConfigManager {
           min: parseFloat(process.env.GBPUSD_MIN_PRICE || '1.2000'), 
           max: parseFloat(process.env.GBPUSD_MAX_PRICE || '1.4000') 
         },
+        'USDCHF': { 
+          min: parseFloat(process.env.USDCHF_MIN_PRICE || '0.7000'), 
+          max: parseFloat(process.env.USDCHF_MAX_PRICE || '1.0000') 
+        },
         'NAS100': { 
           min: parseFloat(process.env.NAS100_MIN_PRICE || '15000'), 
           max: parseFloat(process.env.NAS100_MAX_PRICE || '22000') 

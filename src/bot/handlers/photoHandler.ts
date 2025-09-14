@@ -99,54 +99,57 @@ export class PhotoHandler {
       const caption = message.caption || '';
       let tradeSignal = null;
 
-      // Process based on whether there's a caption or not (like your past implementation)
+      // ALWAYS extract OCR text from chart images to get price levels
+      logger.info('📖 Extracting text from chart image...');
+      tracer.logToSpan(traceId, 'Starting OCR extraction');
+      
+      const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
+      tracer.addTagsToSpan(traceId, { 
+        extractedTextLength: ocrResult.text?.length || 0,
+        ocrConfidence: ocrResult.confidence 
+      });
+      this.metrics.recordOCR('tesseract', !!ocrResult.text);
+      
+      if (!ocrResult.text || ocrResult.text.trim().length === 0) {
+        logger.warn('No text extracted from image');
+        tracer.logToSpan(traceId, 'No text extracted from image', 'warn');
+        if (!ctx.channelPost) {
+          await ctx.reply('❌ Could not extract text from image');
+        }
+        return;
+      }
+
+      if (ocrResult.confidence < 0.7) {
+        logger.warn(`❌ OCR confidence too low: ${(ocrResult.confidence * 100).toFixed(1)}%`);
+        tracer.logToSpan(traceId, `Low OCR confidence: ${ocrResult.confidence}`, 'warn');
+        if (!ctx.channelPost) {
+          await ctx.reply(`❌ Image quality too poor for reliable processing. OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
+        }
+        return;
+      }
+
+      logger.info('📄 Extracted text from image:', ocrResult.text.substring(0, 200));
+      logger.info(`📊 OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
+
+      // Process based on whether there's a caption or not
       if (caption && caption.trim().length > 0) {
         logger.info(`📝 Caption found: "${caption.substring(0, 100)}..."`);
         tracer.logToSpan(traceId, 'Processing with caption');
         
-        // Parse trade signal using ML-enhanced method with caption and image
-        tracer.logToSpan(traceId, 'Starting trade signal parsing with caption');
+        // Parse trade signal using ML-enhanced method with caption AND OCR text
+        tracer.logToSpan(traceId, 'Starting trade signal parsing with caption and OCR');
         tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(
-          caption, 
-          caption, 
-          true, // hasChartImage
-          imageBuffer // imageBuffer for ML analysis
+          ocrResult.text,  // Use OCR text for price detection
+          caption,         // Use caption for context
+          true,           // hasChartImage
+          imageBuffer     // imageBuffer for ML analysis
         );
       } else {
-        // No caption - extract text from image using OCR (like your past implementation)
-        logger.info('📖 No caption found, using OCR...');
-        tracer.logToSpan(traceId, 'Starting OCR extraction');
+        // No caption - use OCR text only
+        logger.info('📖 No caption found, using OCR only...');
+        tracer.logToSpan(traceId, 'Starting trade signal parsing with OCR text only');
         
-        const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
-        tracer.addTagsToSpan(traceId, { 
-          extractedTextLength: ocrResult.text?.length || 0,
-          ocrConfidence: ocrResult.confidence 
-        });
-        this.metrics.recordOCR('tesseract', !!ocrResult.text);
-        
-        if (!ocrResult.text || ocrResult.text.trim().length === 0) {
-          logger.warn('No text extracted from image');
-          tracer.logToSpan(traceId, 'No text extracted from image', 'warn');
-          if (!ctx.channelPost) {
-            await ctx.reply('❌ Could not extract text from image');
-          }
-          return;
-        }
-
-        if (ocrResult.confidence < 0.7) {
-          logger.warn(`❌ OCR confidence too low: ${(ocrResult.confidence * 100).toFixed(1)}%`);
-          tracer.logToSpan(traceId, `Low OCR confidence: ${ocrResult.confidence}`, 'warn');
-          if (!ctx.channelPost) {
-            await ctx.reply(`❌ Image quality too poor for reliable processing. OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
-          }
-          return;
-        }
-
-        logger.info('📄 Extracted text from image:', ocrResult.text.substring(0, 200));
-        logger.info(`📊 OCR confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`);
-
         // Parse trade signal using OCR text
-        tracer.logToSpan(traceId, 'Starting trade signal parsing with OCR text');
         tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(
           ocrResult.text, 
           '', 

@@ -184,6 +184,19 @@ export class CleanRealWorldTradeParser {
       }
     }
 
+    // Enhanced pattern detection for chart-based signals
+    // If symbol is detected and we see stop loss above current levels, likely a SELL
+    if (lowerText.includes('stop loss') || lowerText.includes('supply') || 
+        lowerText.includes('selling area') || lowerText.includes('resistance')) {
+      return 'SELL';
+    }
+    
+    // If symbol is detected and we see support/demand zones, likely a BUY  
+    if (lowerText.includes('support') || lowerText.includes('demand') || 
+        lowerText.includes('buying area') || lowerText.includes('buy zone')) {
+      return 'BUY';
+    }
+
     return null;
   }
 
