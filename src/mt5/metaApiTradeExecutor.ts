@@ -314,7 +314,7 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         const fallbackBalance = 10000; // Default fallback balance
         
         // Calculate position size with fallback
-        riskAmount = fallbackBalance * (parseFloat(process.env.RISK_PERCENTAGE || '2') / 100);
+        riskAmount = fallbackBalance * (parseFloat(process.env.RISK_PERCENTAGE || '1.3') / 100);
         const maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
         
         // Calculate lot size with proper minimum volume
@@ -333,7 +333,7 @@ export class MetaApiTradeExecutor implements ITradeExecutor {
         
       } else {
         // Calculate position size based on actual account balance
-        riskAmount = accountInfo.balance * (parseFloat(process.env.RISK_PERCENTAGE || '2') / 100);
+        riskAmount = accountInfo.balance * (parseFloat(process.env.RISK_PERCENTAGE || '1.3') / 100);
         const maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
         
         // Calculate lot size with proper minimum volume

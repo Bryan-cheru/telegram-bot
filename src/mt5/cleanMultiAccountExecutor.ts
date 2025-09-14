@@ -79,8 +79,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     for (const [accountId, accountConfig] of this.accounts) {
       await this.connectAccount(accountConfig);
       
-      // Small delay between connections
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Increased delay between connections to prevent rate limiting
+      logger.info(`⏳ Waiting 5 seconds before next connection...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
 
     const connectedCount = Array.from(this.accounts.values())
@@ -108,32 +109,76 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         await accountConfig.account.waitDeployed(60000);
       }
 
-      // Wait for connection
-      await accountConfig.account.waitConnected(45000);
+      // Wait for connection with longer timeout
+      logger.info(`⏳ Waiting for ${accountConfig.brokerName} connection...`);
+      await accountConfig.account.waitConnected(90000); // Increased to 90 seconds
+      logger.info(`🔗 ${accountConfig.brokerName} account connected`);
 
       // Get streaming connection
       accountConfig.connection = accountConfig.account.getStreamingConnection();
+      logger.info(`📡 Establishing streaming connection for ${accountConfig.brokerName}...`);
       await accountConfig.connection.connect();
+      logger.info(`✅ ${accountConfig.brokerName} streaming connected`);
       
-      // Use enhanced synchronization with retry logic
-      await CleanSymbolManager.ensureConnectionReady(
-        accountConfig.connection, 
-        accountConfig.brokerName,
-        3 // max retries
-      );
+      // Check terminal status (don't fail if terminal is offline)
+      logger.info(`🔄 Checking terminal status for ${accountConfig.brokerName}...`);
+      const terminalConnected = accountConfig.connection.terminalState.connected;
+      const hasSpecifications = Object.keys(accountConfig.connection.terminalState.specifications || {}).length > 0;
+      
+      if (terminalConnected) {
+        logger.info(`🔄 Synchronizing ${accountConfig.brokerName}...`);
+        try {
+          await CleanSymbolManager.ensureConnectionReady(
+            accountConfig.connection, 
+            accountConfig.brokerName,
+            3 // max retries
+          );
+          logger.info(`✅ ${accountConfig.brokerName} synchronized`);
 
-      // Initialize symbol learning for this broker
-      await CleanSymbolManager.initializeBrokerLearning(
-        accountConfig.connection,
-        accountConfig.brokerName
-      );
-
-      accountConfig.status = 'CONNECTED';
-      logger.info(`✅ ${accountConfig.brokerName} connected successfully`);
+          // Initialize symbol learning for this broker
+          logger.info(`🎓 Initializing symbol learning for ${accountConfig.brokerName}...`);
+          await CleanSymbolManager.initializeBrokerLearning(
+            accountConfig.connection,
+            accountConfig.brokerName
+          );
+          logger.info(`📚 ${accountConfig.brokerName} learning initialized`);
+          
+          accountConfig.status = 'CONNECTED';
+          logger.info(`🎉 ${accountConfig.brokerName} fully connected and ready for trading!`);
+        } catch (syncError: any) {
+          logger.warn(`⚠️ ${accountConfig.brokerName} synchronization failed: ${syncError.message}`);
+          accountConfig.status = 'CONNECTED'; // Still mark as connected for API operations
+          logger.info(`🔗 ${accountConfig.brokerName} API connected (terminal sync pending)`);
+        }
+      } else {
+        // Terminal offline but API connected - this is common
+        accountConfig.status = 'CONNECTED';
+        logger.warn(`⚠️ ${accountConfig.brokerName} terminal offline but API connected`);
+        logger.info(`🔗 ${accountConfig.brokerName} ready for API operations (trading requires terminal)`);
+      }
 
     } catch (error: any) {
       accountConfig.status = 'FAILED';
-      logger.error(`❌ Failed to connect ${accountConfig.brokerName}:`, error.message);
+      
+      // Enhanced error logging
+      const errorDetails = {
+        message: error.message,
+        name: error.name,
+        statusCode: error.statusCode,
+        details: error.details
+      };
+      
+      logger.error(`❌ Failed to connect ${accountConfig.brokerName}:`, errorDetails);
+      
+      // Check if it's a timeout error
+      if (error.message?.includes('timeout') || error.message?.includes('TimeoutError')) {
+        logger.warn(`⏰ ${accountConfig.brokerName} connection timed out - this may resolve on retry`);
+      }
+      
+      // Check if it's a region/connection issue
+      if (error.message?.includes('region') || error.message?.includes('not connected to broker')) {
+        logger.warn(`🌍 ${accountConfig.brokerName} may have region connectivity issues`);
+      }
       
       // Clean up failed connection
       if (accountConfig.connection) {
@@ -201,6 +246,50 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
+   * Calculate Take Profit using ALWAYS 1:1 Risk-Reward ratio
+   * Entry -> SL distance = SL -> TP distance (ALWAYS 1:1 RR, ignores provided targets)
+   */
+  private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
+    const stopLoss = signal.stopLoss;
+    
+    if (!stopLoss || stopLoss <= 0) {
+      throw new Error('Stop Loss is required for 1:1 RR calculation');
+    }
+
+    // ALWAYS calculate 1:1 Risk-Reward ratio - ignore any provided targets
+    let takeProfit: number;
+    const riskDistance = Math.abs(entryPrice - stopLoss);
+
+    if (signal.action === 'BUY') {
+      // For BUY: TP = Entry + Risk Distance
+      takeProfit = entryPrice + riskDistance;
+      logger.info(`📈 BUY 1:1 RR: Entry ${entryPrice} + Risk ${riskDistance.toFixed(5)} = TP ${takeProfit.toFixed(5)}`);
+    } else if (signal.action === 'SELL') {
+      // For SELL: TP = Entry - Risk Distance
+      takeProfit = entryPrice - riskDistance;
+      logger.info(`📉 SELL 1:1 RR: Entry ${entryPrice} - Risk ${riskDistance.toFixed(5)} = TP ${takeProfit.toFixed(5)}`);
+    } else {
+      throw new Error(`Invalid action for TP calculation: ${signal.action}`);
+    }
+
+    // Validate the calculated TP makes sense
+    if (signal.action === 'BUY' && takeProfit <= entryPrice) {
+      throw new Error(`Invalid BUY TP: ${takeProfit} must be > Entry ${entryPrice}`);
+    }
+    if (signal.action === 'SELL' && takeProfit >= entryPrice) {
+      throw new Error(`Invalid SELL TP: ${takeProfit} must be < Entry ${entryPrice}`);
+    }
+
+    // Log if we're overriding provided targets
+    if (signal.targets && signal.targets.length > 0 && signal.targets[0] > 0) {
+      logger.info(`🎯 OVERRIDE: Ignoring provided TP ${signal.targets[0]}, using 1:1 RR instead: ${takeProfit.toFixed(5)}`);
+    }
+
+    logger.info(`🎯 ENFORCED 1:1 RR - Entry: ${entryPrice}, SL: ${stopLoss}, TP: ${takeProfit.toFixed(5)}, Risk: ${riskDistance.toFixed(5)} pips`);
+    return Number(takeProfit.toFixed(5)); // Round to 5 decimal places
+  }
+
+  /**
    * Execute trade on a single account
    */
   private async executeOnAccount(
@@ -250,7 +339,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
       // Step 3: Calculate entry price and volume
       const entryPrice = this.calculateEntryPrice(signal, marketData);
-      const volume = this.calculateVolume(accountConfig.connection);
+      // Calculate position size using proper risk management
+      const volume = this.calculateVolume(accountConfig.connection, signal);
+
+      // Step 3.5: Calculate take profit using 1:1 RR default
+      const takeProfit = this.calculateTakeProfit(signal, entryPrice);
 
       // Step 4: Validate trade parameters
       const validation = await CleanSymbolManager.validateForTrading(
@@ -269,26 +362,53 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         comment: 'Bot Trade'
       };
 
-      if (signal.action === 'BUY') {
-        result = await accountConfig.connection.createLimitBuyOrder(
-          validSymbol,
-          volume,
-          entryPrice,
-          signal.stopLoss,
-          signal.targets[0], // Use first target as TP
-          tradeOptions
-        );
-      } else if (signal.action === 'SELL') {
-        result = await accountConfig.connection.createLimitSellOrder(
-          validSymbol,
-          volume,
-          entryPrice,
-          signal.stopLoss,
-          signal.targets[0], // Use first target as TP
-          tradeOptions
-        );
+      // Check if this should be a market order or limit order
+      const orderType = signal.orderType || 'LIMIT'; // Default to LIMIT if not specified
+      
+      if (orderType === 'MARKET') {
+        // Market orders - execute immediately at current price
+        if (signal.action === 'BUY') {
+          result = await accountConfig.connection.createMarketBuyOrder(
+            validSymbol,
+            volume,
+            signal.stopLoss,
+            takeProfit,
+            tradeOptions
+          );
+        } else if (signal.action === 'SELL') {
+          result = await accountConfig.connection.createMarketSellOrder(
+            validSymbol,
+            volume,
+            signal.stopLoss,
+            takeProfit,
+            tradeOptions
+          );
+        } else {
+          throw new Error(`Unsupported action: ${signal.action}`);
+        }
       } else {
-        throw new Error(`Unsupported action: ${signal.action}`);
+        // Limit orders - execute at specified entry price
+        if (signal.action === 'BUY') {
+          result = await accountConfig.connection.createLimitBuyOrder(
+            validSymbol,
+            volume,
+            entryPrice,
+            signal.stopLoss,
+            takeProfit, // Use calculated TP with 1:1 RR default
+            tradeOptions
+          );
+        } else if (signal.action === 'SELL') {
+          result = await accountConfig.connection.createLimitSellOrder(
+            validSymbol,
+            volume,
+            entryPrice,
+            signal.stopLoss,
+            takeProfit, // Use calculated TP with 1:1 RR default
+            tradeOptions
+          );
+        } else {
+          throw new Error(`Unsupported action: ${signal.action}`);
+        }
       }
 
       const ticket = result.positionId || result.orderId || 'Unknown';
@@ -349,29 +469,109 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate trade volume based on account balance and risk management
+   * Calculate trade volume based on signal, account balance and risk management
    */
-  private calculateVolume(connection: any): number {
+  private calculateVolume(connection: any, signal: TradeSignal): number {
     try {
       const accountInfo = connection.terminalState.accountInformation;
       const balance = accountInfo?.balance || 10000;
       
-      // Simple risk management: 1% risk
-      const riskAmount = balance * 0.01;
+      // Get risk settings from environment
+      const riskPercentage = parseFloat(process.env.RISK_PERCENTAGE || '1.3');
+      const minLotSize = parseFloat(process.env.MIN_LOT_SIZE || '0.01');
+      const maxLotSize = parseFloat(process.env.MAX_LOT_SIZE || '10.0');
       
-      // Conservative volume calculation
-      let volume = Math.max(0.01, Math.min(1.0, riskAmount / 1000));
+      // Calculate risk amount
+      const riskAmount = balance * (riskPercentage / 100);
+      
+      // Calculate entry price (use middle of entry zone)
+      const entryPrice = signal.entryZone ? 
+        (signal.entryZone.min + signal.entryZone.max) / 2 : 
+        signal.entryPrice || 0;
+        
+      // Ensure we have stop loss for proper calculation
+      if (!signal.stopLoss || !entryPrice) {
+        logger.warn(`⚠️ Missing entry price or stop loss for ${signal.symbol}, using conservative size`);
+        return minLotSize;
+      }
+      
+      // Calculate risk distance
+      const riskDistance = Math.abs(entryPrice - signal.stopLoss);
+      
+      // Get pip value based on symbol
+      const pipValue = this.getPipValue(signal.symbol);
+      
+      // Calculate lot size: Risk Amount ÷ (Risk Distance × Pip Value)
+      let lotSize = riskAmount / (riskDistance * pipValue);
+      
+      // Apply position size limits
+      lotSize = Math.max(minLotSize, Math.min(maxLotSize, lotSize));
       
       // Round to 2 decimal places
-      volume = Math.round(volume * 100) / 100;
+      lotSize = Math.round(lotSize * 100) / 100;
       
-      logger.debug(`💰 Volume calculated: ${volume} (Balance: ${balance})`);
-      return volume;
+      // Calculate actual risk with final lot size
+      const actualRisk = lotSize * riskDistance * pipValue;
+      const actualRiskPercentage = (actualRisk / balance) * 100;
+      
+      logger.info(`💰 Position sizing for ${signal.symbol}:`);
+      logger.info(`   Account Balance: $${balance.toLocaleString()}`);
+      logger.info(`   Risk Settings: ${riskPercentage}% = $${riskAmount.toFixed(2)}`);
+      logger.info(`   Entry: ${entryPrice}, Stop: ${signal.stopLoss}`);
+      logger.info(`   Risk Distance: ${riskDistance.toFixed(5)} pips`);
+      logger.info(`   Pip Value: $${pipValue} per pip per lot`);
+      logger.info(`   Calculated Size: ${lotSize} lots`);
+      logger.info(`   Actual Risk: $${actualRisk.toFixed(2)} (${actualRiskPercentage.toFixed(2)}%)`);
+      
+      return lotSize;
       
     } catch (error) {
-      logger.warn('Volume calculation error, using default 0.01');
-      return 0.01;
+      logger.error('Volume calculation error:', error);
+      return parseFloat(process.env.MIN_LOT_SIZE || '0.01');
     }
+  }
+
+  /**
+   * Get pip value for different instruments
+   */
+  private getPipValue(symbol: string): number {
+    const upperSymbol = symbol.toUpperCase();
+    
+    // Forex pairs
+    if (upperSymbol.includes('JPY')) {
+      return 10; // $10 per pip for JPY pairs (standard lot)
+    } else if (this.isForexPair(upperSymbol)) {
+      return 10; // $10 per pip for major pairs (standard lot)
+    }
+    
+    // Metals
+    if (['XAUUSD', 'GOLD'].includes(upperSymbol)) {
+      return 1; // $1 per point
+    }
+    
+    if (['XAGUSD', 'SILVER'].includes(upperSymbol)) {
+      return 50; // $50 per point
+    }
+    
+    // Indices
+    if (['NAS100', 'NASDAQ'].includes(upperSymbol)) {
+      return 1; // $1 per point
+    }
+    
+    if (['SPX500', 'US30'].includes(upperSymbol)) {
+      return 1; // $1 per point
+    }
+    
+    // Default for unknown instruments
+    logger.warn(`Unknown instrument ${symbol}, using default pip value`);
+    return 10; // Default to $10 per pip
+  }
+
+  /**
+   * Check if symbol is a forex pair
+   */
+  private isForexPair(symbol: string): boolean {
+    return symbol.length === 6 && /^[A-Z]{6}$/.test(symbol);
   }
 
   /**
@@ -407,12 +607,25 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    * Get account statuses for monitoring
    */
   getAccountStatuses() {
-    return Array.from(this.accounts.values()).map(acc => ({
-      id: acc.id,
-      brokerName: acc.brokerName,
-      accountType: acc.accountType,
-      status: acc.status
-    }));
+    return Array.from(this.accounts.values()).map(acc => {
+      let terminalConnected = false;
+      let hasSpecifications = false;
+      
+      if (acc.connection?.terminalState) {
+        terminalConnected = acc.connection.terminalState.connected || false;
+        hasSpecifications = Object.keys(acc.connection.terminalState.specifications || {}).length > 0;
+      }
+      
+      return {
+        id: acc.id,
+        brokerName: acc.brokerName,
+        accountType: acc.accountType,
+        status: acc.status,
+        terminalConnected,
+        hasSpecifications,
+        tradingReady: acc.status === 'CONNECTED' && terminalConnected && hasSpecifications
+      };
+    });
   }
 
   /**

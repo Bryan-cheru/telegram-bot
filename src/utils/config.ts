@@ -1,74 +1,29 @@
 import dotenv from 'dotenv';
 import path from 'path';
 
-// Smart environment loading based on NODE_ENV
-const loadEnvironment = () => {
-  const nodeEnv = process.env.NODE_ENV || 'development';
-  
-  // For Electron, handle differently
-  if (process.env.ELECTRON_IS_RUNNING) {
-    const envPath = path.join(process.cwd(), '.env');
-    dotenv.config({ path: envPath });
-    return;
-  }
-  
-  // Load environment-specific .env file
-  let envFile = '.env';
-  
-  // Check for environment-specific files
-  if (nodeEnv === 'local' || nodeEnv === 'development') {
-    const localEnvPath = path.join(process.cwd(), '.env.local');
-    if (require('fs').existsSync(localEnvPath)) {
-      envFile = '.env.local';
-    }
-  } else if (nodeEnv === 'production') {
-    const prodEnvPath = path.join(process.cwd(), '.env.production');
-    if (require('fs').existsSync(prodEnvPath)) {
-      envFile = '.env.production';
-    }
-  }
-  
-  console.log(`🔧 Loading environment from: ${envFile}`);
-  dotenv.config({ path: envFile });
-};
-
-// Load the appropriate environment
-if (!process.env.BOT_TOKEN) {
-  loadEnvironment();
+// Only load dotenv if environment variables aren't already set (e.g., in Electron)
+if (!process.env.BOT_TOKEN && !process.env.ELECTRON_IS_RUNNING) {
+  // For standalone Node.js execution
+  dotenv.config();
+} else if (process.env.ELECTRON_IS_RUNNING && !process.env.BOT_TOKEN) {
+  // For Electron execution, try to load from the correct path
+  const envPath = path.join(process.cwd(), '.env');
+  dotenv.config({ path: envPath });
 }
 
 export const config = {
-  // Environment and Instance Control
-  nodeEnv: process.env.NODE_ENV || 'development',
-  instanceType: process.env.INSTANCE_TYPE || 'local',
-  
-  // Component Control - allows disabling bot or dashboard per instance
-  botEnabled: process.env.BOT_ENABLED !== 'false', // Default: enabled
-  dashboardEnabled: process.env.DASHBOARD_ENABLED !== 'false', // Default: enabled
-  
-  // Bot Configuration
   botToken: process.env.BOT_TOKEN || '',
-  webhookEnabled: process.env.BOT_WEBHOOK_ENABLED === 'true', // Default: polling for local
-  webhookUrl: process.env.BOT_WEBHOOK_URL || '',
   
-  // MetaAPI Configuration
   metaApi: {
     token: process.env.METAAPI_TOKEN || '',
     accountId: process.env.METAAPI_ACCOUNT_ID || '', // Legacy single account support
     accounts: process.env.METAAPI_ACCOUNTS || '' // New multi-account support
   },
-  
-  // Channel Configuration
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
   allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
-  
-  // Dashboard Configuration
-  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '3000'),
-  
-  // Trading Configuration
   trading: {
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '0.1'),
-    riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '2'),
+    riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '1.3'),
     enforceOneToOneRR: process.env.ENFORCE_1_1_RR !== 'false', // Default to true unless explicitly disabled
     defaultOrderType: process.env.DEFAULT_ORDER_TYPE || 'MARKET', // MARKET, LIMIT, or AUTO
     useSmartOrderType: process.env.USE_SMART_ORDER_TYPE !== 'false', // Auto-detect best order type
@@ -76,8 +31,6 @@ export const config = {
     pendingOrderExpiration: parseInt(process.env.PENDING_ORDER_EXPIRATION || '4'), // Hours
     enableAdvancedOrderTypes: process.env.ENABLE_ADVANCED_ORDER_TYPES !== 'false'
   },
-  
-  // Logging Configuration
   logging: {
     level: process.env.LOG_LEVEL || 'info'
   }
