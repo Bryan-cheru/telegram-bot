@@ -14,6 +14,13 @@ if (!process.env.BOT_TOKEN && !process.env.ELECTRON_IS_RUNNING) {
 export const config = {
   botToken: process.env.BOT_TOKEN || '',
   
+  // Application configuration
+  nodeEnv: process.env.NODE_ENV || 'development',
+  instanceType: process.env.INSTANCE_TYPE || 'production',
+  botEnabled: process.env.BOT_ENABLED !== 'false', // Default to true unless explicitly disabled
+  dashboardEnabled: process.env.DASHBOARD_ENABLED !== 'false', // Default to true unless explicitly disabled
+  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '3000'),
+  
   metaApi: {
     token: process.env.METAAPI_TOKEN || '',
     accountId: process.env.METAAPI_ACCOUNT_ID || '', // Legacy single account support
