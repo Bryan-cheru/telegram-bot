@@ -289,13 +289,40 @@ export class CleanSymbolManager {
     const symbol = inputSymbol.toUpperCase();
     const variations = [symbol]; // Always try original first
 
+    // IFPro-Trade uses numeric symbols - comprehensive mapping
+    if (brokerName === 'IFPro-Trade') {
+      const ifproMappings: { [key: string]: string } = {
+        'GOLD': '67', 'XAUUSD': '67',
+        'SILVER': '66', 'XAGUSD': '66', 
+        'EURUSD': '27',
+        'GBPUSD': '34',
+        'USDJPY': '58',
+        'AUDUSD': '5',
+        'USDCAD': '52',
+        'USDCHF': '53',
+        'NZDUSD': '43',
+        'EURGBP': '21',
+        'EURJPY': '23',
+        'GBPJPY': '32',
+        'US30': '51', 'DJI': '51', 'DJ30': '51',
+        'NAS100': '50', 'NASDAQ': '50',
+        'SPX': '46', 'SP500': '46',
+        'USOIL': '65', 'WTI': '65',
+        'UKOIL': '49', 'BRENT': '49',
+        'NATGAS': '39',
+        'BITCOIN': '9', 'BTC': '9',
+        'ETHEREUM': '16', 'ETH': '16'
+      };
+      
+      const ifproSymbol = ifproMappings[symbol.toUpperCase()];
+      if (ifproSymbol) {
+        variations.unshift(ifproSymbol); // Add IFPro symbol first
+      }
+    }
+
     // Gold variations (including numeric symbols used by some brokers like IFPro-Trade)
     if (symbol === 'GOLD' || symbol === 'XAUUSD') {
-      // For IFPro-Trade, try numeric symbol first since that's what they use
-      if (brokerName === 'IFPro-Trade') {
-        variations.unshift('66'); // Add at beginning to try first
-      }
-      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash', '66');
+      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash', '67', '66');
     }
     // Silver variations
     else if (symbol === 'SILVER' || symbol === 'XAGUSD') {
