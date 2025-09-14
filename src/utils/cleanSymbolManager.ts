@@ -310,35 +310,24 @@ export class CleanSymbolManager {
     const symbol = inputSymbol.toUpperCase();
     const variations = [symbol]; // Always try original first
 
-    // IFPro-Trade uses numeric symbols - comprehensive mapping
+    // CRITICAL FIX: Remove hardcoded mappings - they cause failures
+    // MetaAPI best practice: Use dynamic discovery instead of static mappings
     if (brokerName === 'IFPro-Trade') {
-      const ifproMappings: { [key: string]: string } = {
-        'GOLD': '67', 'XAUUSD': '67',
-        'SILVER': '66', 'XAGUSD': '66', 
-        'EURUSD': '27',
-        'GBPUSD': '34',
-        'USDJPY': '58',
-        'AUDUSD': '5',
-        'USDCAD': '52',
-        'USDCHF': '53',
-        'NZDUSD': '43',
-        'EURGBP': '21',
-        'EURJPY': '23',
-        'GBPJPY': '32',
-        'US30': '51', 'DJI': '51', 'DJ30': '51',
-        'NAS100': '50', 'NASDAQ': '50',
-        'SPX': '46', 'SP500': '46',
-        'USOIL': '65', 'WTI': '65',
-        'UKOIL': '49', 'BRENT': '49',
-        'NATGAS': '39',
-        'BITCOIN': '9', 'BTC': '9',
-        'ETHEREUM': '16', 'ETH': '16'
-      };
-      
-      const ifproSymbol = ifproMappings[symbol.toUpperCase()];
-      if (ifproSymbol) {
-        variations.unshift(ifproSymbol); // Add IFPro symbol first
+      // Add learned mappings from cache if available
+      const learnedMapping = this.getLearnedMapping(symbol, brokerName);
+      if (learnedMapping) {
+        variations.push(learnedMapping);
+        logger.info(`📚 Using learned mapping: ${symbol} → ${learnedMapping} for ${brokerName}`);
       }
+      
+      // Add common patterns for IFPro-Trade (discovered through testing)  
+      // NOTE: Remove specific numeric mappings - they vary and are unreliable
+      variations.push(
+        symbol,
+        symbol.toLowerCase(),
+        symbol.toUpperCase(),
+        symbol + '_'
+      );
     }
 
     // Gold variations - only add numeric symbols for specific brokers
@@ -540,6 +529,23 @@ export class CleanSymbolManager {
       logger.error(`Failed to get symbols from ${brokerName}:`, error.message);
       return [];
     }
+  }
+
+  /**
+   * Get learned mapping for a symbol from cache
+   * @param inputSymbol - Input symbol to look up
+   * @param brokerName - Broker name
+   * @returns Learned symbol mapping or null
+   */
+  static getLearnedMapping(inputSymbol: string, brokerName: string): string | null {
+    const standardSymbol = this.inferStandardSymbol(inputSymbol);
+    const group = this.symbolGroups.get(standardSymbol);
+    
+    if (group && group.brokerMappings.has(brokerName)) {
+      return group.brokerMappings.get(brokerName) || null;
+    }
+    
+    return null;
   }
 
   /**
@@ -1020,6 +1026,29 @@ export class CleanSymbolManager {
       return true;
     }
     
+    // CRITICAL FIX: Prevent cross-broker numeric symbol contamination
+    // Numeric symbols like "67" can mean different things on different brokers
+    // Only accept numeric symbols if description explicitly matches what we want
+    if (/^\d+$/.test(found)) {
+      // For gold requests, only accept numeric if description mentions gold
+      if ((requested === 'GOLD' || requested === 'XAUUSD') && 
+          !(desc.includes('gold') || desc.includes('xau') || 
+            (desc.includes('troy ounce') && desc.includes('gold')))) {
+        return false;
+      }
+      
+      // For silver requests, only accept numeric if description mentions silver
+      if ((requested === 'SILVER' || requested === 'XAGUSD') && 
+          !(desc.includes('silver') || desc.includes('xag'))) {
+        return false;
+      }
+      
+      // For forex pairs, numeric symbols are generally invalid
+      if (this.isForexPair(requested)) {
+        return false;
+      }
+    }
+    
     // Enhanced forex pair matching based on MetaAPI research
     const forexPairs: { [key: string]: string[] } = {
       'USDCHF': ['usd', 'chf', 'dollar', 'franc', 'swiss'],
@@ -1076,5 +1105,16 @@ export class CleanSymbolManager {
     // Conservative fallback - require description to contain the symbol name
     return desc.includes(requested.toLowerCase()) || 
            found.includes(normalizedRequested);
+  }
+
+  /**
+   * Check if a symbol is a forex pair
+   */
+  private static isForexPair(symbol: string): boolean {
+    const forexPatterns = [
+      'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
+      'EURGBP', 'EURJPY', 'GBPJPY', 'EURCHF', 'GBPCHF', 'AUDJPY', 'CADJPY', 'CHFJPY', 'NZDJPY'
+    ];
+    return forexPatterns.includes(symbol.toUpperCase());
   }
 }
