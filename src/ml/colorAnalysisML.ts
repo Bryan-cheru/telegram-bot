@@ -490,6 +490,9 @@ export class ChartColorAnalysisML {
     if (symbol.includes('XAUUSD') || symbol.includes('GOLD')) {
       return /\b([1-4]\d{3}\.?\d{0,3})\b/g; // Gold: 2450.50, 3475.040
     }
+    if (symbol.includes('USDCHF') || symbol.includes('CHF')) {
+      return /\b(0\.[78]\d{3,5})\b/g; // USDCHF: 0.8654, 0.8665.94
+    }
     if (symbol.includes('EUR') || symbol.includes('GBP')) {
       return /\b(1\.\d{4,5})\b/g; // Major EUR/GBP pairs: 1.61850
     }

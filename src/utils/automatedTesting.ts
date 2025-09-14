@@ -1,5 +1,5 @@
 import { TradeSignal } from '../types';
-import { TradeParser } from '../ocr/tradeParser';
+import { CleanRealWorldTradeParser } from '../ocr/cleanRealWorldTradeParser';
 import { InputValidator } from '../utils/inputValidation';
 import { PositionSizeCalculator } from '../utils/positionSizing';
 import { DynamicStopLossCalculator } from '../utils/dynamicStopLoss';
@@ -39,12 +39,11 @@ export interface TestSuiteResult {
 }
 
 export class AutomatedTestSuite {
-  private tradeParser: TradeParser;
+  // Using static methods from CleanRealWorldTradeParser, no instance needed
   private positionSizeCalculator: PositionSizeCalculator;
   private stopLossCalculator: DynamicStopLossCalculator;
 
   constructor() {
-    this.tradeParser = new TradeParser();
     this.positionSizeCalculator = new PositionSizeCalculator({
       maxRiskPercentage: 2,
       maxPositionSize: 10,
@@ -134,7 +133,7 @@ export class AutomatedTestSuite {
       
       switch (testCase.category) {
         case 'PARSING':
-          actualOutput = await this.tradeParser.parseTradeSignal(testCase.input);
+          actualOutput = await CleanRealWorldTradeParser.parseTradeSignal(testCase.input);
           break;
           
         case 'VALIDATION':
@@ -403,7 +402,7 @@ export class AutomatedTestSuite {
     const { text, accountEquity } = testCase.input;
     
     // Step 1: Parse signal
-    const signal = await this.tradeParser.parseTradeSignal(text);
+    const signal = await CleanRealWorldTradeParser.parseTradeSignal(text);
     if (!signal) return { step: 'parsing', success: false };
     
     // Step 2: Validate signal
@@ -411,7 +410,8 @@ export class AutomatedTestSuite {
     if (!validation.isValid) return { step: 'validation', success: false, errors: validation.errors };
     
     // Step 3: Add position sizing
-    this.tradeParser.addPositionSizing(signal, accountEquity);
+    // Position sizing is now handled separately
+    // this.positionSizeCalculator.calculatePositionSize(signal, accountEquity);
     
     // Step 4: Calculate dynamic stop loss
     const dynamicSL = this.stopLossCalculator.calculateDynamicStopLoss(signal);

@@ -11,6 +11,10 @@
     "postinstall": "npm run build",
     "watch": "tsc -w",
     "dashboard": "npm run build && npm start",
+    "local": "cross-env NODE_ENV=local npm run dev",
+    "local:prod": "cross-env NODE_ENV=local npm run build && npm start",
+    "dashboard-only": "cross-env NODE_ENV=local BOT_ENABLED=false DASHBOARD_ENABLED=true DASHBOARD_PORT=3001 npm run dev",
+    "bot-only": "cross-env NODE_ENV=local BOT_ENABLED=true DASHBOARD_ENABLED=false npm run dev",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -40,6 +44,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^20.10.4",
+    "cross-env": "^10.0.0",
     "jest": "^30.1.3",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.1",

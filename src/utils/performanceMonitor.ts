@@ -1,4 +1,4 @@
-import { enhancedLogger } from './enhancedLogger';
+import { logger } from './logger';
 import { RealTimeAlertSystem } from './realTimeAlertSystem';
 import * as os from 'os';
 
@@ -94,7 +94,7 @@ export class PerformanceMonitor {
       this.collectMetrics();
     }, 30000);
 
-    enhancedLogger.info('Performance monitoring started');
+    logger.info('Performance monitoring started');
   }
 
   /**
@@ -170,7 +170,7 @@ export class PerformanceMonitor {
       }
 
       // Log performance summary
-      enhancedLogger.performance('Performance metrics collected', {
+      logger.performance('Performance metrics collected', {
         memoryMB: metrics.memory.heapUsedMB,
         cpuPercent: metrics.cpu.percentUsage,
         tradesPerMin: metrics.trading.tradesPerMinute,
@@ -185,7 +185,7 @@ export class PerformanceMonitor {
       this.resetCountersIfNeeded();
 
     } catch (error) {
-      enhancedLogger.error('Failed to collect performance metrics', error);
+      logger.error('Failed to collect performance metrics', error);
     }
   }
 
@@ -404,7 +404,7 @@ export class PerformanceMonitor {
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
       this.monitoringInterval = null;
-      enhancedLogger.info('Performance monitoring stopped');
+      logger.info('Performance monitoring stopped');
     }
   }
 

@@ -265,6 +265,23 @@ class MultiAccountDashboard extends TradingDashboard {
     }
   }
 
+  // Override the parent's updateMT5Dashboard to use multi-account data
+  async updateMT5Dashboard() {
+    try {
+      await this.updateAllAccountsData();
+      
+      // Also update connection status
+      const statusResponse = await fetch('/api/mt5/status');
+      const statusData = await statusResponse.json();
+      this.updateConnectionStatus(statusData);
+      
+    } catch (error) {
+      console.error('Error updating MT5 dashboard:', error);
+      this.updateConnectionStatus({ connected: false, status: 'error' });
+      this.showAccountError('Failed to load account data');
+    }
+  }
+
   showAccountError(message) {
     const grid = document.getElementById('accounts-grid');
     if (grid) {

@@ -14,6 +14,13 @@ if (!process.env.BOT_TOKEN && !process.env.ELECTRON_IS_RUNNING) {
 export const config = {
   botToken: process.env.BOT_TOKEN || '',
   
+  // Application configuration
+  nodeEnv: process.env.NODE_ENV || 'development',
+  instanceType: process.env.INSTANCE_TYPE || 'production',
+  botEnabled: process.env.BOT_ENABLED !== 'false', // Default to true unless explicitly disabled
+  dashboardEnabled: process.env.DASHBOARD_ENABLED !== 'false', // Default to true unless explicitly disabled
+  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '3000'),
+  
   metaApi: {
     token: process.env.METAAPI_TOKEN || '',
     accountId: process.env.METAAPI_ACCOUNT_ID || '', // Legacy single account support
@@ -23,7 +30,7 @@ export const config = {
   allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
   trading: {
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '0.1'),
-    riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '2'),
+    riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '1.3'),
     enforceOneToOneRR: process.env.ENFORCE_1_1_RR !== 'false', // Default to true unless explicitly disabled
     defaultOrderType: process.env.DEFAULT_ORDER_TYPE || 'MARKET', // MARKET, LIMIT, or AUTO
     useSmartOrderType: process.env.USE_SMART_ORDER_TYPE !== 'false', // Auto-detect best order type

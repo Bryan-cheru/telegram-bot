@@ -1,5 +1,4 @@
 import { logger } from './logger';
-import { enhancedLogger } from './enhancedLogger';
 
 interface Alert {
   id: string;
@@ -79,7 +78,7 @@ export class RealTimeAlertSystem {
   ): Promise<void> {
     const alert = this.createAlert('CRITICAL', category, message, details, accountId, symbol);
     
-    enhancedLogger.error(`🚨 CRITICAL ALERT: ${message}`, {
+    logger.error(`🚨 CRITICAL ALERT: ${message}`, {
       category,
       accountId,
       symbol,
@@ -115,7 +114,7 @@ export class RealTimeAlertSystem {
 
     const alert = this.createAlert('WARNING', category, message, details, accountId, symbol);
     
-    enhancedLogger.warn(`⚠️ WARNING ALERT: ${message}`, {
+    logger.warn(`⚠️ WARNING ALERT: ${message}`, {
       category,
       accountId,
       symbol,
@@ -146,7 +145,7 @@ export class RealTimeAlertSystem {
 
     const alert = this.createAlert('INFO', category, message, details, accountId, symbol);
     
-    enhancedLogger.info(`ℹ️ INFO ALERT: ${message}`, {
+    logger.info(`ℹ️ INFO ALERT: ${message}`, {
       category,
       accountId,
       symbol,
@@ -283,7 +282,7 @@ export class RealTimeAlertSystem {
       bot,
       adminChatId
     };
-    enhancedLogger.info('Telegram alert notifications enabled', { adminChatId });
+    logger.info('Telegram alert notifications enabled', { adminChatId });
   }
 
   /**
@@ -291,7 +290,7 @@ export class RealTimeAlertSystem {
    */
   addWebhook(url: string): void {
     this.webhookUrls.push(url);
-    enhancedLogger.info('Webhook added for alerts', { url });
+    logger.info('Webhook added for alerts', { url });
   }
 
   /**
@@ -322,7 +321,7 @@ export class RealTimeAlertSystem {
     const alert = this.alerts.get(alertId);
     if (alert) {
       alert.acknowledged = true;
-      enhancedLogger.info('Alert acknowledged', { alertId, userId });
+      logger.info('Alert acknowledged', { alertId, userId });
       return true;
     }
     return false;
@@ -336,7 +335,7 @@ export class RealTimeAlertSystem {
     if (alert) {
       alert.resolved = true;
       alert.acknowledged = true;
-      enhancedLogger.info('Alert resolved', { alertId, userId });
+      logger.info('Alert resolved', { alertId, userId });
       return true;
     }
     return false;
@@ -387,7 +386,7 @@ export class RealTimeAlertSystem {
             break;
         }
       } catch (error) {
-        enhancedLogger.error('Failed to execute alert action', { action: action.type, error });
+        logger.error('Failed to execute alert action', { action: action.type, error });
       }
     }
   }
@@ -433,14 +432,14 @@ export class RealTimeAlertSystem {
           throw new Error(`HTTP ${response.status}`);
         }
       } catch (error) {
-        enhancedLogger.error('Webhook alert failed', { url, error });
+        logger.error('Webhook alert failed', { url, error });
       }
     }
   }
 
   private async triggerTradingStop(alert: Alert): Promise<void> {
     // This would integrate with the trading system to stop all trading
-    enhancedLogger.error('🚨 EMERGENCY TRADING STOP TRIGGERED', { alert: alert.id, reason: alert.message });
+    logger.error('🚨 EMERGENCY TRADING STOP TRIGGERED', { alert: alert.id, reason: alert.message });
     
     // Set environment variable to stop trading
     process.env.EMERGENCY_STOP = 'true';
@@ -490,7 +489,7 @@ export class RealTimeAlertSystem {
 
   private initializeDefaultRules(): void {
     // Default alert rules would be configured here
-    enhancedLogger.info('Alert system initialized with default rules');
+    logger.info('Alert system initialized with default rules');
   }
 
   private setupWebhooks(): void {
@@ -498,7 +497,7 @@ export class RealTimeAlertSystem {
     const webhookUrls = process.env.ALERT_WEBHOOKS;
     if (webhookUrls) {
       this.webhookUrls = webhookUrls.split(',').map(url => url.trim());
-      enhancedLogger.info('Webhook URLs configured', { count: this.webhookUrls.length });
+      logger.info('Webhook URLs configured', { count: this.webhookUrls.length });
     }
   }
 

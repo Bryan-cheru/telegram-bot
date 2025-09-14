@@ -2,7 +2,11 @@ import { TelegramBot } from './bot/bot';
 import { config, validateConfig, debugConfig } from './utils/config';
 import { logger } from './utils/logger';
 import * as http from 'http';
-import dashboardApp, { updateBotStatus, addLog, setSharedExecutor } from './dashboard/server';
+import express from 'express';
+import app, { setSharedExecutor } from './dashboard/server';
+import { addLog, updateBotStatus } from './dashboard/simpleDashboard';
+import { HealthCheckService } from './monitoring/healthChecks';
+import { DistributedTracing, Traced } from './monitoring/distributedTracing';
 
 // Prevent double initialization
 let isInitialized = false;
@@ -77,23 +81,57 @@ const updateHeartbeat = () => {
 
 // Combined server for health check and dashboard
 const createServer = (): http.Server => {
-  const server = http.createServer((req, res) => {
+  const healthCheckService = HealthCheckService.getInstance();
+  
+  const server = http.createServer(async (req, res) => {
     if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
-        status: 'healthy', 
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        version: '1.0.1',
-        dashboard: 'available'
-      }));
+      try {
+        const healthStatus = await healthCheckService.getOverallHealth();
+        const statusCode = healthStatus.status === 'healthy' ? 200 : 503;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(healthStatus));
+      } catch (error) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'error', 
+          error: 'Health check failed',
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } else if (req.url === '/health/detailed') {
+      try {
+        const detailedHealth = await healthCheckService.getDetailedHealth();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(detailedHealth));
+      } catch (error) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'error', 
+          error: 'Detailed health check failed',
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } else if (req.url === '/ready') {
+      const isReady = healthCheckService.isReady();
+      const statusCode = isReady ? 200 : 503;
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ready: isReady }));
+    } else if (req.url === '/metrics') {
+      // Prometheus metrics endpoint (placeholder until prom-client is installed)
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(`# Enterprise metrics available after installing prom-client package
+# Current status: Basic monitoring active
+# Install: npm install prom-client
+trading_bot_status 1 ${Date.now()}
+trading_bot_uptime ${process.uptime()} ${Date.now()}
+      `.trim());
     } else {
-      // Delegate to dashboard app
-      dashboardApp(req, res);
+      // Delegate to comprehensive dashboard app
+      app(req, res);
     }
   });
   
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || config.dashboardPort;
   
   server.on('error', (error: any) => {
     if (error.code === 'EADDRINUSE') {
@@ -125,17 +163,30 @@ async function main(): Promise<void> {
   isInitialized = true;
   
   try {
-    logger.info('Starting Telegram Trading Bot...');
+    logger.info(`🚀 Starting Telegram Trading Bot [${config.instanceType.toUpperCase()}]...`);
+    logger.info(`📊 Instance Configuration:`);
+    logger.info(`   - Environment: ${config.nodeEnv}`);
+    logger.info(`   - Instance Type: ${config.instanceType}`);
+    logger.info(`   - Bot Enabled: ${config.botEnabled}`);
+    logger.info(`   - Dashboard Enabled: ${config.dashboardEnabled}`);
+    logger.info(`   - Dashboard Port: ${config.dashboardPort}`);
     
-    // Start server with health check and dashboard
-    const server = createServer();
+    let server: http.Server | null = null;
     
-    // Update bot status
-    updateBotStatus({
-      isRunning: true,
-      uptime: Date.now(),
-      connections: { telegram: false, metaapi: false }
-    });
+    // Start dashboard server if enabled
+    if (config.dashboardEnabled) {
+      logger.info('🌐 Starting dashboard server...');
+      server = createServer();
+      
+      // Update bot status
+      updateBotStatus({
+        isRunning: true,
+        uptime: Date.now(),
+        connections: { telegram: false, metaapi: false }
+      });
+    } else {
+      logger.info('🚫 Dashboard disabled for this instance');
+    }
     
     // Debug configuration before validation
     debugConfig();
@@ -143,49 +194,92 @@ async function main(): Promise<void> {
     // Validate configuration
     if (!validateConfig()) {
       logger.error('Invalid configuration. Please check your environment variables.');
-      addLog({ level: 'error', message: 'Invalid configuration detected' });
+      if (server) addLog({ level: 'error', message: 'Invalid configuration detected' });
       process.exit(1);
     }
     
-    addLog({ level: 'success', message: 'Configuration validated successfully' });
+    if (server) addLog({ level: 'success', message: 'Configuration validated successfully' });
     
-    // Create and start bot
-    const bot = new TelegramBot();
-    botInstance = bot; // Store for cleanup
+    // Initialize enterprise monitoring
+    const healthCheckService = HealthCheckService.getInstance();
+    healthCheckService.setupDefaultHealthChecks();
+    logger.info('🏥 Health check service initialized');
     
-    // Share the bot's executor with the dashboard
-    const executor = bot.getTradeExecutor();
-    globalExecutor = executor; // Store for cleanup
-    setSharedExecutor(executor);
+    const tracer = DistributedTracing.getInstance();
+    logger.info('🔍 Distributed tracing initialized');
     
-    await bot.start();
+    let bot: TelegramBot | null = null;
+    let executor: any = null;
+    
+    // Create and start bot if enabled
+    if (config.botEnabled) {
+      logger.info('🤖 Starting Telegram bot...');
+      bot = new TelegramBot();
+      botInstance = bot; // Store for cleanup
+      
+      // Share the bot's executor with the dashboard (if dashboard enabled)
+      executor = bot.getTradeExecutor();
+      globalExecutor = executor; // Store for cleanup
+      
+      if (config.dashboardEnabled) {
+        setSharedExecutor(executor);
+      }
+      
+      await bot.start();
+      logger.info('✅ Telegram bot started successfully');
+    } else {
+      logger.info('🚫 Telegram bot disabled for this instance');
+      
+      // If bot is disabled but dashboard is enabled, create standalone executor for dashboard
+      if (config.dashboardEnabled) {
+        logger.info('📊 Creating standalone executor for dashboard...');
+        const { CleanMultiAccountExecutor } = await import('./mt5/cleanMultiAccountExecutor');
+        executor = new CleanMultiAccountExecutor();
+        await executor.initialize();
+        globalExecutor = executor;
+        setSharedExecutor(executor);
+      }
+    }
     
     // Start heartbeat monitoring
     setInterval(updateHeartbeat, 30000); // Update every 30 seconds
     updateHeartbeat(); // Initial heartbeat
     
     // Update bot status after successful start
-    updateBotStatus({
-      isRunning: true,
-      connections: { telegram: true, metaapi: true }
-    });
+    const telegramConnected = config.botEnabled && bot !== null;
+    const metaapiConnected = executor !== null;
     
-    addLog({ level: 'success', message: 'Telegram bot started successfully' });
+    if (config.dashboardEnabled) {
+      updateBotStatus({
+        isRunning: true,
+        connections: { telegram: telegramConnected, metaapi: metaapiConnected }
+      });
+      
+      addLog({ 
+        level: 'success', 
+        message: `${config.instanceType.toUpperCase()} instance started successfully` 
+      });
+    }
     
-    logger.info('Bot is running. Press Ctrl+C to stop.');
+    logger.info(`✅ ${config.instanceType.toUpperCase()} instance is running. Press Ctrl+C to stop.`);
+    logger.info(`📊 Components: Bot=${config.botEnabled ? 'ON' : 'OFF'}, Dashboard=${config.dashboardEnabled ? 'ON' : 'OFF'}`);
     
     // Graceful shutdown
     process.on('SIGTERM', async () => {
       logger.info('Received SIGTERM, shutting down gracefully...');
-      addLog({ level: 'info', message: 'Shutting down gracefully...' });
-      server.close();
+      if (server) {
+        addLog({ level: 'info', message: 'Shutting down gracefully...' });
+        server.close();
+      }
       process.exit(0);
     });
     
     process.on('SIGINT', async () => {
       logger.info('Received SIGINT, shutting down gracefully...');
-      addLog({ level: 'info', message: 'Shutting down gracefully...' });
-      server.close();
+      if (server) {
+        addLog({ level: 'info', message: 'Shutting down gracefully...' });
+        server.close();
+      }
       process.exit(0);
     });
     

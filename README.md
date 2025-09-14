@@ -1,47 +1,31 @@
-# 🤖 Telegram Trading Bot
+# Telegram Trading Bot
 
-An advanced Telegram bot that automatically processes trading signals from images and text, then executes trades on MetaTrader 5 via MetaAPI.
+A professional trading bot that monitors Telegram channels for trading signals and executes trades across multiple MetaAPI accounts.
 
-## 🚀 Deployed on Render.com
+## Features
 
-This bot is configured and optimized for deployment on [Render.com](https://render.com).
+- **Multi-Account Trading**: Execute trades across multiple MetaAPI accounts simultaneously
+- **Signal Processing**: Extract trading signals from text and chart images
+- **Risk Management**: Automatic position sizing and 1:1 risk-reward ratio
+- **Symbol Mapping**: Support for various broker symbol formats including IFPro-Trade numeric symbols
+- **Dashboard**: Real-time monitoring and management interface
+- **OCR Integration**: Extract trading levels from chart images
 
-### ✅ Features
-- **OCR Processing**: Extracts trading signals from screenshots using Tesseract.js
-- **Smart Signal Parsing**: Multiple parsing strategies for different signal formats  
-- **Risk Management**: 1:1 Risk-Reward ratio enforcement with configurable position sizing
-- **MT5 Integration**: Seamless trade execution via MetaAPI
-- **Web Dashboard**: Real-time monitoring and logging interface
-- **Multi-Symbol Support**: Forex, Gold, Silver, and Index trading
+## Production Setup
 
-### 🔧 Environment Variables
-Set these in your Render dashboard:
+1. **Environment Variables**: Configure `.env` file with your MetaAPI tokens and account IDs
+2. **Install Dependencies**: `npm install`
+3. **Build**: `npm run build`
+4. **Start**: `npm start`
 
-**Required:**
-```
-BOT_TOKEN=your_telegram_bot_token
-ALLOWED_CHANNEL_ID=your_channel_id  
-METAAPI_TOKEN=your_metaapi_token
-METAAPI_ACCOUNT_ID=your_metaapi_account_id
-```
+## Configuration
 
-**Optional Trading Settings:**
-```
-MAX_TRADE_SIZE=0.1
-RISK_PERCENTAGE=2
-ENFORCE_1_1_RR=true
-DEFAULT_ORDER_TYPE=MARKET
-```
+The bot requires MetaAPI account credentials and Telegram bot token. See `.env.production` for required environment variables.
 
-### 📊 Monitoring
-- **Health Check**: `/health` endpoint for uptime monitoring
-- **Dashboard**: Web interface available at your Render URL
-- **Logs**: Comprehensive logging with Winston
+## Deployment
 
-### 🛠️ Build Configuration
-- **Build Command**: `npm install && npm run build`
-- **Start Command**: `npm start`
-- **Node Version**: 18+ recommended
+The bot includes configuration for Render deployment via `render.yaml`. Ensure all environment variables are set in your deployment platform.
 
----
-*Deployed via Render.com | Last updated: September 2025*
+## Support
+
+For issues or questions, refer to the source code documentation in the `src/` directory.

@@ -15,6 +15,13 @@ export const dashboardLogs: Array<{
 
 const MAX_DASHBOARD_LOGS = 1000; // Keep last 1000 logs for web dashboard
 
+// Extended logger interface with custom methods
+interface ExtendedLogger extends winston.Logger {
+  performance: (message: string, meta?: any) => void;
+  trade: (message: string, meta?: any) => void;
+  circuitBreaker: (message: string, meta?: any) => void;
+}
+
 // Create logs directory in user data folder
 const getLogsDirectory = (): string => {
   // For packaged apps, use user data directory
@@ -96,7 +103,20 @@ export const logger = winston.createLogger({
       format: consoleFormat // Use separate colorized format for console
     })
   ]
-});
+}) as ExtendedLogger;
+
+// Add custom logger methods for backward compatibility with enhanced logger
+logger.performance = (message: string, meta?: any) => {
+  logger.info(`[PERFORMANCE] ${message}`, meta);
+};
+
+logger.trade = (message: string, meta?: any) => {
+  logger.info(`[TRADE] ${message}`, meta);
+};
+
+logger.circuitBreaker = (message: string, meta?: any) => {
+  logger.error(`[CIRCUIT_BREAKER] ${message}`, meta);
+};
 
 // Export logs directory for other modules
 export { logsDirectory };

@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from './logger';
-import { enhancedLogger } from './enhancedLogger';
 
 interface TradingState {
   dailyTrades: number;
@@ -89,14 +88,14 @@ export class CrashRecoveryDatabase {
 
       fs.writeFileSync(this.stateFile, JSON.stringify(stateWithMetadata, null, 2));
       
-      enhancedLogger.performance('Trading state saved to disk', {
+      logger.performance('Trading state saved to disk', {
         dailyTrades: state.dailyTrades,
         currentDrawdown: state.currentDrawdown,
         file: this.stateFile
       });
 
     } catch (error) {
-      enhancedLogger.error('🚨 CRITICAL: Failed to save trading state', error);
+      logger.error('🚨 CRITICAL: Failed to save trading state', error);
     }
   }
 
@@ -146,7 +145,7 @@ export class CrashRecoveryDatabase {
         warnings.push('New trading day detected - reset daily counters');
       }
 
-      enhancedLogger.info('✅ Trading state recovered from disk', {
+      logger.info('✅ Trading state recovered from disk', {
         lastSave: lastSave.toISOString(),
         ageHours: ageHours.toFixed(2),
         dailyTrades: savedData.state.dailyTrades,
@@ -161,7 +160,7 @@ export class CrashRecoveryDatabase {
       };
 
     } catch (error) {
-      enhancedLogger.error('❌ Failed to recover trading state', error);
+      logger.error('❌ Failed to recover trading state', error);
       return {
         success: false,
         warnings: [`State recovery failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
@@ -195,10 +194,10 @@ export class CrashRecoveryDatabase {
       };
 
       this.appendToFile(this.tradesFile, entry);
-      enhancedLogger.trade('Trade execution logged', trade);
+      logger.trade('Trade execution logged', trade);
 
     } catch (error) {
-      enhancedLogger.error('Failed to log trade execution', error);
+      logger.error('Failed to log trade execution', error);
     }
   }
 
@@ -229,7 +228,7 @@ export class CrashRecoveryDatabase {
       };
 
       this.appendToFile(this.errorsFile, entry);
-      enhancedLogger.circuitBreaker('System error logged', error);
+      logger.circuitBreaker('System error logged', error);
 
     } catch (logError) {
       // Last resort - console log if file logging fails
@@ -268,7 +267,7 @@ export class CrashRecoveryDatabase {
       return recentTrades;
 
     } catch (error) {
-      enhancedLogger.error('Failed to get recent trades', error);
+      logger.error('Failed to get recent trades', error);
       return [];
     }
   }
@@ -338,7 +337,7 @@ export class CrashRecoveryDatabase {
       };
 
     } catch (error) {
-      enhancedLogger.error('Failed to analyze error patterns', error);
+      logger.error('Failed to analyze error patterns', error);
       return {
         totalErrors: 0,
         errorsByType: {},
@@ -362,10 +361,10 @@ export class CrashRecoveryDatabase {
       // Clean errors file  
       this.cleanFile(this.errorsFile, cutoffTime);
       
-      enhancedLogger.info('Database cleanup completed', { daysToKeep });
+      logger.info('Database cleanup completed', { daysToKeep });
 
     } catch (error) {
-      enhancedLogger.error('Database cleanup failed', error);
+      logger.error('Database cleanup failed', error);
     }
   }
 
@@ -393,10 +392,10 @@ export class CrashRecoveryDatabase {
         fs.copyFileSync(this.errorsFile, path.join(outputDir, `errors-${timestamp}.jsonl`));
       }
 
-      enhancedLogger.info('Data export completed', { outputDir, timestamp });
+      logger.info('Data export completed', { outputDir, timestamp });
 
     } catch (error) {
-      enhancedLogger.error('Data export failed', error);
+      logger.error('Data export failed', error);
     }
   }
 
@@ -406,7 +405,7 @@ export class CrashRecoveryDatabase {
   private ensureDataDirectory(): void {
     if (!fs.existsSync(this.dataDir)) {
       fs.mkdirSync(this.dataDir, { recursive: true });
-      enhancedLogger.info('Created data directory', { path: this.dataDir });
+      logger.info('Created data directory', { path: this.dataDir });
     }
   }
 
@@ -414,7 +413,7 @@ export class CrashRecoveryDatabase {
     // Auto-save every 5 minutes
     this.backupInterval = setInterval(() => {
       // This will be called by the trading system to save current state
-      enhancedLogger.debug('Auto-backup interval triggered');
+      logger.debug('Auto-backup interval triggered');
     }, 5 * 60 * 1000);
   }
 
@@ -471,6 +470,6 @@ export class CrashRecoveryDatabase {
       clearInterval(this.backupInterval);
       this.backupInterval = null;
     }
-    enhancedLogger.info('Database shutdown completed');
+    logger.info('Database shutdown completed');
   }
 }
