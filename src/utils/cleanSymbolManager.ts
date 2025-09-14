@@ -172,6 +172,19 @@ export class CleanSymbolManager {
     logger.info(`🔍 ${brokerName} - Trying ${variations.length} variations: ${variations.slice(0, 5).join(', ')}${variations.length > 5 ? '...' : ''}`);
 
     // Step 5: Test each variation using direct specifications access (more reliable)
+    // ENHANCEMENT: Also try discovering symbols from broker specifications
+    const discoveredSymbols = this.discoverSymbolsFromSpecifications(inputSymbol, specifications);
+    if (discoveredSymbols.length > 0) {
+      logger.info(`🔍 ${brokerName} - Found ${discoveredSymbols.length} discovered symbols: ${discoveredSymbols.slice(0, 3).join(', ')}${discoveredSymbols.length > 3 ? '...' : ''}`);
+      // Add discovered symbols to the front of variations list
+      discoveredSymbols.forEach((symbol: string) => {
+        if (!variations.includes(symbol)) {
+          variations.unshift(symbol);
+        }
+      });
+    }
+    
+    logger.info(`🔍 ${brokerName} - Testing ${variations.length} total variations: ${variations.slice(0, 5).join(', ')}${variations.length > 5 ? '...' : ''}`);
     
     for (const symbol of variations) {
       try {
@@ -650,13 +663,123 @@ export class CleanSymbolManager {
       });
     }
     
-    // Fallback to static variations for unknown symbols
-    const staticVariations = this.getStaticVariations(inputSymbol, brokerName);
+    // CRITICAL FIX: Use our comprehensive getSymbolVariations method
+    const staticVariations = this.getSymbolVariations(standardSymbol, brokerName);
     staticVariations.forEach(variation => {
       if (!variations.includes(variation)) {
         variations.push(variation);
       }
     });
+    
+    // ENHANCEMENT: Add broker-specific naming patterns based on research
+    const brokerSpecificVariations = this.getBrokerSpecificVariations(standardSymbol, brokerName);
+    brokerSpecificVariations.forEach(variation => {
+      if (!variations.includes(variation)) {
+        variations.push(variation);
+      }
+    });
+    
+    return variations;
+  }
+
+  /**
+   * Discover symbols from broker specifications by pattern matching
+   * @param inputSymbol - Input symbol to search for
+   * @param specifications - Broker symbol specifications
+   * @returns Array of discovered matching symbols
+   */
+  private static discoverSymbolsFromSpecifications(inputSymbol: string, specifications: any): string[] {
+    const discoveredSymbols: string[] = [];
+    const standardSymbol = this.inferStandardSymbol(inputSymbol);
+    const searchPatterns = [
+      standardSymbol,
+      standardSymbol.toLowerCase(),
+      standardSymbol.toUpperCase()
+    ];
+    
+    // Search through all available specifications
+    for (const [symbol, spec] of Object.entries(specifications)) {
+      if (!spec || typeof spec !== 'object') continue;
+      
+      // Check if symbol name matches any of our patterns
+      for (const pattern of searchPatterns) {
+        if (symbol.toLowerCase().includes(pattern.toLowerCase()) ||
+            pattern.toLowerCase().includes(symbol.toLowerCase())) {
+          
+          // Additional validation using description if available
+          const description = (spec as any).description || '';
+          if (this.validateSymbolMatch(inputSymbol, symbol, description)) {
+            discoveredSymbols.push(symbol);
+            break;
+          }
+        }
+      }
+    }
+    
+    return discoveredSymbols;
+  }
+
+  /**
+   * Get broker-specific symbol variations based on research and patterns
+   * @param standardSymbol - Standard symbol name (e.g., 'USDCHF')
+   * @param brokerName - Broker name
+   * @returns Array of broker-specific symbol variations
+   */
+  private static getBrokerSpecificVariations(standardSymbol: string, brokerName: string): string[] {
+    const variations: string[] = [];
+    
+    // FTMO-specific patterns
+    if (brokerName.includes('FTMO')) {
+      // FTMO typically uses standard naming, but may have suffixes
+      variations.push(
+        standardSymbol,
+        standardSymbol + '_',
+        standardSymbol + '.std',
+        standardSymbol.toLowerCase(),
+        standardSymbol + 'pro'
+      );
+    }
+    
+    // IFPro-Trade specific patterns (from logs - they use numeric codes for some symbols)
+    else if (brokerName === 'IFPro-Trade') {
+      // IFPro-Trade uses both standard names and numeric codes
+      variations.push(
+        standardSymbol,
+        standardSymbol.toLowerCase(),
+        standardSymbol + '_'
+      );
+      
+      // Special handling for forex pairs with known numeric mappings
+      if (standardSymbol === 'USDCHF') {
+        variations.push('USDCHF', 'usdchf', 'USD/CHF');
+      }
+    }
+    
+    // Pepperstone-specific patterns
+    else if (brokerName.includes('Pepperstone')) {
+      // Pepperstone typically uses standard naming with potential suffixes
+      variations.push(
+        standardSymbol,
+        standardSymbol + '.a',
+        standardSymbol + '_ECN',
+        standardSymbol + 'ECN',
+        standardSymbol.toLowerCase()
+      );
+    }
+    
+    // Generic patterns for unknown brokers
+    else {
+      variations.push(
+        standardSymbol,
+        standardSymbol.toLowerCase(),
+        standardSymbol.toUpperCase(),
+        standardSymbol + '.',
+        standardSymbol + '_',
+        standardSymbol + 'm',
+        standardSymbol + 'pro',
+        standardSymbol + 'Cash'
+      );
+    }
     
     return variations;
   }
@@ -807,19 +930,8 @@ export class CleanSymbolManager {
    * Static fallback variations (legacy support)
    */
   private static getStaticVariations(inputSymbol: string, brokerName: string): string[] {
-    // Your existing static logic as fallback
-    const symbol = inputSymbol.toUpperCase();
-    const variations: string[] = [];
-
-    if (symbol === 'GOLD' || symbol === 'XAUUSD') {
-      if (brokerName === 'IFPro-Trade') {
-        variations.push('67'); // IFPro-Trade uses 67 for Gold, 66 for Silver
-      }
-      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash');
-    }
-    // ... rest of static logic
-    
-    return variations;
+    // Use the comprehensive symbol variations we implemented
+    return this.getSymbolVariations(inputSymbol, brokerName);
   }
 
   /**
@@ -900,16 +1012,45 @@ export class CleanSymbolManager {
    */
   private static validateSymbolMatch(requestedSymbol: string, foundSymbol: string, description: string): boolean {
     const requested = requestedSymbol.toUpperCase();
+    const found = foundSymbol.toUpperCase();
     const desc = description.toLowerCase();
     
-    // If symbols match exactly or are known variations, it's valid
-    if (foundSymbol.toUpperCase() === requested) {
+    // Direct symbol matches
+    if (found === requested) {
       return true;
+    }
+    
+    // Enhanced forex pair matching based on MetaAPI research
+    const forexPairs: { [key: string]: string[] } = {
+      'USDCHF': ['usd', 'chf', 'dollar', 'franc', 'swiss'],
+      'EURUSD': ['eur', 'usd', 'euro', 'dollar'],
+      'GBPUSD': ['gbp', 'usd', 'pound', 'dollar', 'sterling'],
+      'USDJPY': ['usd', 'jpy', 'dollar', 'yen'],
+      'AUDUSD': ['aud', 'usd', 'australian', 'dollar'],
+      'USDCAD': ['usd', 'cad', 'dollar', 'canadian'],
+      'NZDUSD': ['nzd', 'usd', 'new zealand', 'dollar'],
+      'EURGBP': ['eur', 'gbp', 'euro', 'pound'],
+      'EURJPY': ['eur', 'jpy', 'euro', 'yen'],
+      'GBPJPY': ['gbp', 'jpy', 'pound', 'yen'],
+      'EURCHF': ['eur', 'chf', 'euro', 'franc'],
+      'GBPCHF': ['gbp', 'chf', 'pound', 'franc'],
+      'AUDJPY': ['aud', 'jpy', 'australian', 'yen'],
+      'CADJPY': ['cad', 'jpy', 'canadian', 'yen'],
+      'CHFJPY': ['chf', 'jpy', 'franc', 'yen'],
+      'NZDJPY': ['nzd', 'jpy', 'new zealand', 'yen']
+    };
+    
+    // Check forex pairs by description
+    const keywords = forexPairs[requested];
+    if (keywords && keywords.length >= 2) {
+      const matchedKeywords = keywords.filter(keyword => desc.includes(keyword));
+      if (matchedKeywords.length >= 2) {
+        return true;
+      }
     }
     
     // For Gold/XAUUSD requests
     if (requested === 'GOLD' || requested === 'XAUUSD') {
-      // Must contain gold-related terms in description
       return desc.includes('gold') || desc.includes('xau') || 
              (desc.includes('troy ounce') && desc.includes('gold'));
     }
@@ -919,13 +1060,21 @@ export class CleanSymbolManager {
       return desc.includes('silver') || desc.includes('xag');
     }
     
-    // For forex pairs, be more lenient with exact matches
-    if (requested.length === 6 && requested.match(/^[A-Z]{6}$/)) {
-      return desc.includes(requested.substring(0,3)) && desc.includes(requested.substring(3,6));
+    // Flexible pattern matching for symbol variations
+    const normalizedRequested = requested.replace(/[^A-Z]/g, '');
+    const normalizedFound = found.replace(/[^A-Z]/g, '');
+    
+    if (normalizedRequested === normalizedFound) {
+      return true;
     }
     
-    // For other symbols, be conservative - require description to contain the symbol name
+    // Check if one contains the other (for patterns like USDCHF vs USDCHFm)
+    if (normalizedRequested.includes(normalizedFound) || normalizedFound.includes(normalizedRequested)) {
+      return true;
+    }
+    
+    // Conservative fallback - require description to contain the symbol name
     return desc.includes(requested.toLowerCase()) || 
-           foundSymbol.toUpperCase().includes(requested);
+           found.includes(normalizedRequested);
   }
 }
