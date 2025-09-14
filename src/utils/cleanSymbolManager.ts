@@ -352,6 +352,62 @@ export class CleanSymbolManager {
     else if (symbol === 'USOIL') {
       variations.push('USOIL', 'WTI', 'CRUDE', 'OIL');
     }
+    // USDCHF variations
+    else if (symbol === 'USDCHF') {
+      variations.push('USDCHF', 'USD/CHF', 'USDCHF.', 'USDCHFm');
+    }
+    // USDJPY variations
+    else if (symbol === 'USDJPY') {
+      variations.push('USDJPY', 'USD/JPY', 'USDJPY.', 'USDJPYm');
+    }
+    // AUDUSD variations
+    else if (symbol === 'AUDUSD') {
+      variations.push('AUDUSD', 'AUD/USD', 'AUDUSD.', 'AUDUSDm');
+    }
+    // USDCAD variations
+    else if (symbol === 'USDCAD') {
+      variations.push('USDCAD', 'USD/CAD', 'USDCAD.', 'USDCADm');
+    }
+    // NZDUSD variations
+    else if (symbol === 'NZDUSD') {
+      variations.push('NZDUSD', 'NZD/USD', 'NZDUSD.', 'NZDUSDm');
+    }
+    // EURGBP variations
+    else if (symbol === 'EURGBP') {
+      variations.push('EURGBP', 'EUR/GBP', 'EURGBP.', 'EURGBPm');
+    }
+    // EURJPY variations
+    else if (symbol === 'EURJPY') {
+      variations.push('EURJPY', 'EUR/JPY', 'EURJPY.', 'EURJPYm');
+    }
+    // GBPJPY variations
+    else if (symbol === 'GBPJPY') {
+      variations.push('GBPJPY', 'GBP/JPY', 'GBPJPY.', 'GBPJPYm');
+    }
+    // EURCHF variations
+    else if (symbol === 'EURCHF') {
+      variations.push('EURCHF', 'EUR/CHF', 'EURCHF.', 'EURCHFm');
+    }
+    // GBPCHF variations
+    else if (symbol === 'GBPCHF') {
+      variations.push('GBPCHF', 'GBP/CHF', 'GBPCHF.', 'GBPCHFm');
+    }
+    // AUDJPY variations
+    else if (symbol === 'AUDJPY') {
+      variations.push('AUDJPY', 'AUD/JPY', 'AUDJPY.', 'AUDJPYm');
+    }
+    // CADJPY variations
+    else if (symbol === 'CADJPY') {
+      variations.push('CADJPY', 'CAD/JPY', 'CADJPY.', 'CADJPYm');
+    }
+    // CHFJPY variations
+    else if (symbol === 'CHFJPY') {
+      variations.push('CHFJPY', 'CHF/JPY', 'CHFJPY.', 'CHFJPYm');
+    }
+    // NZDJPY variations
+    else if (symbol === 'NZDJPY') {
+      variations.push('NZDJPY', 'NZD/JPY', 'NZDJPY.', 'NZDJPYm');
+    }
     // EUR/USD variations
     else if (symbol === 'EURUSD') {
       variations.push('EURUSD', 'EUR/USD', 'EURUSD.');
@@ -638,13 +694,70 @@ export class CleanSymbolManager {
       return 'NAS100';
     }
     
-    // Forex pairs
+    // Forex pairs - Major pairs
     if (upperSymbol.includes('EUR') && upperSymbol.includes('USD')) {
       return 'EURUSD';
     }
     
     if (upperSymbol.includes('GBP') && upperSymbol.includes('USD')) {
       return 'GBPUSD';
+    }
+    
+    if (upperSymbol.includes('USD') && upperSymbol.includes('CHF')) {
+      return 'USDCHF';
+    }
+    
+    if (upperSymbol.includes('USD') && upperSymbol.includes('JPY')) {
+      return 'USDJPY';
+    }
+    
+    if (upperSymbol.includes('AUD') && upperSymbol.includes('USD')) {
+      return 'AUDUSD';
+    }
+    
+    if (upperSymbol.includes('USD') && upperSymbol.includes('CAD')) {
+      return 'USDCAD';
+    }
+    
+    if (upperSymbol.includes('NZD') && upperSymbol.includes('USD')) {
+      return 'NZDUSD';
+    }
+    
+    // Forex pairs - Cross pairs
+    if (upperSymbol.includes('EUR') && upperSymbol.includes('GBP')) {
+      return 'EURGBP';
+    }
+    
+    if (upperSymbol.includes('EUR') && upperSymbol.includes('JPY')) {
+      return 'EURJPY';
+    }
+    
+    if (upperSymbol.includes('GBP') && upperSymbol.includes('JPY')) {
+      return 'GBPJPY';
+    }
+    
+    if (upperSymbol.includes('EUR') && upperSymbol.includes('CHF')) {
+      return 'EURCHF';
+    }
+    
+    if (upperSymbol.includes('GBP') && upperSymbol.includes('CHF')) {
+      return 'GBPCHF';
+    }
+    
+    if (upperSymbol.includes('AUD') && upperSymbol.includes('JPY')) {
+      return 'AUDJPY';
+    }
+    
+    if (upperSymbol.includes('CAD') && upperSymbol.includes('JPY')) {
+      return 'CADJPY';
+    }
+    
+    if (upperSymbol.includes('CHF') && upperSymbol.includes('JPY')) {
+      return 'CHFJPY';
+    }
+    
+    if (upperSymbol.includes('NZD') && upperSymbol.includes('JPY')) {
+      return 'NZDJPY';
     }
     
     // Oil
