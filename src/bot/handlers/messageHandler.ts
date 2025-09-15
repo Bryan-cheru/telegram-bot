@@ -389,29 +389,6 @@ Target 2: 2620\`
       // Convert to trade signal format for execution
       const tradeSignal = this.convertManualCommandToTradeSignal(command);
       
-      // Check for GBPJPY and skip if not available on current brokers
-      if (tradeSignal.symbol.toUpperCase().includes('GBPJPY')) {
-        logger.warn('⚠️ GBPJPY not available on current brokers - skipping manual trade');
-        
-        const skipMessage = `⚠️ **GBPJPY Manual Trade Skipped**
-
-**Reason:** GBPJPY is not available on your current brokers
-
-**Possible Solutions:**
-• Contact broker support to confirm GBPJPY availability
-• Use alternative pairs like GBPUSD or EURJPY
-• Check if account type supports more currency pairs
-
-**Attempted Trade:**
-**Symbol:** ${tradeSignal.symbol}
-**Action:** ${tradeSignal.action}
-**Volume:** ${tradeSignal.volume}
-        `.trim();
-
-        await ctx.reply(skipMessage, { parse_mode: 'Markdown' });
-        return;
-      }
-      
       logger.info('🎯 Executing manual trade command with synchronization fixes...');
       // Use manual trade retry method if available
       const result = await (tradeExecutor.executeManualTradeWithRetry ? 
