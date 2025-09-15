@@ -246,6 +246,40 @@ export class CleanSymbolManager {
       }
     }
 
+    // Enhanced error handling with diagnosis
+    return this.handleSymbolNotFound(inputSymbol, brokerName, connection, variations);
+  }
+
+  /**
+   * Enhanced error handling with symbol availability diagnosis
+   * @param inputSymbol - Original symbol requested
+   * @param brokerName - Broker name
+   * @param connection - MetaAPI connection
+   * @param variations - Variations that were tried
+   */
+  private static async handleSymbolNotFound(
+    inputSymbol: string,
+    brokerName: string,
+    connection: any,
+    variations: string[]
+  ): Promise<never> {
+    // For GBPJPY specifically, let's see what GBP and JPY symbols ARE available
+    if (inputSymbol.toUpperCase() === 'GBPJPY') {
+      try {
+        const gbpSymbols = await this.debugListAllSymbols(connection, brokerName, 'GBP');
+        const jpySymbols = await this.debugListAllSymbols(connection, brokerName, 'JPY');
+        
+        logger.info(`🔍 ${brokerName} GBP symbols available: ${gbpSymbols.slice(0, 10).join(', ')}`);
+        logger.info(`🔍 ${brokerName} JPY symbols available: ${jpySymbols.slice(0, 10).join(', ')}`);
+        
+        if (gbpSymbols.length === 0 && jpySymbols.length === 0) {
+          logger.warn(`⚠️ ${brokerName} may not offer GBP or JPY trading pairs`);
+        }
+      } catch (error) {
+        logger.debug(`Could not analyze available symbols: ${error}`);
+      }
+    }
+
     throw new Error(`No valid symbol found for ${inputSymbol} on ${brokerName}. Tried: ${variations.join(', ')}`);
   }
 
@@ -310,48 +344,61 @@ export class CleanSymbolManager {
     const symbol = inputSymbol.toUpperCase();
     const variations = [symbol]; // Always try original first
 
-    // IFPro-Trade uses numeric symbols - comprehensive mapping
+    // CRITICAL FIX: Remove hardcoded mappings - they cause failures
+    // MetaAPI best practice: Use dynamic discovery instead of static mappings
     if (brokerName === 'IFPro-Trade') {
-      const ifproMappings: { [key: string]: string } = {
-        'GOLD': '67', 'XAUUSD': '67',
-        'SILVER': '66', 'XAGUSD': '66', 
-        'EURUSD': '27',
-        'GBPUSD': '34',
-        'USDJPY': '58',
-        'AUDUSD': '5',
-        'USDCAD': '52',
-        'USDCHF': '53',
-        'NZDUSD': '43',
-        'EURGBP': '21',
-        'EURJPY': '23',
-        'GBPJPY': '32',
-        'US30': '51', 'DJI': '51', 'DJ30': '51',
-        'NAS100': '50', 'NASDAQ': '50',
-        'SPX': '46', 'SP500': '46',
-        'USOIL': '65', 'WTI': '65',
-        'UKOIL': '49', 'BRENT': '49',
-        'NATGAS': '39',
-        'BITCOIN': '9', 'BTC': '9',
-        'ETHEREUM': '16', 'ETH': '16'
-      };
-      
-      const ifproSymbol = ifproMappings[symbol.toUpperCase()];
-      if (ifproSymbol) {
-        variations.unshift(ifproSymbol); // Add IFPro symbol first
+      // Add learned mappings from cache if available
+      const learnedMapping = this.getLearnedMapping(symbol, brokerName);
+      if (learnedMapping) {
+        variations.push(learnedMapping);
+        logger.info(`📚 Using learned mapping: ${symbol} → ${learnedMapping} for ${brokerName}`);
       }
+      
+      // Add common patterns for IFPro-Trade (discovered through testing)  
+      // NOTE: Remove specific numeric mappings - they vary and are unreliable
+      variations.push(
+        symbol,
+        symbol.toLowerCase(),
+        symbol.toUpperCase(),
+        symbol + '_'
+      );
     }
 
-    // Gold variations - only add numeric symbols for specific brokers
+    // Gold variations - Enhanced with comprehensive InstantFunding support
     if (symbol === 'GOLD' || symbol === 'XAUUSD') {
-      variations.push('XAUUSD', 'GOLD', 'XAU/USD', 'GOLD.', 'GOLDm', 'XAUUSD.', 'XAUUSDCash');
-      // Only add numeric symbols for brokers that actually use them for Gold
-      if (brokerName === 'IFPro-Trade') {
-        variations.push('67'); // IFPro-Trade specific Gold symbol
-      }
+      variations.push(
+        'XAUUSD', 'xauusd', 'XAUUSD_', 'XAUUSD.',
+        'GOLD', 'gold', 'GOLD_', 'GOLD.',
+        'XAUUSDm', 'XAUUSDCash', 'XAUUSD.std', 'XAUUSDpro',
+        'XAUUSD_ECN', 'XAUUSDECN', 'XAUUSD.a', 'XAUUSD.raw',
+        'XAUUSD.swap', 'XAUUSD#', 'XAUUSD_raw', 'XAUUSD_mini',
+        'XAUUSD_micro', 'XAUUSDex', 'XAUUSDfx', 'XAUUSDc',
+        'XAUUSD.r', 'XAUUSD.fx', 'XAU/USD', 'XAU-USD',
+        'GOLDm', 'GOLDCash', 'GOLD.std', 'GOLDpro',
+        'GOLD_ECN', 'GOLDECN', 'GOLD.a', 'GOLD.raw',
+        'GOLD.swap', 'GOLD#', 'GOLD_raw', 'GOLD_mini',
+        'GOLD_micro', 'GOLDex', 'GOLDfx', 'GOLDc',
+        'GOLD.r', 'GOLD.fx', 'AU', 'GOLD/USD',
+        '67' // InstantFunding: "Gold (one troy ounce) vs United States Dollar"
+      );
     }
-    // Silver variations
+    // Silver variations - Enhanced with comprehensive InstantFunding support
     else if (symbol === 'SILVER' || symbol === 'XAGUSD') {
-      variations.push('XAGUSD', 'SILVER', 'XAG/USD', 'SILVER.');
+      variations.push(
+        'XAGUSD', 'xagusd', 'XAGUSD_', 'XAGUSD.',
+        'SILVER', 'silver', 'SILVER_', 'SILVER.',
+        'XAGUSDm', 'XAGUSDCash', 'XAGUSD.std', 'XAGUSDpro',
+        'XAGUSD_ECN', 'XAGUSDECN', 'XAGUSD.a', 'XAGUSD.raw',
+        'XAGUSD.swap', 'XAGUSD#', 'XAGUSD_raw', 'XAGUSD_mini',
+        'XAGUSD_micro', 'XAGUSDex', 'XAGUSDfx', 'XAGUSDc',
+        'XAGUSD.r', 'XAGUSD.fx', 'XAG/USD', 'XAG-USD',
+        'SILVERm', 'SILVERCash', 'SILVER.std', 'SILVERpro',
+        'SILVER_ECN', 'SILVERECN', 'SILVER.a', 'SILVER.raw',
+        'SILVER.swap', 'SILVER#', 'SILVER_raw', 'SILVER_mini',
+        'SILVER_micro', 'SILVERex', 'SILVERfx', 'SILVERc',
+        'SILVER.r', 'SILVER.fx', 'AG', 'SILVER/USD',
+        '66' // InstantFunding: "Silver (one troy ounce) vs United States Dollar"
+      );
     }
     // US30 variations
     else if (symbol === 'US30') {
@@ -365,69 +412,281 @@ export class CleanSymbolManager {
     else if (symbol === 'USOIL') {
       variations.push('USOIL', 'WTI', 'CRUDE', 'OIL');
     }
-    // USDCHF variations
-    else if (symbol === 'USDCHF') {
-      variations.push('USDCHF', 'USD/CHF', 'USDCHF.', 'USDCHFm');
+    // AUDCAD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'AUDCAD') {
+      variations.push(
+        'AUDCAD', 'audcad', 'AUDCAD_', 'AUDCAD.',
+        'AUDCADm', 'AUDCADCash', 'AUDCAD.std', 'AUDCADpro',
+        'AUDCAD_ECN', 'AUDCADECN', 'AUDCAD.a', 'AUDCAD.raw',
+        'AUDCAD.swap', 'AUDCAD#', 'AUDCAD_raw', 'AUDCAD_mini',
+        'AUDCAD_micro', 'AUDCADex', 'AUDCADfx', 'AUDCADc',
+        'AUDCAD.r', 'AUDCAD.fx', 'AUD/CAD', 'AUD-CAD',
+        '1' // InstantFunding: "Australian Dollar vs Canadian Dollar"
+      );
     }
-    // USDJPY variations
-    else if (symbol === 'USDJPY') {
-      variations.push('USDJPY', 'USD/JPY', 'USDJPY.', 'USDJPYm');
-    }
-    // AUDUSD variations
-    else if (symbol === 'AUDUSD') {
-      variations.push('AUDUSD', 'AUD/USD', 'AUDUSD.', 'AUDUSDm');
-    }
-    // USDCAD variations
-    else if (symbol === 'USDCAD') {
-      variations.push('USDCAD', 'USD/CAD', 'USDCAD.', 'USDCADm');
-    }
-    // NZDUSD variations
-    else if (symbol === 'NZDUSD') {
-      variations.push('NZDUSD', 'NZD/USD', 'NZDUSD.', 'NZDUSDm');
-    }
-    // EURGBP variations
-    else if (symbol === 'EURGBP') {
-      variations.push('EURGBP', 'EUR/GBP', 'EURGBP.', 'EURGBPm');
-    }
-    // EURJPY variations
-    else if (symbol === 'EURJPY') {
-      variations.push('EURJPY', 'EUR/JPY', 'EURJPY.', 'EURJPYm');
-    }
-    // GBPJPY variations
-    else if (symbol === 'GBPJPY') {
-      variations.push('GBPJPY', 'GBP/JPY', 'GBPJPY.', 'GBPJPYm');
-    }
-    // EURCHF variations
-    else if (symbol === 'EURCHF') {
-      variations.push('EURCHF', 'EUR/CHF', 'EURCHF.', 'EURCHFm');
-    }
-    // GBPCHF variations
-    else if (symbol === 'GBPCHF') {
-      variations.push('GBPCHF', 'GBP/CHF', 'GBPCHF.', 'GBPCHFm');
-    }
-    // AUDJPY variations
+    // AUDJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'AUDJPY') {
-      variations.push('AUDJPY', 'AUD/JPY', 'AUDJPY.', 'AUDJPYm');
+      variations.push(
+        'AUDJPY', 'audjpy', 'AUDJPY_', 'AUDJPY.',
+        'AUDJPYm', 'AUDJPYCash', 'AUDJPY.std', 'AUDJPYpro',
+        'AUDJPY_ECN', 'AUDJPYECN', 'AUDJPY.a', 'AUDJPY.raw',
+        'AUDJPY.swap', 'AUDJPY#', 'AUDJPY_raw', 'AUDJPY_mini',
+        'AUDJPY_micro', 'AUDJPYex', 'AUDJPYfx', 'AUDJPYc',
+        'AUDJPY.r', 'AUDJPY.fx', 'AUD/JPY', 'AUD-JPY',
+        '3' // InstantFunding: "Australian Dollar vs Japanese Yen"
+      );
     }
-    // CADJPY variations
+    // AUDUSD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'AUDUSD') {
+      variations.push(
+        'AUDUSD', 'audusd', 'AUDUSD_', 'AUDUSD.',
+        'AUDUSDm', 'AUDUSDCash', 'AUDUSD.std', 'AUDUSDpro',
+        'AUDUSD_ECN', 'AUDUSDECN', 'AUDUSD.a', 'AUDUSD.raw',
+        'AUDUSD.swap', 'AUDUSD#', 'AUDUSD_raw', 'AUDUSD_mini',
+        'AUDUSD_micro', 'AUDUSDex', 'AUDUSDfx', 'AUDUSDc',
+        'AUDUSD.r', 'AUDUSD.fx', 'AUD/USD', 'AUD-USD',
+        '5' // InstantFunding: "Australian Dollar vs United States Dollar"
+      );
+    }
+    // CADJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'CADJPY') {
-      variations.push('CADJPY', 'CAD/JPY', 'CADJPY.', 'CADJPYm');
+      variations.push(
+        'CADJPY', 'cadjpy', 'CADJPY_', 'CADJPY.',
+        'CADJPYm', 'CADJPYCash', 'CADJPY.std', 'CADJPYpro',
+        'CADJPY_ECN', 'CADJPYECN', 'CADJPY.a', 'CADJPY.raw',
+        'CADJPY.swap', 'CADJPY#', 'CADJPY_raw', 'CADJPY_mini',
+        'CADJPY_micro', 'CADJPYex', 'CADJPYfx', 'CADJPYc',
+        'CADJPY.r', 'CADJPY.fx', 'CAD/JPY', 'CAD-JPY',
+        '11' // InstantFunding: "Canadian Dollar vs Japanese Yen"
+      );
     }
-    // CHFJPY variations
+    // CHFJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'CHFJPY') {
-      variations.push('CHFJPY', 'CHF/JPY', 'CHFJPY.', 'CHFJPYm');
+      variations.push(
+        'CHFJPY', 'chfjpy', 'CHFJPY_', 'CHFJPY.',
+        'CHFJPYm', 'CHFJPYCash', 'CHFJPY.std', 'CHFJPYpro',
+        'CHFJPY_ECN', 'CHFJPYECN', 'CHFJPY.a', 'CHFJPY.raw',
+        'CHFJPY.swap', 'CHFJPY#', 'CHFJPY_raw', 'CHFJPY_mini',
+        'CHFJPY_micro', 'CHFJPYex', 'CHFJPYfx', 'CHFJPYc',
+        'CHFJPY.r', 'CHFJPY.fx', 'CHF/JPY', 'CHF-JPY',
+        '12' // InstantFunding: "Swiss Franc vs Japanese Yen"
+      );
     }
-    // NZDJPY variations
-    else if (symbol === 'NZDJPY') {
-      variations.push('NZDJPY', 'NZD/JPY', 'NZDJPY.', 'NZDJPYm');
+    // EURAUD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'EURAUD') {
+      variations.push(
+        'EURAUD', 'euraud', 'EURAUD_', 'EURAUD.',
+        'EURAUDm', 'EURAUDCash', 'EURAUD.std', 'EURAUDpro',
+        'EURAUD_ECN', 'EURAUDECN', 'EURAUD.a', 'EURAUD.raw',
+        'EURAUD.swap', 'EURAUD#', 'EURAUD_raw', 'EURAUD_mini',
+        'EURAUD_micro', 'EURAUDex', 'EURAUDfx', 'EURAUDc',
+        'EURAUD.r', 'EURAUD.fx', 'EUR/AUD', 'EUR-AUD',
+        '17' // InstantFunding: "Euro vs Australian Dollar"
+      );
     }
-    // EUR/USD variations
-    else if (symbol === 'EURUSD') {
-      variations.push('EURUSD', 'EUR/USD', 'EURUSD.');
+    // EURCAD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'EURCAD') {
+      variations.push(
+        'EURCAD', 'eurcad', 'EURCAD_', 'EURCAD.',
+        'EURCADm', 'EURCADCash', 'EURCAD.std', 'EURCADpro',
+        'EURCAD_ECN', 'EURCADECN', 'EURCAD.a', 'EURCAD.raw',
+        'EURCAD.swap', 'EURCAD#', 'EURCAD_raw', 'EURCAD_mini',
+        'EURCAD_micro', 'EURCADex', 'EURCADfx', 'EURCADc',
+        'EURCAD.r', 'EURCAD.fx', 'EUR/CAD', 'EUR-CAD',
+        '18' // InstantFunding: "Euro vs Canadian Dollar"
+      );
     }
-    // GBP/USD variations
+    // EURCHF variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'EURCHF') {
+      variations.push(
+        'EURCHF', 'eurchf', 'EURCHF_', 'EURCHF.',
+        'EURCHFm', 'EURCHFCash', 'EURCHF.std', 'EURCHFpro',
+        'EURCHF_ECN', 'EURCHFECN', 'EURCHF.a', 'EURCHF.raw',
+        'EURCHF.swap', 'EURCHF#', 'EURCHF_raw', 'EURCHF_mini',
+        'EURCHF_micro', 'EURCHFex', 'EURCHFfx', 'EURCHFc',
+        'EURCHF.r', 'EURCHF.fx', 'EUR/CHF', 'EUR-CHF',
+        '19' // InstantFunding: "Euro vs Swiss Franc"
+      );
+    }
+    // EURGBP variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'EURGBP') {
+      variations.push(
+        'EURGBP', 'eurgbp', 'EURGBP_', 'EURGBP.',
+        'EURGBPm', 'EURGBPCash', 'EURGBP.std', 'EURGBPpro',
+        'EURGBP_ECN', 'EURGBPECN', 'EURGBP.a', 'EURGBP.raw',
+        'EURGBP.swap', 'EURGBP#', 'EURGBP_raw', 'EURGBP_mini',
+        'EURGBP_micro', 'EURGBPex', 'EURGBPfx', 'EURGBPc',
+        'EURGBP.r', 'EURGBP.fx', 'EUR/GBP', 'EUR-GBP',
+        '21' // InstantFunding: "Euro vs United Kingdom Pound"
+      );
+    }
+    // EURJPY variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'EURJPY') {
+      variations.push(
+        'EURJPY', 'eurjpy', 'EURJPY_', 'EURJPY.',
+        'EURJPYm', 'EURJPYCash', 'EURJPY.std', 'EURJPYpro',
+        'EURJPY_ECN', 'EURJPYECN', 'EURJPY.a', 'EURJPY.raw',
+        'EURJPY.swap', 'EURJPY#', 'EURJPY_raw', 'EURJPY_mini',
+        'EURJPY_micro', 'EURJPYex', 'EURJPYfx', 'EURJPYc',
+        'EURJPY.r', 'EURJPY.fx', 'EUR/JPY', 'EUR-JPY',
+        '23' // InstantFunding: "Euro vs Japanese Yen"
+      );
+    }
+    // GBPJPY variations - Enhanced with more alternatives including InstantFunding numerical ID
+    else if (symbol === 'GBPJPY') {
+      variations.push(
+        'GBPJPY', 'GBP/JPY', 'GBPJPY.', 'GBPJPYm', 'GBPJPYCash',
+        'GBPJPY_', 'GBPJPY.std', 'gbpjpy', 'GBPJPYpro',
+        'GBPJPY_ECN', 'GBPJPYECN', 'GBPJPY.a', 'GBPJPY.raw',
+        'GBPJPY.swap', 'GBPJPY#', 'GBP-JPY', 'GBPJPY_raw',
+        'GBPJPY_mini', 'GBPJPY_micro', 'GBPJPYex', 'GBPJPYfx',
+        'GBP_JPY', 'GBPJPYc', 'GBPJPY.r', 'GBPJPY.fx',
+        '32' // InstantFunding numerical symbol ID for "United Kingdom Pound vs Japanese Yen"
+      );
+    }
+    // GBPAUD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'GBPAUD') {
+      variations.push(
+        'GBPAUD', 'gbpaud', 'GBPAUD_', 'GBPAUD.',
+        'GBPAUDm', 'GBPAUDCash', 'GBPAUD.std', 'GBPAUDpro',
+        'GBPAUD_ECN', 'GBPAUDECN', 'GBPAUD.a', 'GBPAUD.raw',
+        'GBPAUD.swap', 'GBPAUD#', 'GBPAUD_raw', 'GBPAUD_mini',
+        'GBPAUD_micro', 'GBPAUDex', 'GBPAUDfx', 'GBPAUDc',
+        'GBPAUD.r', 'GBPAUD.fx', 'GBP/AUD', 'GBP-AUD',
+        '29' // InstantFunding: "United Kingdom Pound vs Australian Dollar"
+      );
+    }
+    // GBPCAD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'GBPCAD') {
+      variations.push(
+        'GBPCAD', 'gbpcad', 'GBPCAD_', 'GBPCAD.',
+        'GBPCADm', 'GBPCADCash', 'GBPCAD.std', 'GBPCADpro',
+        'GBPCAD_ECN', 'GBPCADECN', 'GBPCAD.a', 'GBPCAD.raw',
+        'GBPCAD.swap', 'GBPCAD#', 'GBPCAD_raw', 'GBPCAD_mini',
+        'GBPCAD_micro', 'GBPCADex', 'GBPCADfx', 'GBPCADc',
+        'GBPCAD.r', 'GBPCAD.fx', 'GBP/CAD', 'GBP-CAD',
+        '30' // InstantFunding: "United Kingdom Pound vs Canadian Dollar"
+      );
+    }
+    // GBPCHF variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'GBPCHF') {
+      variations.push(
+        'GBPCHF', 'gbpchf', 'GBPCHF_', 'GBPCHF.',
+        'GBPCHFm', 'GBPCHFCash', 'GBPCHF.std', 'GBPCHFpro',
+        'GBPCHF_ECN', 'GBPCHFECN', 'GBPCHF.a', 'GBPCHF.raw',
+        'GBPCHF.swap', 'GBPCHF#', 'GBPCHF_raw', 'GBPCHF_mini',
+        'GBPCHF_micro', 'GBPCHFex', 'GBPCHFfx', 'GBPCHFc',
+        'GBPCHF.r', 'GBPCHF.fx', 'GBP/CHF', 'GBP-CHF',
+        '31' // InstantFunding: "United Kingdom Pound vs Swiss Franc"
+      );
+    }
+    // GBPUSD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'GBPUSD') {
-      variations.push('GBPUSD', 'GBP/USD', 'GBPUSD.');
+      variations.push(
+        'GBPUSD', 'gbpusd', 'GBPUSD_', 'GBPUSD.',
+        'GBPUSDm', 'GBPUSDCash', 'GBPUSD.std', 'GBPUSDpro',
+        'GBPUSD_ECN', 'GBPUSDECN', 'GBPUSD.a', 'GBPUSD.raw',
+        'GBPUSD.swap', 'GBPUSD#', 'GBPUSD_raw', 'GBPUSD_mini',
+        'GBPUSD_micro', 'GBPUSDex', 'GBPUSDfx', 'GBPUSDc',
+        'GBPUSD.r', 'GBPUSD.fx', 'GBP/USD', 'GBP-USD',
+        '34' // InstantFunding: "United Kingdom Pound vs United States Dollar"       
+      );
+    }
+    // NZDCAD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'NZDCAD') {
+      variations.push(
+        'NZDCAD', 'nzdcad', 'NZDCAD_', 'NZDCAD.',
+        'NZDCADm', 'NZDCADCash', 'NZDCAD.std', 'NZDCADpro',
+        'NZDCAD_ECN', 'NZDCADECN', 'NZDCAD.a', 'NZDCAD.raw',
+        'NZDCAD.swap', 'NZDCAD#', 'NZDCAD_raw', 'NZDCAD_mini',
+        'NZDCAD_micro', 'NZDCADex', 'NZDCADfx', 'NZDCADc',
+        'NZDCAD.r', 'NZDCAD.fx', 'NZD/CAD', 'NZD-CAD',
+        '40' // InstantFunding: "New Zealand Dollar vs Canadian Dollar"
+      );
+    }
+    // NZDJPY variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'NZDJPY') {
+      variations.push(
+        'NZDJPY', 'nzdjpy', 'NZDJPY_', 'NZDJPY.',
+        'NZDJPYm', 'NZDJPYCash', 'NZDJPY.std', 'NZDJPYpro',
+        'NZDJPY_ECN', 'NZDJPYECN', 'NZDJPY.a', 'NZDJPY.raw',
+        'NZDJPY.swap', 'NZDJPY#', 'NZDJPY_raw', 'NZDJPY_mini',
+        'NZDJPY_micro', 'NZDJPYex', 'NZDJPYfx', 'NZDJPYc',
+        'NZDJPY.r', 'NZDJPY.fx', 'NZD/JPY', 'NZD-JPY',
+        '42' // InstantFunding: "New Zealand Dollar vs Japanese Yen"
+      );
+    }
+    // NZDUSD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'NZDUSD') {
+      variations.push(
+        'NZDUSD', 'nzdusd', 'NZDUSD_', 'NZDUSD.',
+        'NZDUSDm', 'NZDUSDCash', 'NZDUSD.std', 'NZDUSDpro',
+        'NZDUSD_ECN', 'NZDUSDECN', 'NZDUSD.a', 'NZDUSD.raw',
+        'NZDUSD.swap', 'NZDUSD#', 'NZDUSD_raw', 'NZDUSD_mini',
+        'NZDUSD_micro', 'NZDUSDex', 'NZDUSDfx', 'NZDUSDc',
+        'NZDUSD.r', 'NZDUSD.fx', 'NZD/USD', 'NZD-USD',
+        '43' // InstantFunding: "New Zealand Dollar vs United States Dollar"
+      );
+    }
+    // USDCAD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'USDCAD') {
+      variations.push(
+        'USDCAD', 'usdcad', 'USDCAD_', 'USDCAD.',
+        'USDCADm', 'USDCADCash', 'USDCAD.std', 'USDCADpro',
+        'USDCAD_ECN', 'USDCADECN', 'USDCAD.a', 'USDCAD.raw',
+        'USDCAD.swap', 'USDCAD#', 'USDCAD_raw', 'USDCAD_mini',
+        'USDCAD_micro', 'USDCADex', 'USDCADfx', 'USDCADc',
+        'USDCAD.r', 'USDCAD.fx', 'USD/CAD', 'USD-CAD',
+        '52' // InstantFunding: "United States Dollar vs Canadian Dollar"
+      );
+    }
+    // USDCHF variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'USDCHF') {
+      variations.push(
+        'USDCHF', 'usdchf', 'USDCHF_', 'USDCHF.',
+        'USDCHFm', 'USDCHFCash', 'USDCHF.std', 'USDCHFpro',
+        'USDCHF_ECN', 'USDCHFECN', 'USDCHF.a', 'USDCHF.raw',
+        'USDCHF.swap', 'USDCHF#', 'USDCHF_raw', 'USDCHF_mini',
+        'USDCHF_micro', 'USDCHFex', 'USDCHFfx', 'USDCHFc',
+        'USDCHF.r', 'USDCHF.fx', 'USD/CHF', 'USD-CHF',
+        '53' // InstantFunding: "United States Dollar vs Swiss Franc"
+      );
+    }
+    // USDJPY variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'USDJPY') {
+      variations.push(
+        'USDJPY', 'usdjpy', 'USDJPY_', 'USDJPY.',
+        'USDJPYm', 'USDJPYCash', 'USDJPY.std', 'USDJPYpro',
+        'USDJPY_ECN', 'USDJPYECN', 'USDJPY.a', 'USDJPY.raw',
+        'USDJPY.swap', 'USDJPY#', 'USDJPY_raw', 'USDJPY_mini',
+        'USDJPY_micro', 'USDJPYex', 'USDJPYfx', 'USDJPYc',
+        'USDJPY.r', 'USDJPY.fx', 'USD/JPY', 'USD-JPY',
+        '58' // InstantFunding: "United States Dollar vs Japanese Yen"
+      );
+    }
+    // USDSEK variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'USDSEK') {
+      variations.push(
+        'USDSEK', 'usdsek', 'USDSEK_', 'USDSEK.',
+        'USDSEKm', 'USDSEKCash', 'USDSEK.std', 'USDSEKpro',
+        'USDSEK_ECN', 'USDSEKECN', 'USDSEK.a', 'USDSEK.raw',
+        'USDSEK.swap', 'USDSEK#', 'USDSEK_raw', 'USDSEK_mini',
+        'USDSEK_micro', 'USDSEKex', 'USDSEKfx', 'USDSEKc',
+        'USDSEK.r', 'USDSEK.fx', 'USD/SEK', 'USD-SEK',
+        '62' // InstantFunding: "US Dollar vs Swedish Krona"
+      );
+    }
+    // EUR/USD variations - Enhanced with InstantFunding numerical ID
+    else if (symbol === 'EURUSD') {
+      variations.push(
+        'EURUSD', 'eurusd', 'EURUSD_', 'EURUSD.',
+        'EURUSDm', 'EURUSDCash', 'EURUSD.std', 'EURUSDpro',
+        'EURUSD_ECN', 'EURUSDECN', 'EURUSD.a', 'EURUSD.raw',
+        'EURUSD.swap', 'EURUSD#', 'EURUSD_raw', 'EURUSD_mini',
+        'EURUSD_micro', 'EURUSDex', 'EURUSDfx', 'EURUSDc',
+        'EURUSD.r', 'EURUSD.fx', 'EUR/USD', 'EUR-USD',
+        '27' // InstantFunding: "Euro vs United States Dollar"
+      );
     }
 
     // Add common suffixes for any symbol
@@ -502,6 +761,49 @@ export class CleanSymbolManager {
   }
 
   /**
+   * Debug method to list all available symbols on a broker
+   * @param connection - MetaAPI connection
+   * @param brokerName - Broker name
+   * @param filterPattern - Optional pattern to filter symbols (e.g., "GBP", "JPY")
+   * @returns Array of all available symbols
+   */
+  static async debugListAllSymbols(
+    connection: any, 
+    brokerName: string, 
+    filterPattern?: string
+  ): Promise<string[]> {
+    try {
+      logger.info(`🔍 Listing all available symbols for ${brokerName}${filterPattern ? ` (filter: ${filterPattern})` : ''}...`);
+      
+      // Ensure connection and synchronization
+      await CleanSymbolManager.ensureConnectionReady(connection, brokerName);
+      
+      const specifications = connection.terminalState.specifications || {};
+      const allSymbols = Object.keys(specifications);
+      
+      let filteredSymbols = allSymbols;
+      if (filterPattern) {
+        const pattern = filterPattern.toUpperCase();
+        filteredSymbols = allSymbols.filter(symbol => 
+          symbol.toUpperCase().includes(pattern) ||
+          (specifications[symbol]?.description?.toUpperCase().includes(pattern))
+        );
+      }
+      
+      logger.info(`📊 ${brokerName} has ${allSymbols.length} total symbols${filterPattern ? `, ${filteredSymbols.length} matching "${filterPattern}"` : ''}`);
+      
+      if (filteredSymbols.length > 0 && filteredSymbols.length <= 50) {
+        logger.info(`🔧 ${brokerName} symbols: ${filteredSymbols.slice(0, 20).join(', ')}${filteredSymbols.length > 20 ? '...' : ''}`);
+      }
+      
+      return filteredSymbols;
+    } catch (error: any) {
+      logger.error(`❌ Failed to list symbols for ${brokerName}: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Get all available symbols for a broker (enhanced with caching)
    */
   static async getAllSymbols(connection: any, brokerName: string): Promise<string[]> {
@@ -540,6 +842,23 @@ export class CleanSymbolManager {
       logger.error(`Failed to get symbols from ${brokerName}:`, error.message);
       return [];
     }
+  }
+
+  /**
+   * Get learned mapping for a symbol from cache
+   * @param inputSymbol - Input symbol to look up
+   * @param brokerName - Broker name
+   * @returns Learned symbol mapping or null
+   */
+  static getLearnedMapping(inputSymbol: string, brokerName: string): string | null {
+    const standardSymbol = this.inferStandardSymbol(inputSymbol);
+    const group = this.symbolGroups.get(standardSymbol);
+    
+    if (group && group.brokerMappings.has(brokerName)) {
+      return group.brokerMappings.get(brokerName) || null;
+    }
+    
+    return null;
   }
 
   /**
@@ -683,40 +1002,95 @@ export class CleanSymbolManager {
   }
 
   /**
-   * Discover symbols from broker specifications by pattern matching
-   * @param inputSymbol - Input symbol to search for
-   * @param specifications - Broker symbol specifications
+   * Advanced symbol discovery from specifications using multiple strategies
+   * @param inputSymbol - Symbol to search for
+   * @param specifications - Broker specifications
    * @returns Array of discovered matching symbols
    */
   private static discoverSymbolsFromSpecifications(inputSymbol: string, specifications: any): string[] {
     const discoveredSymbols: string[] = [];
     const standardSymbol = this.inferStandardSymbol(inputSymbol);
+    
+    // Strategy 1: Direct pattern matching
     const searchPatterns = [
       standardSymbol,
       standardSymbol.toLowerCase(),
       standardSymbol.toUpperCase()
     ];
     
+    // Strategy 2: For GBPJPY, also search for GBP and JPY separately
+    const currencyPairs = this.extractCurrencyPair(standardSymbol);
+    if (currencyPairs) {
+      searchPatterns.push(
+        ...currencyPairs.patterns,
+        currencyPairs.base,
+        currencyPairs.quote
+      );
+    }
+    
     // Search through all available specifications
     for (const [symbol, spec] of Object.entries(specifications)) {
       if (!spec || typeof spec !== 'object') continue;
       
-      // Check if symbol name matches any of our patterns
+      const symbolUpper = symbol.toUpperCase();
+      const description = (spec as any).description || '';
+      
+      // Strategy 1: Symbol name matching
       for (const pattern of searchPatterns) {
-        if (symbol.toLowerCase().includes(pattern.toLowerCase()) ||
-            pattern.toLowerCase().includes(symbol.toLowerCase())) {
+        if (symbolUpper.includes(pattern.toUpperCase()) ||
+            pattern.toUpperCase().includes(symbolUpper)) {
           
-          // Additional validation using description if available
-          const description = (spec as any).description || '';
           if (this.validateSymbolMatch(inputSymbol, symbol, description)) {
             discoveredSymbols.push(symbol);
             break;
           }
         }
       }
+      
+      // Strategy 2: Description-based matching for currency pairs
+      if (currencyPairs && description) {
+        const descUpper = description.toUpperCase();
+        if ((descUpper.includes(currencyPairs.base) && descUpper.includes(currencyPairs.quote)) ||
+            (descUpper.includes('BRITISH') && descUpper.includes('POUND') && descUpper.includes('JAPANESE') && descUpper.includes('YEN')) ||
+            (descUpper.includes('GBP') && descUpper.includes('JPY'))) {
+          
+          if (this.validateSymbolMatch(inputSymbol, symbol, description)) {
+            discoveredSymbols.push(symbol);
+          }
+        }
+      }
     }
     
-    return discoveredSymbols;
+    return [...new Set(discoveredSymbols)]; // Remove duplicates
+  }
+
+  /**
+   * Extract currency pair information from symbol
+   * @param symbol - Input symbol like "GBPJPY"
+   * @returns Currency pair info or null
+   */
+  private static extractCurrencyPair(symbol: string): { base: string; quote: string; patterns: string[] } | null {
+    const upper = symbol.toUpperCase();
+    
+    // Common 6-character currency pairs
+    if (upper.length === 6) {
+      const base = upper.substring(0, 3);
+      const quote = upper.substring(3, 6);
+      
+      return {
+        base,
+        quote,
+        patterns: [
+          `${base}${quote}`,
+          `${base}/${quote}`,
+          `${base}-${quote}`,
+          `${base}_${quote}`,
+          `${base}.${quote}`
+        ]
+      };
+    }
+    
+    return null;
   }
 
   /**
@@ -1020,6 +1394,58 @@ export class CleanSymbolManager {
       return true;
     }
     
+    // CRITICAL FIX: Prevent cross-broker numeric symbol contamination
+    // Numeric symbols like "67" can mean different things on different brokers
+    // Only accept numeric symbols if description explicitly matches what we want
+    if (/^\d+$/.test(found)) {
+      // For gold requests, only accept numeric if description mentions gold
+      if ((requested === 'GOLD' || requested === 'XAUUSD') && 
+          !(desc.includes('gold') || desc.includes('xau') || 
+            (desc.includes('troy ounce') && desc.includes('gold')))) {
+        return false;
+      }
+      
+      // For silver requests, only accept numeric if description mentions silver
+      if ((requested === 'SILVER' || requested === 'XAGUSD') && 
+          !(desc.includes('silver') || desc.includes('xag'))) {
+        return false;
+      }
+      
+      // ENHANCED: For forex pairs, allow numeric symbols if description matches
+      // This supports InstantFunding's numerical symbol system
+      if (this.isForexPair(requested)) {
+        // Check if the description contains the currency pair we're looking for
+        const forexPairs: { [key: string]: string[] } = {
+          'USDCHF': ['usd', 'chf', 'dollar', 'franc', 'swiss'],
+          'EURUSD': ['eur', 'usd', 'euro', 'dollar'],
+          'GBPUSD': ['gbp', 'usd', 'pound', 'dollar', 'sterling'],
+          'USDJPY': ['usd', 'jpy', 'dollar', 'yen'],
+          'AUDUSD': ['aud', 'usd', 'australian', 'dollar'],
+          'USDCAD': ['usd', 'cad', 'dollar', 'canadian'],
+          'NZDUSD': ['nzd', 'usd', 'new zealand', 'dollar'],
+          'EURGBP': ['eur', 'gbp', 'euro', 'pound'],
+          'EURJPY': ['eur', 'jpy', 'euro', 'yen'],
+          'GBPJPY': ['gbp', 'jpy', 'pound', 'yen', 'united kingdom', 'japanese'],
+          'EURCHF': ['eur', 'chf', 'euro', 'franc'],
+          'GBPCHF': ['gbp', 'chf', 'pound', 'franc'],
+          'AUDJPY': ['aud', 'jpy', 'australian', 'yen'],
+          'CADJPY': ['cad', 'jpy', 'canadian', 'yen'],
+          'CHFJPY': ['chf', 'jpy', 'franc', 'yen'],
+          'NZDJPY': ['nzd', 'jpy', 'new zealand', 'yen']
+        };
+        
+        const keywords = forexPairs[requested];
+        if (keywords && keywords.length >= 2) {
+          const matchedKeywords = keywords.filter(keyword => desc.includes(keyword));
+          // For numerical symbols, require at least 2 currency keywords to match
+          return matchedKeywords.length >= 2;
+        }
+        
+        // Fallback: reject if no keywords match
+        return false;
+      }
+    }
+    
     // Enhanced forex pair matching based on MetaAPI research
     const forexPairs: { [key: string]: string[] } = {
       'USDCHF': ['usd', 'chf', 'dollar', 'franc', 'swiss'],
@@ -1076,5 +1502,66 @@ export class CleanSymbolManager {
     // Conservative fallback - require description to contain the symbol name
     return desc.includes(requested.toLowerCase()) || 
            found.includes(normalizedRequested);
+  }
+
+  /**
+   * Check if a symbol is a forex pair
+   */
+  private static isForexPair(symbol: string): boolean {
+    const forexPatterns = [
+      'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
+      'EURGBP', 'EURJPY', 'GBPJPY', 'EURCHF', 'GBPCHF', 'AUDJPY', 'CADJPY', 'CHFJPY', 'NZDJPY'
+    ];
+    return forexPatterns.includes(symbol.toUpperCase());
+  }
+
+  /**
+   * Suggests alternative trading pairs when the requested symbol is not available
+   * @param requestedSymbol - The symbol that was not found
+   * @param brokerName - The broker name for context
+   * @returns Array of suggested alternative symbols with reasoning
+   */
+  static suggestAlternativeSymbols(requestedSymbol: string, brokerName: string): Array<{symbol: string, reason: string}> {
+    const upperSymbol = requestedSymbol.toUpperCase();
+    const suggestions: Array<{symbol: string, reason: string}> = [];
+
+    // GBPJPY specific alternatives
+    if (upperSymbol.includes('GBPJPY')) {
+      suggestions.push(
+        { symbol: 'GBPUSD', reason: 'GBP strength component - half of GBPJPY correlation' },
+        { symbol: 'USDJPY', reason: 'JPY strength component - can trade inverse for GBP/JPY effect' },
+        { symbol: 'EURJPY', reason: 'Similar JPY cross pair with high correlation to GBPJPY' },
+        { symbol: 'AUDJPY', reason: 'Alternative JPY cross pair, commodity currency vs JPY' },
+        { symbol: 'EURGBP', reason: 'GBP strength vs EUR - different dynamic but GBP exposure' }
+      );
+    }
+
+    // Other common missing symbols
+    else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      suggestions.push(
+        { symbol: 'XAGUSD', reason: 'Silver - precious metals correlation with gold' },
+        { symbol: 'EURUSD', reason: 'Major pair - often inverse correlation with gold' }
+      );
+    }
+
+    // Exotic pairs fallbacks
+    else if (upperSymbol.includes('CHF')) {
+      suggestions.push(
+        { symbol: 'USDCHF', reason: 'Major CHF pair - usually available on all brokers' },
+        { symbol: 'EURCHF', reason: 'EUR/CHF cross - alternative CHF exposure' }
+      );
+    }
+
+    // Generic fallbacks for any missing symbol
+    if (suggestions.length === 0) {
+      suggestions.push(
+        { symbol: 'EURUSD', reason: 'Most liquid major pair - available on all brokers' },
+        { symbol: 'GBPUSD', reason: 'Major GBP pair - high volatility alternative' },
+        { symbol: 'USDJPY', reason: 'Major JPY pair - safe haven currency exposure' }
+      );
+    }
+
+    logger.info(`💡 Suggested ${suggestions.length} alternatives for ${requestedSymbol} on ${brokerName}`);
+    return suggestions;
   }
 }
