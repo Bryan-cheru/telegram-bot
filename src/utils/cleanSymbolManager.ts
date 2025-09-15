@@ -366,6 +366,11 @@ export class CleanSymbolManager {
 
     // Gold variations - Enhanced with comprehensive InstantFunding support
     if (symbol === 'GOLD' || symbol === 'XAUUSD') {
+      // PRIORITY: Pepperstone Demo numerical symbol
+      if (brokerName === 'Pepperstone-Demo' || brokerName?.includes('Pepperstone')) {
+        variations.unshift('1671'); // Pepperstone: "Gold vs US Dollar" - HIGH PRIORITY
+      }
+      
       variations.push(
         'XAUUSD', 'xauusd', 'XAUUSD_', 'XAUUSD.',
         'GOLD', 'gold', 'GOLD_', 'GOLD.',
@@ -1214,6 +1219,22 @@ export class CleanSymbolManager {
         standardSymbol + 'ECN',
         standardSymbol.toLowerCase()
       );
+      
+      // CRITICAL FIX: Pepperstone Demo uses numerical symbols
+      if (standardSymbol === 'GOLD' || standardSymbol === 'XAUUSD') {
+        variations.unshift('1671'); // Gold vs US Dollar - HIGH PRIORITY
+      }
+      
+      // Add other known Pepperstone numerical symbols
+      if (standardSymbol === 'EURUSD') {
+        variations.push('15'); // Euro vs US Dollar
+      }
+      if (standardSymbol === 'GBPUSD') {
+        variations.push('16'); // British Pound vs US Dollar  
+      }
+      if (standardSymbol === 'USDJPY') {
+        variations.push('25'); // US Dollar vs Japanese Yen
+      }
     }
     
     // Generic patterns for unknown brokers
