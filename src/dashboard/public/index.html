@@ -88,28 +88,28 @@
                 <div class="multi-account-overview">
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-building-columns"></i> Live Trading Accounts</h2>
+                            <h2><i class="fas fa-building-columns"></i> Trading Account</h2>
                             <div class="header-controls">
                                 <div class="live-indicator">
-                                    <i class="fas fa-circle text-danger"></i>
-                                    <span class="text-danger">LIVE TRADING ACTIVE</span>
+                                    <i class="fas fa-circle text-success"></i>
+                                    <span class="text-success">DEMO TRADING</span>
                                 </div>
                                 <button class="btn btn-outline btn-sm" id="refresh-all-accounts" onclick="refreshAllAccountData()">
-                                    <i class="fas fa-sync-alt"></i> Refresh All
+                                    <i class="fas fa-sync-alt"></i> Refresh
                                 </button>
                             </div>
                         </div>
                         <div class="card-body">
-                            <!-- Live Trading Warning -->
-                            <div class="alert alert-warning mb-3">
-                                <i class="fas fa-exclamation-triangle"></i>
-                                <strong>Live Trading Mode:</strong> All connected accounts are live trading accounts. Real money is at risk.
+                            <!-- Demo Trading Info -->
+                            <div class="alert alert-info mb-3">
+                                <i class="fas fa-info-circle"></i>
+                                <strong>Demo Trading Mode:</strong> Connected to Pepperstone demo account. No real money at risk.
                             </div>
                             <div class="accounts-grid" id="accounts-grid">
                                 <!-- Account cards will be dynamically populated here -->
                                 <div class="account-loading">
                                     <i class="fas fa-spinner fa-spin"></i>
-                                    <span>Loading live account information...</span>
+                                    <span>Loading demo account information...</span>
                                 </div>
                             </div>
                         </div>
@@ -136,7 +136,7 @@
                         <div class="stat-content">
                             <h3>Total Balance</h3>
                             <div class="stat-value" id="total-balance">$0.00</div>
-                            <div class="stat-change" id="total-accounts">0 Accounts</div>
+                            <div class="stat-change" id="total-accounts">1 Demo Account</div>
                         </div>
                     </div>
                     
@@ -166,10 +166,10 @@
                 <div class="trading-overview">
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-list"></i> Active Trades Across All Accounts</h2>
+                            <h2><i class="fas fa-list"></i> Active Trades - Pepperstone Demo</h2>
                             <div class="header-actions">
                                 <select id="account-filter" class="form-select">
-                                    <option value="all">All Accounts</option>
+                                    <option value="all">Pepperstone Demo</option>
                                 </select>
                                 <button class="btn btn-outline btn-sm" onclick="refreshTradesData()">
                                     <i class="fas fa-sync-alt"></i> Refresh

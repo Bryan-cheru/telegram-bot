@@ -378,9 +378,12 @@ export class CleanSymbolManager {
         'GOLD_ECN', 'GOLDECN', 'GOLD.a', 'GOLD.raw',
         'GOLD.swap', 'GOLD#', 'GOLD_raw', 'GOLD_mini',
         'GOLD_micro', 'GOLDex', 'GOLDfx', 'GOLDc',
-        'GOLD.r', 'GOLD.fx', 'AU', 'GOLD/USD',
-        '67' // InstantFunding: "Gold (one troy ounce) vs United States Dollar"
+        'GOLD.r', 'GOLD.fx', 'AU', 'GOLD/USD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('67'); // InstantFunding: "Gold (one troy ounce) vs United States Dollar"
+      }
     }
     // Silver variations - Enhanced with comprehensive InstantFunding support
     else if (symbol === 'SILVER' || symbol === 'XAGUSD') {
@@ -396,9 +399,12 @@ export class CleanSymbolManager {
         'SILVER_ECN', 'SILVERECN', 'SILVER.a', 'SILVER.raw',
         'SILVER.swap', 'SILVER#', 'SILVER_raw', 'SILVER_mini',
         'SILVER_micro', 'SILVERex', 'SILVERfx', 'SILVERc',
-        'SILVER.r', 'SILVER.fx', 'AG', 'SILVER/USD',
-        '66' // InstantFunding: "Silver (one troy ounce) vs United States Dollar"
+        'SILVER.r', 'SILVER.fx', 'AG', 'SILVER/USD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('66'); // InstantFunding: "Silver (one troy ounce) vs United States Dollar"
+      }
     }
     // US30 variations
     else if (symbol === 'US30') {
@@ -420,9 +426,12 @@ export class CleanSymbolManager {
         'AUDCAD_ECN', 'AUDCADECN', 'AUDCAD.a', 'AUDCAD.raw',
         'AUDCAD.swap', 'AUDCAD#', 'AUDCAD_raw', 'AUDCAD_mini',
         'AUDCAD_micro', 'AUDCADex', 'AUDCADfx', 'AUDCADc',
-        'AUDCAD.r', 'AUDCAD.fx', 'AUD/CAD', 'AUD-CAD',
-        '1' // InstantFunding: "Australian Dollar vs Canadian Dollar"
+        'AUDCAD.r', 'AUDCAD.fx', 'AUD/CAD', 'AUD-CAD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('1'); // InstantFunding: "Australian Dollar vs Canadian Dollar"
+      }
     }
     // AUDJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'AUDJPY') {
@@ -432,9 +441,12 @@ export class CleanSymbolManager {
         'AUDJPY_ECN', 'AUDJPYECN', 'AUDJPY.a', 'AUDJPY.raw',
         'AUDJPY.swap', 'AUDJPY#', 'AUDJPY_raw', 'AUDJPY_mini',
         'AUDJPY_micro', 'AUDJPYex', 'AUDJPYfx', 'AUDJPYc',
-        'AUDJPY.r', 'AUDJPY.fx', 'AUD/JPY', 'AUD-JPY',
-        '3' // InstantFunding: "Australian Dollar vs Japanese Yen"
+        'AUDJPY.r', 'AUDJPY.fx', 'AUD/JPY', 'AUD-JPY'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('3'); // InstantFunding: "Australian Dollar vs Japanese Yen"
+      }
     }
     // AUDUSD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'AUDUSD') {
@@ -444,9 +456,12 @@ export class CleanSymbolManager {
         'AUDUSD_ECN', 'AUDUSDECN', 'AUDUSD.a', 'AUDUSD.raw',
         'AUDUSD.swap', 'AUDUSD#', 'AUDUSD_raw', 'AUDUSD_mini',
         'AUDUSD_micro', 'AUDUSDex', 'AUDUSDfx', 'AUDUSDc',
-        'AUDUSD.r', 'AUDUSD.fx', 'AUD/USD', 'AUD-USD',
-        '5' // InstantFunding: "Australian Dollar vs United States Dollar"
+        'AUDUSD.r', 'AUDUSD.fx', 'AUD/USD', 'AUD-USD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('5'); // InstantFunding: "Australian Dollar vs United States Dollar"
+      }
     }
     // CADJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'CADJPY') {
@@ -456,9 +471,12 @@ export class CleanSymbolManager {
         'CADJPY_ECN', 'CADJPYECN', 'CADJPY.a', 'CADJPY.raw',
         'CADJPY.swap', 'CADJPY#', 'CADJPY_raw', 'CADJPY_mini',
         'CADJPY_micro', 'CADJPYex', 'CADJPYfx', 'CADJPYc',
-        'CADJPY.r', 'CADJPY.fx', 'CAD/JPY', 'CAD-JPY',
-        '11' // InstantFunding: "Canadian Dollar vs Japanese Yen"
+        'CADJPY.r', 'CADJPY.fx', 'CAD/JPY', 'CAD-JPY'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('11'); // InstantFunding: "Canadian Dollar vs Japanese Yen"
+      }
     }
     // CHFJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'CHFJPY') {
@@ -468,9 +486,12 @@ export class CleanSymbolManager {
         'CHFJPY_ECN', 'CHFJPYECN', 'CHFJPY.a', 'CHFJPY.raw',
         'CHFJPY.swap', 'CHFJPY#', 'CHFJPY_raw', 'CHFJPY_mini',
         'CHFJPY_micro', 'CHFJPYex', 'CHFJPYfx', 'CHFJPYc',
-        'CHFJPY.r', 'CHFJPY.fx', 'CHF/JPY', 'CHF-JPY',
-        '12' // InstantFunding: "Swiss Franc vs Japanese Yen"
+        'CHFJPY.r', 'CHFJPY.fx', 'CHF/JPY', 'CHF-JPY'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('12'); // InstantFunding: "Swiss Franc vs Japanese Yen"
+      }
     }
     // EURAUD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'EURAUD') {
@@ -480,9 +501,12 @@ export class CleanSymbolManager {
         'EURAUD_ECN', 'EURAUDECN', 'EURAUD.a', 'EURAUD.raw',
         'EURAUD.swap', 'EURAUD#', 'EURAUD_raw', 'EURAUD_mini',
         'EURAUD_micro', 'EURAUDex', 'EURAUDfx', 'EURAUDc',
-        'EURAUD.r', 'EURAUD.fx', 'EUR/AUD', 'EUR-AUD',
-        '17' // InstantFunding: "Euro vs Australian Dollar"
+        'EURAUD.r', 'EURAUD.fx', 'EUR/AUD', 'EUR-AUD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('17'); // InstantFunding: "Euro vs Australian Dollar"
+      }
     }
     // EURCAD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'EURCAD') {
@@ -492,9 +516,12 @@ export class CleanSymbolManager {
         'EURCAD_ECN', 'EURCADECN', 'EURCAD.a', 'EURCAD.raw',
         'EURCAD.swap', 'EURCAD#', 'EURCAD_raw', 'EURCAD_mini',
         'EURCAD_micro', 'EURCADex', 'EURCADfx', 'EURCADc',
-        'EURCAD.r', 'EURCAD.fx', 'EUR/CAD', 'EUR-CAD',
-        '18' // InstantFunding: "Euro vs Canadian Dollar"
+        'EURCAD.r', 'EURCAD.fx', 'EUR/CAD', 'EUR-CAD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('18'); // InstantFunding: "Euro vs Canadian Dollar"
+      }
     }
     // EURCHF variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'EURCHF') {
@@ -504,9 +531,12 @@ export class CleanSymbolManager {
         'EURCHF_ECN', 'EURCHFECN', 'EURCHF.a', 'EURCHF.raw',
         'EURCHF.swap', 'EURCHF#', 'EURCHF_raw', 'EURCHF_mini',
         'EURCHF_micro', 'EURCHFex', 'EURCHFfx', 'EURCHFc',
-        'EURCHF.r', 'EURCHF.fx', 'EUR/CHF', 'EUR-CHF',
-        '19' // InstantFunding: "Euro vs Swiss Franc"
+        'EURCHF.r', 'EURCHF.fx', 'EUR/CHF', 'EUR-CHF'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('19'); // InstantFunding: "Euro vs Swiss Franc"
+      }
     }
     // EURGBP variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'EURGBP') {
@@ -516,9 +546,12 @@ export class CleanSymbolManager {
         'EURGBP_ECN', 'EURGBPECN', 'EURGBP.a', 'EURGBP.raw',
         'EURGBP.swap', 'EURGBP#', 'EURGBP_raw', 'EURGBP_mini',
         'EURGBP_micro', 'EURGBPex', 'EURGBPfx', 'EURGBPc',
-        'EURGBP.r', 'EURGBP.fx', 'EUR/GBP', 'EUR-GBP',
-        '21' // InstantFunding: "Euro vs United Kingdom Pound"
+        'EURGBP.r', 'EURGBP.fx', 'EUR/GBP', 'EUR-GBP'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('21'); // InstantFunding: "Euro vs United Kingdom Pound"
+      }
     }
     // EURJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'EURJPY') {
@@ -528,9 +561,12 @@ export class CleanSymbolManager {
         'EURJPY_ECN', 'EURJPYECN', 'EURJPY.a', 'EURJPY.raw',
         'EURJPY.swap', 'EURJPY#', 'EURJPY_raw', 'EURJPY_mini',
         'EURJPY_micro', 'EURJPYex', 'EURJPYfx', 'EURJPYc',
-        'EURJPY.r', 'EURJPY.fx', 'EUR/JPY', 'EUR-JPY',
-        '23' // InstantFunding: "Euro vs Japanese Yen"
+        'EURJPY.r', 'EURJPY.fx', 'EUR/JPY', 'EUR-JPY'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('23'); // InstantFunding: "Euro vs Japanese Yen"
+      }
     }
     // GBPJPY variations - Enhanced with more alternatives including InstantFunding numerical ID
     else if (symbol === 'GBPJPY') {
@@ -540,9 +576,12 @@ export class CleanSymbolManager {
         'GBPJPY_ECN', 'GBPJPYECN', 'GBPJPY.a', 'GBPJPY.raw',
         'GBPJPY.swap', 'GBPJPY#', 'GBP-JPY', 'GBPJPY_raw',
         'GBPJPY_mini', 'GBPJPY_micro', 'GBPJPYex', 'GBPJPYfx',
-        'GBP_JPY', 'GBPJPYc', 'GBPJPY.r', 'GBPJPY.fx',
-        '32' // InstantFunding numerical symbol ID for "United Kingdom Pound vs Japanese Yen"
+        'GBP_JPY', 'GBPJPYc', 'GBPJPY.r', 'GBPJPY.fx'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('32'); // InstantFunding numerical symbol ID for "United Kingdom Pound vs Japanese Yen"
+      }
     }
     // GBPAUD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'GBPAUD') {
@@ -552,9 +591,12 @@ export class CleanSymbolManager {
         'GBPAUD_ECN', 'GBPAUDECN', 'GBPAUD.a', 'GBPAUD.raw',
         'GBPAUD.swap', 'GBPAUD#', 'GBPAUD_raw', 'GBPAUD_mini',
         'GBPAUD_micro', 'GBPAUDex', 'GBPAUDfx', 'GBPAUDc',
-        'GBPAUD.r', 'GBPAUD.fx', 'GBP/AUD', 'GBP-AUD',
-        '29' // InstantFunding: "United Kingdom Pound vs Australian Dollar"
+        'GBPAUD.r', 'GBPAUD.fx', 'GBP/AUD', 'GBP-AUD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('29'); // InstantFunding: "United Kingdom Pound vs Australian Dollar"
+      }
     }
     // GBPCAD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'GBPCAD') {
@@ -564,9 +606,12 @@ export class CleanSymbolManager {
         'GBPCAD_ECN', 'GBPCADECN', 'GBPCAD.a', 'GBPCAD.raw',
         'GBPCAD.swap', 'GBPCAD#', 'GBPCAD_raw', 'GBPCAD_mini',
         'GBPCAD_micro', 'GBPCADex', 'GBPCADfx', 'GBPCADc',
-        'GBPCAD.r', 'GBPCAD.fx', 'GBP/CAD', 'GBP-CAD',
-        '30' // InstantFunding: "United Kingdom Pound vs Canadian Dollar"
+        'GBPCAD.r', 'GBPCAD.fx', 'GBP/CAD', 'GBP-CAD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('30'); // InstantFunding: "United Kingdom Pound vs Canadian Dollar"
+      }
     }
     // GBPCHF variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'GBPCHF') {
@@ -576,9 +621,12 @@ export class CleanSymbolManager {
         'GBPCHF_ECN', 'GBPCHFECN', 'GBPCHF.a', 'GBPCHF.raw',
         'GBPCHF.swap', 'GBPCHF#', 'GBPCHF_raw', 'GBPCHF_mini',
         'GBPCHF_micro', 'GBPCHFex', 'GBPCHFfx', 'GBPCHFc',
-        'GBPCHF.r', 'GBPCHF.fx', 'GBP/CHF', 'GBP-CHF',
-        '31' // InstantFunding: "United Kingdom Pound vs Swiss Franc"
+        'GBPCHF.r', 'GBPCHF.fx', 'GBP/CHF', 'GBP-CHF'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('31'); // InstantFunding: "United Kingdom Pound vs Swiss Franc"
+      }
     }
     // GBPUSD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'GBPUSD') {
@@ -588,9 +636,12 @@ export class CleanSymbolManager {
         'GBPUSD_ECN', 'GBPUSDECN', 'GBPUSD.a', 'GBPUSD.raw',
         'GBPUSD.swap', 'GBPUSD#', 'GBPUSD_raw', 'GBPUSD_mini',
         'GBPUSD_micro', 'GBPUSDex', 'GBPUSDfx', 'GBPUSDc',
-        'GBPUSD.r', 'GBPUSD.fx', 'GBP/USD', 'GBP-USD',
-        '34' // InstantFunding: "United Kingdom Pound vs United States Dollar"       
+        'GBPUSD.r', 'GBPUSD.fx', 'GBP/USD', 'GBP-USD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('34'); // InstantFunding: "United Kingdom Pound vs United States Dollar"
+      }
     }
     // NZDCAD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'NZDCAD') {
@@ -600,9 +651,12 @@ export class CleanSymbolManager {
         'NZDCAD_ECN', 'NZDCADECN', 'NZDCAD.a', 'NZDCAD.raw',
         'NZDCAD.swap', 'NZDCAD#', 'NZDCAD_raw', 'NZDCAD_mini',
         'NZDCAD_micro', 'NZDCADex', 'NZDCADfx', 'NZDCADc',
-        'NZDCAD.r', 'NZDCAD.fx', 'NZD/CAD', 'NZD-CAD',
-        '40' // InstantFunding: "New Zealand Dollar vs Canadian Dollar"
+        'NZDCAD.r', 'NZDCAD.fx', 'NZD/CAD', 'NZD-CAD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('40'); // InstantFunding: "New Zealand Dollar vs Canadian Dollar"
+      }
     }
     // NZDJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'NZDJPY') {
@@ -612,9 +666,12 @@ export class CleanSymbolManager {
         'NZDJPY_ECN', 'NZDJPYECN', 'NZDJPY.a', 'NZDJPY.raw',
         'NZDJPY.swap', 'NZDJPY#', 'NZDJPY_raw', 'NZDJPY_mini',
         'NZDJPY_micro', 'NZDJPYex', 'NZDJPYfx', 'NZDJPYc',
-        'NZDJPY.r', 'NZDJPY.fx', 'NZD/JPY', 'NZD-JPY',
-        '42' // InstantFunding: "New Zealand Dollar vs Japanese Yen"
+        'NZDJPY.r', 'NZDJPY.fx', 'NZD/JPY', 'NZD-JPY'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('42'); // InstantFunding: "New Zealand Dollar vs Japanese Yen"
+      }
     }
     // NZDUSD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'NZDUSD') {
@@ -624,9 +681,12 @@ export class CleanSymbolManager {
         'NZDUSD_ECN', 'NZDUSDECN', 'NZDUSD.a', 'NZDUSD.raw',
         'NZDUSD.swap', 'NZDUSD#', 'NZDUSD_raw', 'NZDUSD_mini',
         'NZDUSD_micro', 'NZDUSDex', 'NZDUSDfx', 'NZDUSDc',
-        'NZDUSD.r', 'NZDUSD.fx', 'NZD/USD', 'NZD-USD',
-        '43' // InstantFunding: "New Zealand Dollar vs United States Dollar"
+        'NZDUSD.r', 'NZDUSD.fx', 'NZD/USD', 'NZD-USD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('43'); // InstantFunding: "New Zealand Dollar vs United States Dollar"
+      }
     }
     // USDCAD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'USDCAD') {
@@ -636,9 +696,12 @@ export class CleanSymbolManager {
         'USDCAD_ECN', 'USDCADECN', 'USDCAD.a', 'USDCAD.raw',
         'USDCAD.swap', 'USDCAD#', 'USDCAD_raw', 'USDCAD_mini',
         'USDCAD_micro', 'USDCADex', 'USDCADfx', 'USDCADc',
-        'USDCAD.r', 'USDCAD.fx', 'USD/CAD', 'USD-CAD',
-        '52' // InstantFunding: "United States Dollar vs Canadian Dollar"
+        'USDCAD.r', 'USDCAD.fx', 'USD/CAD', 'USD-CAD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('52'); // InstantFunding: "United States Dollar vs Canadian Dollar"
+      }
     }
     // USDCHF variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'USDCHF') {
@@ -648,9 +711,12 @@ export class CleanSymbolManager {
         'USDCHF_ECN', 'USDCHFECN', 'USDCHF.a', 'USDCHF.raw',
         'USDCHF.swap', 'USDCHF#', 'USDCHF_raw', 'USDCHF_mini',
         'USDCHF_micro', 'USDCHFex', 'USDCHFfx', 'USDCHFc',
-        'USDCHF.r', 'USDCHF.fx', 'USD/CHF', 'USD-CHF',
-        '53' // InstantFunding: "United States Dollar vs Swiss Franc"
+        'USDCHF.r', 'USDCHF.fx', 'USD/CHF', 'USD-CHF'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('53'); // InstantFunding: "United States Dollar vs Swiss Franc"
+      }
     }
     // USDJPY variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'USDJPY') {
@@ -660,9 +726,12 @@ export class CleanSymbolManager {
         'USDJPY_ECN', 'USDJPYECN', 'USDJPY.a', 'USDJPY.raw',
         'USDJPY.swap', 'USDJPY#', 'USDJPY_raw', 'USDJPY_mini',
         'USDJPY_micro', 'USDJPYex', 'USDJPYfx', 'USDJPYc',
-        'USDJPY.r', 'USDJPY.fx', 'USD/JPY', 'USD-JPY',
-        '58' // InstantFunding: "United States Dollar vs Japanese Yen"
+        'USDJPY.r', 'USDJPY.fx', 'USD/JPY', 'USD-JPY'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('58'); // InstantFunding: "United States Dollar vs Japanese Yen"
+      }
     }
     // USDSEK variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'USDSEK') {
@@ -672,11 +741,14 @@ export class CleanSymbolManager {
         'USDSEK_ECN', 'USDSEKECN', 'USDSEK.a', 'USDSEK.raw',
         'USDSEK.swap', 'USDSEK#', 'USDSEK_raw', 'USDSEK_mini',
         'USDSEK_micro', 'USDSEKex', 'USDSEKfx', 'USDSEKc',
-        'USDSEK.r', 'USDSEK.fx', 'USD/SEK', 'USD-SEK',
-        '62' // InstantFunding: "US Dollar vs Swedish Krona"
+        'USDSEK.r', 'USDSEK.fx', 'USD/SEK', 'USD-SEK'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('62'); // InstantFunding: "US Dollar vs Swedish Krona"
+      }
     }
-    // EUR/USD variations - Enhanced with InstantFunding numerical ID
+    // EURUSD variations - Enhanced with InstantFunding numerical ID
     else if (symbol === 'EURUSD') {
       variations.push(
         'EURUSD', 'eurusd', 'EURUSD_', 'EURUSD.',
@@ -684,9 +756,12 @@ export class CleanSymbolManager {
         'EURUSD_ECN', 'EURUSDECN', 'EURUSD.a', 'EURUSD.raw',
         'EURUSD.swap', 'EURUSD#', 'EURUSD_raw', 'EURUSD_mini',
         'EURUSD_micro', 'EURUSDex', 'EURUSDfx', 'EURUSDc',
-        'EURUSD.r', 'EURUSD.fx', 'EUR/USD', 'EUR-USD',
-        '27' // InstantFunding: "Euro vs United States Dollar"
+        'EURUSD.r', 'EURUSD.fx', 'EUR/USD', 'EUR-USD'
       );
+      // InstantFunding-specific numerical ID
+      if (brokerName === 'IFPro-Trade') {
+        variations.push('27'); // InstantFunding: "Euro vs United States Dollar"
+      }
     }
 
     // Add common suffixes for any symbol

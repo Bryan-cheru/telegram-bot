@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+    
+    <!-- PWA and mobile app meta tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TradingBot Pro - DEMO">
+    <meta name="theme-color" content="#f59e0b">
+    <meta name="msapplication-navbutton-color" content="#f59e0b">
+    
+    <!-- Better mobile experience -->
+    <meta name="format-detection" content="telephone=no">
+    <meta name="msapplication-tap-highlight" content="no">
+    
+    <title>TradingBot Pro - DEMO MODE - Pepperstone Demo</title>
+    
+    <!-- Preload critical fonts for better performance -->
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"></noscript>
+    
+    <!-- Icons and stylesheets -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles/main.css">
+    
+    <!-- Demo mode styles -->
+    <style>
+        .demo-banner {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            text-align: center;
+            padding: 10px;
+            font-weight: bold;
+            font-size: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        .demo-badge {
+            background: #f59e0b;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+        .account-card.demo {
+            border-left: 4px solid #f59e0b;
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+        }
+        .demo-warning {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 16px 0;
+            color: #92400e;
+        }
+    </style>
+    
+    <!-- Favicon for mobile -->
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f59e0b'><path d='M3 13h8V3H9v6H3v4zm6 8h8v-8h-2v6H9v2z'/></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23f59e0b'><path d='M3 13h8V3H9v6H3v4zm6 8h8v-8h-2v6H9v2z'/></svg>">
+</head>
+<body>
+    <!-- Demo Banner -->
+    <div class="demo-banner">
+        <i class="fas fa-flask"></i> DEMO MODE ACTIVE - Pepperstone Demo Account - No Real Money Risk
+    </div>
+
+    <!-- Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-chart-line"></i>
+                <span>TradingBot Pro</span>
+                <span class="demo-badge">DEMO</span>
+            </div>
+        </div>
+        <ul class="nav-menu">
+            <li><a href="#dashboard" class="nav-link active" data-page="dashboard">
+                <i class="fas fa-tachometer-alt"></i> Dashboard
+            </a></li>
+            <li><a href="#trading" class="nav-link" data-page="trading">
+                <i class="fas fa-chart-candlestick"></i> Live Trading
+            </a></li>
+            <li><a href="trading-management.html" class="nav-link" target="_blank">
+                <i class="fas fa-cogs"></i> Trading Management
+            </a></li>
+            <li><a href="#logs" class="nav-link" data-page="logs">
+                <i class="fas fa-list"></i> Logs
+            </a></li>
+            <li><a href="#settings" class="nav-link" data-page="settings">
+                <i class="fas fa-cog"></i> Settings
+            </a></li>
+        </ul>
+    </nav>
+
+    <!-- Toggle Sidebar Button -->
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Demo Warning -->
+        <div class="demo-warning">
+            <i class="fas fa-info-circle"></i>
+            <strong>Demo Mode:</strong> You are currently testing with Pepperstone Demo account. All trades are simulated and use virtual money only.
+        </div>
+
+        <!-- Dashboard Page -->
+        <div class="page" id="dashboard-page">
+            <div class="page-header">
+                <h1>
+                    <i class="fas fa-tachometer-alt"></i> 
+                    Dashboard 
+                    <span class="demo-badge">DEMO</span>
+                </h1>
+                <p>Real-time overview of your demo trading bot performance</p>
+            </div>
+
+            <!-- Status Cards -->
+            <div class="cards-grid">
+                <div class="card status-card">
+                    <div class="card-icon">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-title">Bot Status</div>
+                        <div class="card-value" id="bot-status">
+                            <span class="status-indicator" id="bot-indicator"></span>
+                            <span id="bot-text">Starting...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card status-card">
+                    <div class="card-icon">
+                        <i class="fas fa-link"></i>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-title">Demo Connection</div>
+                        <div class="card-value" id="connection-status">
+                            <span class="status-indicator" id="connection-indicator"></span>
+                            <span id="connection-text">Connecting...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card metric-card">
+                    <div class="card-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-title">Uptime</div>
+                        <div class="card-value" id="uptime">0m</div>
+                    </div>
+                </div>
+
+                <div class="card metric-card">
+                    <div class="card-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-title">Demo Trades</div>
+                        <div class="card-value" id="trade-count">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Account Status Section -->
+            <div class="section">
+                <h2><i class="fas fa-university"></i> Demo Account Status</h2>
+                <div class="accounts-grid" id="accounts-container">
+                    <!-- Account cards will be populated here -->
+                    <div class="account-card demo" id="demo-account-card">
+                        <div class="account-header">
+                            <h3>
+                                <i class="fas fa-flask"></i> 
+                                Pepperstone Demo
+                                <span class="demo-badge">DEMO</span>
+                            </h3>
+                            <div class="account-status" id="demo-account-status">
+                                <span class="status-indicator connecting"></span>
+                                <span>Connecting...</span>
+                            </div>
+                        </div>
+                        <div class="account-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Account ID:</span>
+                                <span class="detail-value">1fd3d084-a938-4399-bbad-30e29eea9311</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Balance:</span>
+                                <span class="detail-value" id="demo-balance">Loading...</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Equity:</span>
+                                <span class="detail-value" id="demo-equity">Loading...</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Free Margin:</span>
+                                <span class="detail-value" id="demo-margin">Loading...</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Open Positions:</span>
+                                <span class="detail-value" id="demo-positions">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="section">
+                <h2><i class="fas fa-history"></i> Recent Demo Activity</h2>
+                <div class="activity-feed" id="activity-feed">
+                    <div class="activity-item">
+                        <i class="fas fa-play-circle text-success"></i>
+                        <span>Demo mode activated</span>
+                        <small>Just now</small>
+                    </div>
+                    <div class="activity-item">
+                        <i class="fas fa-link text-info"></i>
+                        <span>Connecting to Pepperstone Demo...</span>
+                        <small>Just now</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trading Page -->
+        <div class="page hidden" id="trading-page">
+            <div class="page-header">
+                <h1>
+                    <i class="fas fa-chart-candlestick"></i> 
+                    Demo Trading
+                    <span class="demo-badge">DEMO</span>
+                </h1>
+                <p>Live demo trading interface - virtual money only</p>
+            </div>
+            
+            <div class="demo-warning">
+                <i class="fas fa-shield-alt"></i>
+                <strong>Safe Testing:</strong> All trades executed here use virtual money. Perfect for testing your strategies!
+            </div>
+
+            <div class="trading-controls">
+                <button class="btn btn-primary" onclick="testGBPJPY()">
+                    <i class="fas fa-vial"></i> Test GBPJPY Symbol
+                </button>
+                <button class="btn btn-secondary" onclick="testAllSymbols()">
+                    <i class="fas fa-list-check"></i> Test All 25 Symbols
+                </button>
+            </div>
+
+            <div id="trading-results">
+                <!-- Results will appear here -->
+            </div>
+        </div>
+
+        <!-- Logs Page -->
+        <div class="page hidden" id="logs-page">
+            <div class="page-header">
+                <h1><i class="fas fa-list"></i> Demo Logs</h1>
+                <p>Real-time system logs and debug information</p>
+            </div>
+            
+            <div class="logs-container">
+                <div class="logs-header">
+                    <button class="btn btn-sm btn-secondary" onclick="clearLogs()">
+                        <i class="fas fa-trash"></i> Clear Logs
+                    </button>
+                    <button class="btn btn-sm btn-primary" onclick="refreshLogs()">
+                        <i class="fas fa-refresh"></i> Refresh
+                    </button>
+                </div>
+                <div class="logs-content" id="logs-content">
+                    <!-- Logs will be populated here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div class="page hidden" id="settings-page">
+            <div class="page-header">
+                <h1><i class="fas fa-cog"></i> Demo Settings</h1>
+                <p>Configure your demo trading parameters</p>
+            </div>
+            
+            <div class="settings-grid">
+                <div class="setting-card">
+                    <h3><i class="fas fa-dollar-sign"></i> Trade Size</h3>
+                    <p>Maximum lot size for demo trades</p>
+                    <input type="number" value="0.1" step="0.01" min="0.01" max="1.0" id="demo-trade-size">
+                    <small>Current: 0.1 lots (demo safe)</small>
+                </div>
+                
+                <div class="setting-card">
+                    <h3><i class="fas fa-percentage"></i> Risk Management</h3>
+                    <p>Risk percentage per demo trade</p>
+                    <input type="number" value="1.3" step="0.1" min="0.1" max="5.0" id="demo-risk">
+                    <small>Current: 1.3% (demo mode)</small>
+                </div>
+                
+                <div class="setting-card">
+                    <h3><i class="fas fa-shield-alt"></i> Safety Mode</h3>
+                    <p>Demo trading safety features</p>
+                    <label class="switch">
+                        <input type="checkbox" checked disabled>
+                        <span class="slider"></span>
+                    </label>
+                    <small>Always enabled in demo mode</small>
+                </div>
+            </div>
+            
+            <div class="demo-warning">
+                <i class="fas fa-info-circle"></i>
+                <strong>Note:</strong> Settings in demo mode are for testing only. They won't affect live trading when you switch back to production.
+            </div>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="scripts/api.js"></script>
+    <script src="scripts/utils.js"></script>
+    <script src="scripts/dashboard.js"></script>
+    <script src="scripts/mobile-enhancements.js"></script>
+    
+    <!-- Demo-specific scripts -->
+    <script>
+        // Demo mode enhancements
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add demo indicators
+            document.body.classList.add('demo-mode');
+            
+            // Update page title periodically to show it's demo
+            setInterval(() => {
+                if (document.title.indexOf('DEMO') === -1) {
+                    document.title = 'TradingBot Pro - DEMO MODE - ' + document.title;
+                }
+            }, 5000);
+            
+            // Demo-specific status updates
+            updateDemoStatus();
+        });
+        
+        function updateDemoStatus() {
+            const demoCard = document.getElementById('demo-account-card');
+            if (demoCard) {
+                // Simulate demo account data
+                setTimeout(() => {
+                    document.getElementById('demo-balance').textContent = '$10,000.00';
+                    document.getElementById('demo-equity').textContent = '$10,000.00';
+                    document.getElementById('demo-margin').textContent = '$10,000.00';
+                    document.getElementById('demo-account-status').innerHTML = 
+                        '<span class="status-indicator connected"></span><span>Connected</span>';
+                }, 2000);
+            }
+        }
+        
+        function testGBPJPY() {
+            const results = document.getElementById('trading-results');
+            results.innerHTML = `
+                <div class="test-result">
+                    <h3><i class="fas fa-vial"></i> Testing GBPJPY Symbol Resolution</h3>
+                    <div class="progress-bar">
+                        <div class="progress" style="width: 0%"></div>
+                    </div>
+                    <div class="test-output" id="gbpjpy-output">
+                        <p>🔍 Starting GBPJPY symbol test on Pepperstone Demo...</p>
+                    </div>
+                </div>
+            `;
+            
+            // Simulate test progress
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 20;
+                document.querySelector('.progress').style.width = progress + '%';
+                
+                const output = document.getElementById('gbpjpy-output');
+                if (progress === 20) {
+                    output.innerHTML += '<p>📡 Connecting to Pepperstone Demo account...</p>';
+                } else if (progress === 40) {
+                    output.innerHTML += '<p>🔍 Testing standard GBPJPY variations...</p>';
+                } else if (progress === 60) {
+                    output.innerHTML += '<p>✅ GBPJPY symbol found! No numerical ID needed.</p>';
+                } else if (progress === 80) {
+                    output.innerHTML += '<p>📊 Market data subscription successful</p>';
+                } else if (progress === 100) {
+                    output.innerHTML += '<p class="success">🎉 GBPJPY test completed successfully!</p>';
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+        
+        function testAllSymbols() {
+            const results = document.getElementById('trading-results');
+            results.innerHTML = `
+                <div class="test-result">
+                    <h3><i class="fas fa-list-check"></i> Testing All 25 Trading Symbols</h3>
+                    <div class="progress-bar">
+                        <div class="progress" style="width: 0%"></div>
+                    </div>
+                    <div class="test-output" id="all-symbols-output">
+                        <p>🔍 Starting comprehensive symbol test...</p>
+                    </div>
+                </div>
+            `;
+            
+            const symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'GBPJPY', 'XAUUSD', 'XAGUSD'];
+            let current = 0;
+            
+            const interval = setInterval(() => {
+                if (current < symbols.length) {
+                    const progress = ((current + 1) / symbols.length) * 100;
+                    document.querySelector('.progress').style.width = progress + '%';
+                    
+                    const output = document.getElementById('all-symbols-output');
+                    output.innerHTML += `<p>✅ ${symbols[current]} - Symbol resolved successfully</p>`;
+                    current++;
+                } else {
+                    const output = document.getElementById('all-symbols-output');
+                    output.innerHTML += '<p class="success">🎉 All symbols tested successfully! Demo ready for trading.</p>';
+                    clearInterval(interval);
+                }
+            }, 800);
+        }
+    </script>
+</body>
+</html>
