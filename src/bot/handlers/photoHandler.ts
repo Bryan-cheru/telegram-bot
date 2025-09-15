@@ -167,6 +167,32 @@ export class PhotoHandler {
         return;
       }
 
+      // Check for GBPJPY and skip if not available on current brokers
+      if (tradeSignal.symbol.toUpperCase().includes('GBPJPY')) {
+        logger.warn('⚠️ GBPJPY not available on current brokers - skipping signal');
+        tracer.logToSpan(traceId, 'GBPJPY signal skipped - not available on brokers', 'warn');
+        
+        const skipMessage = `⚠️ **GBPJPY Signal Detected but Skipped**
+
+**Reason:** GBPJPY is not available on your current brokers (FTMO, Pepperstone, InstantFunding)
+
+**Possible Solutions:**
+• Contact broker support to confirm GBPJPY availability
+• Check if account type needs upgrade for more currency pairs
+• Consider alternative pairs like GBPUSD or EURJPY
+
+**Signal Details:**
+**Symbol:** ${tradeSignal.symbol}
+**Action:** ${tradeSignal.action}
+**Entry:** ${tradeSignal.entryZone?.min?.toFixed(5) || 'N/A'} - ${tradeSignal.entryZone?.max?.toFixed(5) || 'N/A'}
+        `.trim();
+
+        if (!ctx.channelPost) {
+          await ctx.reply(skipMessage, { parse_mode: 'Markdown' });
+        }
+        return;
+      }
+
       tracer.addTagsToSpan(traceId, { 
         symbol: tradeSignal.symbol,
         action: tradeSignal.action,

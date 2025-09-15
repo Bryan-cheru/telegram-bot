@@ -246,6 +246,40 @@ export class CleanSymbolManager {
       }
     }
 
+    // Enhanced error handling with diagnosis
+    return this.handleSymbolNotFound(inputSymbol, brokerName, connection, variations);
+  }
+
+  /**
+   * Enhanced error handling with symbol availability diagnosis
+   * @param inputSymbol - Original symbol requested
+   * @param brokerName - Broker name
+   * @param connection - MetaAPI connection
+   * @param variations - Variations that were tried
+   */
+  private static async handleSymbolNotFound(
+    inputSymbol: string,
+    brokerName: string,
+    connection: any,
+    variations: string[]
+  ): Promise<never> {
+    // For GBPJPY specifically, let's see what GBP and JPY symbols ARE available
+    if (inputSymbol.toUpperCase() === 'GBPJPY') {
+      try {
+        const gbpSymbols = await this.debugListAllSymbols(connection, brokerName, 'GBP');
+        const jpySymbols = await this.debugListAllSymbols(connection, brokerName, 'JPY');
+        
+        logger.info(`🔍 ${brokerName} GBP symbols available: ${gbpSymbols.slice(0, 10).join(', ')}`);
+        logger.info(`🔍 ${brokerName} JPY symbols available: ${jpySymbols.slice(0, 10).join(', ')}`);
+        
+        if (gbpSymbols.length === 0 && jpySymbols.length === 0) {
+          logger.warn(`⚠️ ${brokerName} may not offer GBP or JPY trading pairs`);
+        }
+      } catch (error) {
+        logger.debug(`Could not analyze available symbols: ${error}`);
+      }
+    }
+
     throw new Error(`No valid symbol found for ${inputSymbol} on ${brokerName}. Tried: ${variations.join(', ')}`);
   }
 
@@ -382,9 +416,16 @@ export class CleanSymbolManager {
     else if (symbol === 'EURJPY') {
       variations.push('EURJPY', 'EUR/JPY', 'EURJPY.', 'EURJPYm');
     }
-    // GBPJPY variations
+    // GBPJPY variations - Enhanced with more alternatives
     else if (symbol === 'GBPJPY') {
-      variations.push('GBPJPY', 'GBP/JPY', 'GBPJPY.', 'GBPJPYm');
+      variations.push(
+        'GBPJPY', 'GBP/JPY', 'GBPJPY.', 'GBPJPYm', 'GBPJPYCash',
+        'GBPJPY_', 'GBPJPY.std', 'gbpjpy', 'GBPJPYpro',
+        'GBPJPY_ECN', 'GBPJPYECN', 'GBPJPY.a', 'GBPJPY.raw',
+        'GBPJPY.swap', 'GBPJPY#', 'GBP-JPY', 'GBPJPY_raw',
+        'GBPJPY_mini', 'GBPJPY_micro', 'GBPJPYex', 'GBPJPYfx',
+        'GBP_JPY', 'GBPJPYc', 'GBPJPY.r', 'GBPJPY.fx'
+      );
     }
     // EURCHF variations
     else if (symbol === 'EURCHF') {
@@ -487,6 +528,49 @@ export class CleanSymbolManager {
       }
     } catch (error: any) {
       logger.warn(`Failed to initialize learning for ${brokerName}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Debug method to list all available symbols on a broker
+   * @param connection - MetaAPI connection
+   * @param brokerName - Broker name
+   * @param filterPattern - Optional pattern to filter symbols (e.g., "GBP", "JPY")
+   * @returns Array of all available symbols
+   */
+  static async debugListAllSymbols(
+    connection: any, 
+    brokerName: string, 
+    filterPattern?: string
+  ): Promise<string[]> {
+    try {
+      logger.info(`🔍 Listing all available symbols for ${brokerName}${filterPattern ? ` (filter: ${filterPattern})` : ''}...`);
+      
+      // Ensure connection and synchronization
+      await CleanSymbolManager.ensureConnectionReady(connection, brokerName);
+      
+      const specifications = connection.terminalState.specifications || {};
+      const allSymbols = Object.keys(specifications);
+      
+      let filteredSymbols = allSymbols;
+      if (filterPattern) {
+        const pattern = filterPattern.toUpperCase();
+        filteredSymbols = allSymbols.filter(symbol => 
+          symbol.toUpperCase().includes(pattern) ||
+          (specifications[symbol]?.description?.toUpperCase().includes(pattern))
+        );
+      }
+      
+      logger.info(`📊 ${brokerName} has ${allSymbols.length} total symbols${filterPattern ? `, ${filteredSymbols.length} matching "${filterPattern}"` : ''}`);
+      
+      if (filteredSymbols.length > 0 && filteredSymbols.length <= 50) {
+        logger.info(`🔧 ${brokerName} symbols: ${filteredSymbols.slice(0, 20).join(', ')}${filteredSymbols.length > 20 ? '...' : ''}`);
+      }
+      
+      return filteredSymbols;
+    } catch (error: any) {
+      logger.error(`❌ Failed to list symbols for ${brokerName}: ${error.message}`);
+      return [];
     }
   }
 
@@ -689,40 +773,95 @@ export class CleanSymbolManager {
   }
 
   /**
-   * Discover symbols from broker specifications by pattern matching
-   * @param inputSymbol - Input symbol to search for
-   * @param specifications - Broker symbol specifications
+   * Advanced symbol discovery from specifications using multiple strategies
+   * @param inputSymbol - Symbol to search for
+   * @param specifications - Broker specifications
    * @returns Array of discovered matching symbols
    */
   private static discoverSymbolsFromSpecifications(inputSymbol: string, specifications: any): string[] {
     const discoveredSymbols: string[] = [];
     const standardSymbol = this.inferStandardSymbol(inputSymbol);
+    
+    // Strategy 1: Direct pattern matching
     const searchPatterns = [
       standardSymbol,
       standardSymbol.toLowerCase(),
       standardSymbol.toUpperCase()
     ];
     
+    // Strategy 2: For GBPJPY, also search for GBP and JPY separately
+    const currencyPairs = this.extractCurrencyPair(standardSymbol);
+    if (currencyPairs) {
+      searchPatterns.push(
+        ...currencyPairs.patterns,
+        currencyPairs.base,
+        currencyPairs.quote
+      );
+    }
+    
     // Search through all available specifications
     for (const [symbol, spec] of Object.entries(specifications)) {
       if (!spec || typeof spec !== 'object') continue;
       
-      // Check if symbol name matches any of our patterns
+      const symbolUpper = symbol.toUpperCase();
+      const description = (spec as any).description || '';
+      
+      // Strategy 1: Symbol name matching
       for (const pattern of searchPatterns) {
-        if (symbol.toLowerCase().includes(pattern.toLowerCase()) ||
-            pattern.toLowerCase().includes(symbol.toLowerCase())) {
+        if (symbolUpper.includes(pattern.toUpperCase()) ||
+            pattern.toUpperCase().includes(symbolUpper)) {
           
-          // Additional validation using description if available
-          const description = (spec as any).description || '';
           if (this.validateSymbolMatch(inputSymbol, symbol, description)) {
             discoveredSymbols.push(symbol);
             break;
           }
         }
       }
+      
+      // Strategy 2: Description-based matching for currency pairs
+      if (currencyPairs && description) {
+        const descUpper = description.toUpperCase();
+        if ((descUpper.includes(currencyPairs.base) && descUpper.includes(currencyPairs.quote)) ||
+            (descUpper.includes('BRITISH') && descUpper.includes('POUND') && descUpper.includes('JAPANESE') && descUpper.includes('YEN')) ||
+            (descUpper.includes('GBP') && descUpper.includes('JPY'))) {
+          
+          if (this.validateSymbolMatch(inputSymbol, symbol, description)) {
+            discoveredSymbols.push(symbol);
+          }
+        }
+      }
     }
     
-    return discoveredSymbols;
+    return [...new Set(discoveredSymbols)]; // Remove duplicates
+  }
+
+  /**
+   * Extract currency pair information from symbol
+   * @param symbol - Input symbol like "GBPJPY"
+   * @returns Currency pair info or null
+   */
+  private static extractCurrencyPair(symbol: string): { base: string; quote: string; patterns: string[] } | null {
+    const upper = symbol.toUpperCase();
+    
+    // Common 6-character currency pairs
+    if (upper.length === 6) {
+      const base = upper.substring(0, 3);
+      const quote = upper.substring(3, 6);
+      
+      return {
+        base,
+        quote,
+        patterns: [
+          `${base}${quote}`,
+          `${base}/${quote}`,
+          `${base}-${quote}`,
+          `${base}_${quote}`,
+          `${base}.${quote}`
+        ]
+      };
+    }
+    
+    return null;
   }
 
   /**
@@ -1116,5 +1255,55 @@ export class CleanSymbolManager {
       'EURGBP', 'EURJPY', 'GBPJPY', 'EURCHF', 'GBPCHF', 'AUDJPY', 'CADJPY', 'CHFJPY', 'NZDJPY'
     ];
     return forexPatterns.includes(symbol.toUpperCase());
+  }
+
+  /**
+   * Suggests alternative trading pairs when the requested symbol is not available
+   * @param requestedSymbol - The symbol that was not found
+   * @param brokerName - The broker name for context
+   * @returns Array of suggested alternative symbols with reasoning
+   */
+  static suggestAlternativeSymbols(requestedSymbol: string, brokerName: string): Array<{symbol: string, reason: string}> {
+    const upperSymbol = requestedSymbol.toUpperCase();
+    const suggestions: Array<{symbol: string, reason: string}> = [];
+
+    // GBPJPY specific alternatives
+    if (upperSymbol.includes('GBPJPY')) {
+      suggestions.push(
+        { symbol: 'GBPUSD', reason: 'GBP strength component - half of GBPJPY correlation' },
+        { symbol: 'USDJPY', reason: 'JPY strength component - can trade inverse for GBP/JPY effect' },
+        { symbol: 'EURJPY', reason: 'Similar JPY cross pair with high correlation to GBPJPY' },
+        { symbol: 'AUDJPY', reason: 'Alternative JPY cross pair, commodity currency vs JPY' },
+        { symbol: 'EURGBP', reason: 'GBP strength vs EUR - different dynamic but GBP exposure' }
+      );
+    }
+
+    // Other common missing symbols
+    else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      suggestions.push(
+        { symbol: 'XAGUSD', reason: 'Silver - precious metals correlation with gold' },
+        { symbol: 'EURUSD', reason: 'Major pair - often inverse correlation with gold' }
+      );
+    }
+
+    // Exotic pairs fallbacks
+    else if (upperSymbol.includes('CHF')) {
+      suggestions.push(
+        { symbol: 'USDCHF', reason: 'Major CHF pair - usually available on all brokers' },
+        { symbol: 'EURCHF', reason: 'EUR/CHF cross - alternative CHF exposure' }
+      );
+    }
+
+    // Generic fallbacks for any missing symbol
+    if (suggestions.length === 0) {
+      suggestions.push(
+        { symbol: 'EURUSD', reason: 'Most liquid major pair - available on all brokers' },
+        { symbol: 'GBPUSD', reason: 'Major GBP pair - high volatility alternative' },
+        { symbol: 'USDJPY', reason: 'Major JPY pair - safe haven currency exposure' }
+      );
+    }
+
+    logger.info(`💡 Suggested ${suggestions.length} alternatives for ${requestedSymbol} on ${brokerName}`);
+    return suggestions;
   }
 }
