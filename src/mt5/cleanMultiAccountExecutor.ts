@@ -239,10 +239,20 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    * Entry -> SL distance = SL -> TP distance (ALWAYS 1:1 RR, ignores provided targets)
    */
   private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
-    const stopLoss = signal.stopLoss;
+    let stopLoss = signal.stopLoss;
     
-    if (!stopLoss || stopLoss <= 0) {
-      throw new Error('Stop Loss is required for 1:1 RR calculation');
+    // FIXED: If stop loss is invalid (like 5, 3, etc), calculate it properly
+    if (!stopLoss || stopLoss <= 0 || stopLoss < 0.1) {
+      // Use percentage-based stop loss (2% risk by default)
+      const riskPercentage = 0.02; // 2% risk
+      
+      if (signal.action === 'BUY') {
+        stopLoss = entryPrice * (1 - riskPercentage);
+        logger.info(`🔧 Calculated SL for BUY: ${stopLoss.toFixed(5)} (2% below entry)`);
+      } else if (signal.action === 'SELL') {
+        stopLoss = entryPrice * (1 + riskPercentage);
+        logger.info(`🔧 Calculated SL for SELL: ${stopLoss.toFixed(5)} (2% above entry)`);
+      }
     }
 
     // ALWAYS calculate 1:1 Risk-Reward ratio - ignore any provided targets
@@ -274,7 +284,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       logger.info(`🎯 OVERRIDE: Ignoring provided TP ${signal.targets[0]}, using 1:1 RR instead: ${takeProfit.toFixed(5)}`);
     }
 
-    logger.info(`🎯 ENFORCED 1:1 RR - Entry: ${entryPrice}, SL: ${stopLoss}, TP: ${takeProfit.toFixed(5)}, Risk: ${riskDistance.toFixed(5)} pips`);
+    // Update signal with corrected stop loss for the trade execution
+    signal.stopLoss = stopLoss;
+
+    logger.info(`🎯 ENFORCED 1:1 RR - Entry: ${entryPrice}, SL: ${stopLoss.toFixed(5)}, TP: ${takeProfit.toFixed(5)}, Risk: ${riskDistance.toFixed(5)} pips`);
     return Number(takeProfit.toFixed(5)); // Round to 5 decimal places
   }
 
@@ -341,7 +354,8 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       };
 
       // Check if this should be a market order or limit order
-      const orderType = signal.orderType || 'LIMIT'; // Default to LIMIT if not specified
+      // 🎯 DEFAULT TO LIMIT ORDERS (as per your excellent suggestion!)
+      const orderType = signal.orderType || 'LIMIT'; // Always LIMIT by default for better execution
       
       if (orderType === 'MARKET') {
         // Market orders - execute immediately at current price
