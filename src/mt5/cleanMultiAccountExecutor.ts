@@ -6,7 +6,7 @@
 import MetaApi, { MetatraderAccount, StreamingMetaApiConnectionInstance } from 'metaapi.cloud-sdk';
 import { TradeSignal, TradeResult } from '../types';
 import { ITradeExecutor } from '../types/ITradeExecutor';
-import { CleanSymbolManager } from '../utils/cleanSymbolManager';
+import { CleanSymbolManager } from '../../cleanSymbolManager';
 import { logger } from '../utils/logger';
 
 interface AccountConfig {
@@ -128,20 +128,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       if (terminalConnected) {
         logger.info(`🔄 Synchronizing ${accountConfig.brokerName}...`);
         try {
-          await CleanSymbolManager.ensureConnectionReady(
-            accountConfig.connection, 
-            accountConfig.brokerName,
-            3 // max retries
-          );
+          // Simplified: Just wait for synchronization
+          await accountConfig.connection.waitSynchronized();
           logger.info(`✅ ${accountConfig.brokerName} synchronized`);
-
-          // Initialize symbol learning for this broker
-          logger.info(`🎓 Initializing symbol learning for ${accountConfig.brokerName}...`);
-          await CleanSymbolManager.initializeBrokerLearning(
-            accountConfig.connection,
-            accountConfig.brokerName
-          );
-          logger.info(`📚 ${accountConfig.brokerName} learning initialized`);
           
           accountConfig.status = 'CONNECTED';
           logger.info(`🎉 ${accountConfig.brokerName} fully connected and ready for trading!`);
@@ -345,18 +334,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       // Step 3.5: Calculate take profit using 1:1 RR default
       const takeProfit = this.calculateTakeProfit(signal, entryPrice);
 
-      // Step 4: Validate trade parameters
-      const validation = await CleanSymbolManager.validateForTrading(
-        validSymbol,
-        accountConfig.connection,
-        accountConfig.brokerName
-      );
-
-      if (!validation.valid) {
-        throw new Error(`Trade validation failed: ${validation.reason}`);
-      }
-
-      // Step 5: Execute the trade using MetaAPI
+      // Step 4: Execute the trade using MetaAPI (validation happens in getValidSymbol)
       let result;
       const tradeOptions = {
         comment: 'Bot Trade'

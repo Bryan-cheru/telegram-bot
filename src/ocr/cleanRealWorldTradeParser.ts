@@ -9,7 +9,6 @@
  */
 
 import { TradeSignal, TradeAction, OrderType } from '../types';
-import { CleanSymbolManager } from '../utils/cleanSymbolManager';
 import { logger } from '../utils/logger';
 import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
 
