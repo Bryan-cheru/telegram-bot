@@ -241,37 +241,33 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
     let stopLoss = signal.stopLoss;
     
-    // FIXED: If stop loss is invalid (like 5, 3, etc), calculate it properly
-    if (!stopLoss || stopLoss <= 0 || stopLoss < 0.1) {
-      // Use percentage-based stop loss (2% risk by default)
-      const riskPercentage = 0.02; // 2% risk
-      
-      if (signal.action === 'BUY') {
-        stopLoss = entryPrice * (1 - riskPercentage);
-        logger.info(`🔧 Calculated SL for BUY: ${stopLoss.toFixed(5)} (2% below entry)`);
-      } else if (signal.action === 'SELL') {
-        stopLoss = entryPrice * (1 + riskPercentage);
-        logger.info(`🔧 Calculated SL for SELL: ${stopLoss.toFixed(5)} (2% above entry)`);
-      }
+    // Validate SL is realistic based on symbol type
+    const isRealisticSL = this.validateRealisticSL(signal.symbol, entryPrice, stopLoss, signal.action);
+    
+    if (!stopLoss || !isRealisticSL) {
+      // Calculate conservative SL within realistic limits
+      stopLoss = this.calculateRealisticSL(signal.symbol, entryPrice, signal.action);
+      logger.info(`🔧 Using realistic SL: ${stopLoss.toFixed(5)} (chart SL was unrealistic)`);
+    } else {
+      logger.info(`✅ Using chart SL: ${stopLoss.toFixed(5)} (realistic level)`);
     }
 
-    // ALWAYS calculate 1:1 Risk-Reward ratio - ignore any provided targets
-    let takeProfit: number;
+    // Calculate 1:1 Risk-Reward ratio with realistic TP
     const riskDistance = Math.abs(entryPrice - stopLoss);
+    let takeProfit: number;
 
     if (signal.action === 'BUY') {
-      // For BUY: TP = Entry + Risk Distance
       takeProfit = entryPrice + riskDistance;
-      logger.info(`📈 BUY 1:1 RR: Entry ${entryPrice} + Risk ${riskDistance.toFixed(5)} = TP ${takeProfit.toFixed(5)}`);
     } else if (signal.action === 'SELL') {
-      // For SELL: TP = Entry - Risk Distance
       takeProfit = entryPrice - riskDistance;
-      logger.info(`📉 SELL 1:1 RR: Entry ${entryPrice} - Risk ${riskDistance.toFixed(5)} = TP ${takeProfit.toFixed(5)}`);
     } else {
       throw new Error(`Invalid action for TP calculation: ${signal.action}`);
     }
 
-    // Validate the calculated TP makes sense
+    // Ensure TP is within realistic limits for the symbol
+    takeProfit = this.ensureRealisticTP(signal.symbol, entryPrice, takeProfit, signal.action);
+
+    // Final validation
     if (signal.action === 'BUY' && takeProfit <= entryPrice) {
       throw new Error(`Invalid BUY TP: ${takeProfit} must be > Entry ${entryPrice}`);
     }
@@ -279,16 +275,116 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       throw new Error(`Invalid SELL TP: ${takeProfit} must be < Entry ${entryPrice}`);
     }
 
-    // Log if we're overriding provided targets
-    if (signal.targets && signal.targets.length > 0 && signal.targets[0] > 0) {
-      logger.info(`🎯 OVERRIDE: Ignoring provided TP ${signal.targets[0]}, using 1:1 RR instead: ${takeProfit.toFixed(5)}`);
-    }
-
-    // Update signal with corrected stop loss for the trade execution
+    // Update signal with corrected stop loss
     signal.stopLoss = stopLoss;
 
-    logger.info(`🎯 ENFORCED 1:1 RR - Entry: ${entryPrice}, SL: ${stopLoss.toFixed(5)}, TP: ${takeProfit.toFixed(5)}, Risk: ${riskDistance.toFixed(5)} pips`);
-    return Number(takeProfit.toFixed(5)); // Round to 5 decimal places
+    logger.info(`🎯 REALISTIC 1:1 RR - Entry: ${entryPrice}, SL: ${stopLoss.toFixed(5)}, TP: ${takeProfit.toFixed(5)}, Risk: ${riskDistance.toFixed(5)}`);
+    return takeProfit;
+  }
+
+  /**
+   * Validate if SL is realistic for the symbol type
+   */
+  private validateRealisticSL(symbol: string, entryPrice: number, stopLoss: number, action: string): boolean {
+    if (!stopLoss || stopLoss <= 0) return false;
+    
+    const upperSymbol = symbol.toUpperCase();
+    const slDistance = Math.abs(entryPrice - stopLoss);
+    const slPercentage = (slDistance / entryPrice) * 100;
+    
+    // Check if SL is on correct side
+    if (action === 'BUY' && stopLoss >= entryPrice) return false;
+    if (action === 'SELL' && stopLoss <= entryPrice) return false;
+    
+    // Symbol-specific realistic SL validation
+    if (upperSymbol.includes('JPY')) {
+      // JPY pairs: SL should be 0.5% - 3% away from entry
+      return slPercentage >= 0.5 && slPercentage <= 3.0 && slDistance >= 0.5 && slDistance <= 5.0;
+    }
+    
+    if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      // Gold: SL should be $10-$100 away from entry
+      return slDistance >= 10 && slDistance <= 100;
+    }
+    
+    if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+      // Major forex: SL should be 20-500 pips away
+      return slDistance >= 0.0020 && slDistance <= 0.0500;
+    }
+    
+    // General: 0.5% - 5% range
+    return slPercentage >= 0.5 && slPercentage <= 5.0;
+  }
+
+  /**
+   * Calculate realistic SL within proper limits
+   */
+  private calculateRealisticSL(symbol: string, entryPrice: number, action: string): number {
+    const upperSymbol = symbol.toUpperCase();
+    let slDistance: number;
+    
+    // Symbol-specific realistic SL distances
+    if (upperSymbol.includes('JPY')) {
+      // JPY pairs: Use 1% (conservative but realistic)
+      slDistance = entryPrice * 0.01;
+    } else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      // Gold: Use $30 distance (realistic for gold trading)
+      slDistance = 30;
+    } else if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+      // Major forex: Use 100 pips (0.01)
+      slDistance = 0.01;
+    } else {
+      // General: Use 1.5%
+      slDistance = entryPrice * 0.015;
+    }
+    
+    // Calculate SL based on direction
+    let stopLoss: number;
+    if (action === 'BUY') {
+      stopLoss = entryPrice - slDistance;
+    } else {
+      stopLoss = entryPrice + slDistance;
+    }
+    
+    return stopLoss;
+  }
+
+  /**
+   * Ensure TP is within realistic limits
+   */
+  private ensureRealisticTP(symbol: string, entryPrice: number, takeProfit: number, action: string): number {
+    const upperSymbol = symbol.toUpperCase();
+    const tpDistance = Math.abs(takeProfit - entryPrice);
+    
+    // Symbol-specific TP limits
+    let maxTpDistance: number;
+    
+    if (upperSymbol.includes('JPY')) {
+      // JPY pairs: Max 5 yen move
+      maxTpDistance = 5.0;
+    } else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      // Gold: Max $150 move
+      maxTpDistance = 150;
+    } else if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+      // Major forex: Max 500 pips
+      maxTpDistance = 0.05;
+    } else {
+      // General: Max 10% move
+      maxTpDistance = entryPrice * 0.10;
+    }
+    
+    // If TP is too far, cap it at max distance
+    if (tpDistance > maxTpDistance) {
+      logger.warn(`⚠️ Capping TP distance from ${tpDistance.toFixed(5)} to ${maxTpDistance.toFixed(5)} for ${symbol}`);
+      
+      if (action === 'BUY') {
+        takeProfit = entryPrice + maxTpDistance;
+      } else {
+        takeProfit = entryPrice - maxTpDistance;
+      }
+    }
+    
+    return takeProfit;
   }
 
   /**

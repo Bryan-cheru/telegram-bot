@@ -94,6 +94,18 @@ class TradingConfigManager {
         'SPX500': { 
           min: parseFloat(process.env.SPX500_MIN_PRICE || '4000'), 
           max: parseFloat(process.env.SPX500_MAX_PRICE || '6000') 
+        },
+        'USDJPY': { 
+          min: parseFloat(process.env.USDJPY_MIN_PRICE || '130'), 
+          max: parseFloat(process.env.USDJPY_MAX_PRICE || '160') 
+        },
+        'GBPJPY': { 
+          min: parseFloat(process.env.GBPJPY_MIN_PRICE || '160'), 
+          max: parseFloat(process.env.GBPJPY_MAX_PRICE || '200') 
+        },
+        'EURJPY': { 
+          min: parseFloat(process.env.EURJPY_MIN_PRICE || '145'), 
+          max: parseFloat(process.env.EURJPY_MAX_PRICE || '175') 
         }
       },
       
