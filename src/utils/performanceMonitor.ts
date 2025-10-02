@@ -1,5 +1,4 @@
 import { logger } from './logger';
-import { RealTimeAlertSystem } from './realTimeAlertSystem';
 import * as os from 'os';
 
 interface PerformanceMetrics {
@@ -46,7 +45,6 @@ interface PerformanceMetrics {
 export class PerformanceMonitor {
   private static instance: PerformanceMonitor;
   private metrics: PerformanceMetrics[] = [];
-  private alertSystem: RealTimeAlertSystem;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private lastCpuUsage: NodeJS.CpuUsage;
   private tradingMetrics = {
@@ -73,7 +71,6 @@ export class PerformanceMonitor {
   private readonly EXECUTION_TIME_CRITICAL_MS = 10000;
 
   private constructor() {
-    this.alertSystem = RealTimeAlertSystem.getInstance();
     this.lastCpuUsage = process.cpuUsage();
     this.startMonitoring();
   }
@@ -195,65 +192,33 @@ export class PerformanceMonitor {
   private checkPerformanceThresholds(metrics: PerformanceMetrics): void {
     // Memory alerts
     if (metrics.memory.heapUsedMB > this.MEMORY_CRITICAL_MB) {
-      this.alertSystem.sendCriticalAlert(
-        'PERFORMANCE',
-        `Critical memory usage: ${metrics.memory.heapUsedMB}MB`,
-        { memory: metrics.memory }
-      );
+      logger.error(`🚨 CRITICAL PERFORMANCE: Memory usage: ${metrics.memory.heapUsedMB}MB`, { memory: metrics.memory });
     } else if (metrics.memory.heapUsedMB > this.MEMORY_WARNING_MB) {
-      this.alertSystem.sendWarningAlert(
-        'PERFORMANCE',
-        `High memory usage: ${metrics.memory.heapUsedMB}MB`,
-        { memory: metrics.memory }
-      );
+      logger.warn(`⚠️ HIGH PERFORMANCE: Memory usage: ${metrics.memory.heapUsedMB}MB`, { memory: metrics.memory });
     }
 
     // CPU alerts
     if (metrics.cpu.percentUsage && metrics.cpu.percentUsage > this.CPU_CRITICAL_PERCENT) {
-      this.alertSystem.sendCriticalAlert(
-        'PERFORMANCE',
-        `Critical CPU usage: ${metrics.cpu.percentUsage.toFixed(1)}%`,
-        { cpu: metrics.cpu }
-      );
+      logger.error(`🚨 CRITICAL PERFORMANCE: CPU usage: ${metrics.cpu.percentUsage.toFixed(1)}%`, { cpu: metrics.cpu });
     } else if (metrics.cpu.percentUsage && metrics.cpu.percentUsage > this.CPU_WARNING_PERCENT) {
-      this.alertSystem.sendWarningAlert(
-        'PERFORMANCE',
-        `High CPU usage: ${metrics.cpu.percentUsage.toFixed(1)}%`,
-        { cpu: metrics.cpu }
-      );
+      logger.warn(`⚠️ HIGH PERFORMANCE: CPU usage: ${metrics.cpu.percentUsage.toFixed(1)}%`, { cpu: metrics.cpu });
     }
 
     // Trading performance alerts
     if (metrics.trading.averageExecutionTime > this.EXECUTION_TIME_CRITICAL_MS) {
-      this.alertSystem.sendCriticalAlert(
-        'PERFORMANCE',
-        `Critical trade execution time: ${metrics.trading.averageExecutionTime}ms`,
-        { trading: metrics.trading }
-      );
+      logger.error(`🚨 CRITICAL PERFORMANCE: Trade execution time: ${metrics.trading.averageExecutionTime}ms`, { trading: metrics.trading });
     } else if (metrics.trading.averageExecutionTime > this.EXECUTION_TIME_WARNING_MS) {
-      this.alertSystem.sendWarningAlert(
-        'PERFORMANCE',
-        `Slow trade execution: ${metrics.trading.averageExecutionTime}ms`,
-        { trading: metrics.trading }
-      );
+      logger.warn(`⚠️ SLOW PERFORMANCE: Trade execution: ${metrics.trading.averageExecutionTime}ms`, { trading: metrics.trading });
     }
 
     // High failure rate alert
     if (metrics.trading.failureRate > 20) { // 20% failure rate
-      this.alertSystem.sendWarningAlert(
-        'PERFORMANCE',
-        `High trade failure rate: ${metrics.trading.failureRate}%`,
-        { trading: metrics.trading }
-      );
+      logger.warn(`⚠️ HIGH FAILURE RATE: Trade failure rate: ${metrics.trading.failureRate}%`, { trading: metrics.trading });
     }
 
     // System memory alerts
     if (metrics.system.memoryUsagePercent > 90) {
-      this.alertSystem.sendCriticalAlert(
-        'SYSTEM',
-        `Critical system memory usage: ${metrics.system.memoryUsagePercent.toFixed(1)}%`,
-        { system: metrics.system }
-      );
+      logger.error(`🚨 CRITICAL SYSTEM: Memory usage: ${metrics.system.memoryUsagePercent.toFixed(1)}%`, { system: metrics.system });
     }
   }
 

@@ -6,7 +6,6 @@
 import MetaApi, { MetatraderAccount, StreamingMetaApiConnectionInstance } from 'metaapi.cloud-sdk';
 import { TradeSignal, TradeResult } from '../types';
 import { ITradeExecutor } from '../types/ITradeExecutor';
-import { CleanSymbolManager } from '../../cleanSymbolManager';
 import { logger } from '../utils/logger';
 
 interface AccountConfig {
@@ -422,18 +421,13 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         }
       }
 
-      // Step 1: Get valid symbol using clean symbol manager
-      const validSymbol = await CleanSymbolManager.getValidSymbol(
-        signal.symbol,
-        accountConfig.connection,
-        accountConfig.brokerName
-      );
+      // Step 1: Get valid symbol (fallback implementation)
+      const validSymbol = signal.symbol;
 
-      // Step 2: Ensure market data is available
-      const marketData = await CleanSymbolManager.ensureMarketData(
-        validSymbol,
-        accountConfig.connection
-      );
+      // Step 2: Get market data from connection
+      const terminalState = accountConfig.connection.terminalState;
+      const price = terminalState.price(validSymbol);
+      const marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
 
       // Step 3: Calculate entry price and volume
       const entryPrice = this.calculateEntryPrice(signal, marketData);

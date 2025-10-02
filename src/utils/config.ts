@@ -24,7 +24,7 @@ export const config = {
   metaApi: {
     token: process.env.METAAPI_TOKEN || '',
     accountId: process.env.METAAPI_ACCOUNT_ID || '', // Legacy single account support
-    accounts: process.env.METAAPI_ACCOUNTS || '' // New multi-account support
+    accounts: process.env.METAAPI_ACCOUNTS || process.env.METAAPI_TEST_ACCOUNT || '' // Multi-account or test account support
   },
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
   allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
@@ -70,7 +70,7 @@ export const validateConfig = (): boolean => {
   // Either single account or multi-account configuration must be provided
   const hasAccountConfig = config.metaApi.accountId || config.metaApi.accounts;
   if (!hasAccountConfig) {
-    errors.push('CRITICAL: No MetaAPI account configuration found. Set METAAPI_ACCOUNT_ID or METAAPI_ACCOUNTS');
+    errors.push('CRITICAL: No MetaAPI account configuration found. Set METAAPI_ACCOUNT_ID, METAAPI_ACCOUNTS, or METAAPI_TEST_ACCOUNT');
     console.error('❌ No MetaAPI account configuration found');
   }
 

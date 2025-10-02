@@ -1,5 +1,4 @@
 import { logger } from '../utils/logger';
-import { tradingConfig } from '../utils/tradingConfig';
 
 /**
  * CHART COLOR ANALYSIS ML
@@ -564,7 +563,15 @@ export class ChartColorAnalysisML {
    * Get realistic price range for trading symbols
    */
   private static getSymbolPriceRange(symbol: string): { min: number; max: number } {
-    return tradingConfig.getPriceRange(symbol);
+    // Basic price ranges for common symbols - fallback implementation
+    const ranges: { [key: string]: { min: number; max: number } } = {
+      'XAUUSD': { min: 1800, max: 2200 },
+      'EURUSD': { min: 1.0, max: 1.2 },
+      'GBPUSD': { min: 1.2, max: 1.4 },
+      'USDJPY': { min: 100, max: 150 },
+    };
+    
+    return ranges[symbol] || { min: 0.1, max: 10000 };
   }
 
   /**

@@ -4,6 +4,29 @@ import { logger } from '../../utils/logger';
 import { ManualTradingCommands, ManualTradeCommand } from '../../utils/manualTradingCommands';
 
 export class MessageHandler {
+  private authService: any = null;
+
+  constructor() {
+    // Try to initialize auth service (optional)
+    this.initializeAuthService();
+  }
+
+  /**
+   * Optional authentication service initialization
+   */
+  private async initializeAuthService(): Promise<void> {
+    try {
+      const { AuthService } = await import('../../auth/AuthService');
+      this.authService = new AuthService();
+      await this.authService.initialize();
+      logger.info('✅ Authentication service enabled');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.info('ℹ️ Authentication service not available:', errorMessage);
+      this.authService = null;
+    }
+  }
+
   async handleStart(ctx: Context): Promise<void> {
     const welcomeMessage = `
 🤖 **Telegram Trading Bot**

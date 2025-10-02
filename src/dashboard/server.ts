@@ -4,13 +4,25 @@ import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
 import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
-import tradingAPIRouter, { initializeTradingAPI } from './tradingAPI';
+import tradingAPIRouter from './noDbTradingAPI';
 
 const app = express();
 
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// CORS support for API
+app.use('/api', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
 
 // Store for real-time data
 import { randomUUID } from 'crypto';
@@ -35,8 +47,15 @@ let mt5LastUpdate = 0;
 // Import the shared executor instance
 export const setSharedExecutor = (executor: CleanMultiAccountExecutor) => {
   multiAccountExecutor = executor;
-  // Initialize trading API when executor is set
-  initializeTradingAPI(executor);
+  
+  // Update bot status
+  botStatus.connections.metaapi = true;
+  botStatus.isRunning = true;
+  
+  addLog({
+    level: 'info',
+    message: '✅ Trading API connected to live executor'
+  });
 };
 
 // Initialize MT5 connection for dashboard (use shared instance)
@@ -246,7 +265,7 @@ app.get('/api/status', (req, res) => {
 });
 
 // Mount Trading Management API
-app.use('/api/trading', tradingAPIRouter);
+app.use('/api', tradingAPIRouter);
 
 app.get('/api/logs', (req, res) => {
   const limit = parseInt(req.query.limit as string) || 100;

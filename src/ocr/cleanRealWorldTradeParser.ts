@@ -19,13 +19,16 @@ import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
  */
 export class CleanRealWorldTradeParser {
   private static readonly SYMBOL_PATTERNS = [
-    // Hashtag patterns - highest priority
-    /#(XAUUSD|GOLD|XAGUSD|SILVER)/i,
-    /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)/i,
-    /#(US30|NAS100|SPX500|UK100|GER30|DOW|NASDAQ)/i,
-    /#(USOIL|UKOIL|WTI|BRENT|OIL)/i,
-    // Word boundaries without hashtag
-    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|US30|NAS100)\b/i
+    // Hashtag patterns - highest priority (with optional .x suffix for InstantFunding)
+    /#(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?/i,
+    /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)(?:\.x)?/i,
+    /#(EURCHF|EURGBP|EURJPY|EURAUD|EURCAD|EURNZD|GBPCHF|GBPJPY|GBPAUD|GBPCAD|GBPNZD)(?:\.x)?/i,
+    /#(CHFJPY|CADCHF|AUDCHF|NZDCHF|CADJPY|AUDJPY|NZDJPY|AUDCAD|AUDNZD|CADNZD)(?:\.x)?/i,
+    /#(US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|DOW|NASDAQ)(?:\.x)?/i,
+    /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
+    /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
+    // Word boundaries without hashtag (with optional .x suffix)
+    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225)(?:\.x)?\b/i
   ];
 
   private static readonly ACTION_PATTERNS = {
@@ -333,19 +336,54 @@ export class CleanRealWorldTradeParser {
   }
 
   /**
-   * Normalize symbol to standard format
+   * Normalize symbol using Universal approach
+   * Replaces hardcoded InstantFunding logic with broker-agnostic normalization
    */
   private static normalizeSymbol(symbol: string): string {
-    const normalized = symbol.toUpperCase();
+    // Basic normalization - remove common variations and standardize
+    let normalized = symbol
+      .toUpperCase()
+      .replace(/\.X$/, '')         // Remove InstantFunding .x suffix
+      .replace(/[^A-Z0-9]/g, '')   // Remove special characters
+      .trim();
     
-    // Handle common variations
-    if (normalized === 'GOLD') return 'XAUUSD';
-    if (normalized === 'SILVER') return 'XAGUSD';
-    if (normalized === 'NASDAQ' || normalized === 'NAS') return 'NAS100';
-    if (normalized === 'DOW') return 'US30';
-    if (normalized === 'SPX') return 'SPX500';
+    // Common symbol mappings (broker-agnostic)
+    const symbolMap: Record<string, string> = {
+      // Metals
+      'GOLD': 'XAUUSD',
+      'SILVER': 'XAGUSD',
+      
+      // Indices  
+      'NASDAQ': 'NAS100',
+      'DOW': 'US30',
+      'DOWJONES': 'US30',
+      'SP500': 'SPX500',
+      'SPX': 'SPX500',
+      'DAX': 'GER30',
+      'GERMANY30': 'GER30',
+      'FTSE': 'UK100',
+      'UK100': 'UK100',
+      
+      // InstantFunding specific mappings
+      'AUS200': 'AUS200',
+      'US100': 'NAS100',
+      'JPN225': 'JPN225',
+      'ESXEUR': 'ESXEUR',
+      'F40EUR': 'F40EUR', 
+      'HSIHED': 'HSIHED',
+      
+      // Forex (already standard)
+      'EURUSD': 'EURUSD',
+      'GBPUSD': 'GBPUSD',
+      'USDJPY': 'USDJPY',
+      'USDCHF': 'USDCHF',
+      'AUDUSD': 'AUDUSD',
+      'USDCAD': 'USDCAD',
+      'EURCHF': 'EURCHF'
+    };
     
-    return normalized;
+    // Apply mapping if found
+    return symbolMap[normalized] || normalized;
   }
 
   /**
