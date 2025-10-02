@@ -82,7 +82,7 @@ export class EnvironmentConfigService {
       dbName: process.env.DB_NAME || 'telegram-trading-bot',
       
       // Telegram Bot Configuration
-      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+      telegramBotToken: process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '',
       telegramWebhookUrl: process.env.TELEGRAM_WEBHOOK_URL,
       
       // MetaAPI Configuration
@@ -129,7 +129,6 @@ export class EnvironmentConfigService {
    */
   private validateConfiguration(): void {
     const requiredVars: (keyof EnvironmentConfig)[] = [
-      'telegramBotToken',
       'metaApiToken',
       'mongoUri'
     ];

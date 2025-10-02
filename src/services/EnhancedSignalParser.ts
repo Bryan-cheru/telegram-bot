@@ -77,7 +77,13 @@ export class EnhancedSignalParser {
       const targets = this.extractTargets(text);
       
       // Extract stop loss (if mentioned)
-      const stopLoss = this.extractStopLoss(text);
+      let stopLoss = this.extractStopLoss(text);
+      
+      // Generate automatic stop loss if not provided
+      if (!stopLoss && entryZone) {
+        stopLoss = this.generateAutoStopLoss(action, entryZone, targets);
+        logger.info(`🤖 Auto-generated stop loss: ${stopLoss} (based on entry zone and risk management)`);
+      }
       
       // Extract reasoning
       const reasoning = this.extractReasoning(text);
@@ -276,6 +282,53 @@ export class EnhancedSignalParser {
   }
 
   /**
+   * Generate automatic stop loss based on entry zone and risk management principles
+   */
+  private static generateAutoStopLoss(
+    action: 'BUY' | 'SELL' | 'AUTO_DETECT', 
+    entryZone: { min: number; max: number }, 
+    targets: number[]
+  ): number {
+    const entryMid = (entryZone.min + entryZone.max) / 2;
+    const zoneSize = Math.abs(entryZone.max - entryZone.min);
+    
+    // Conservative approach: Stop loss beyond the entry zone
+    let stopLoss: number;
+    
+    if (action === 'BUY') {
+      // For BUY: Stop loss below the lower boundary of entry zone
+      // Use zone size as buffer or minimum 20 pips (for XAUUSD, this would be 2.0)
+      const buffer = Math.max(zoneSize * 0.5, entryMid * 0.001); // 0.1% buffer minimum
+      stopLoss = entryZone.min - buffer;
+    } else {
+      // For SELL: Stop loss above the upper boundary of entry zone
+      const buffer = Math.max(zoneSize * 0.5, entryMid * 0.001); // 0.1% buffer minimum
+      stopLoss = entryZone.max + buffer;
+    }
+    
+    // Ensure stop loss gives reasonable risk-reward ratio (at least 1:1.5)
+    if (targets.length > 0) {
+      const firstTarget = targets[0];
+      const entryToTarget = Math.abs(firstTarget - entryMid);
+      const entryToStop = Math.abs(stopLoss - entryMid);
+      
+      // If risk-reward is poor, adjust stop loss
+      if (entryToStop > entryToTarget * 0.8) {
+        const maxRisk = entryToTarget * 0.6; // Allow max 0.6:1 risk-reward
+        if (action === 'BUY') {
+          stopLoss = entryMid - maxRisk;
+        } else {
+          stopLoss = entryMid + maxRisk;
+        }
+      }
+    }
+    
+    // Round to appropriate decimal places based on the entry price magnitude
+    const decimalPlaces = entryMid > 100 ? 1 : 4;
+    return Number(stopLoss.toFixed(decimalPlaces));
+  }
+
+  /**
    * Extract reasoning/analysis points
    */
   private static extractReasoning(text: string): string[] {
@@ -405,18 +458,101 @@ export class EnhancedSignalParser {
   }
 
   /**
-   * Convert parsed signal to TradeSignal format
+   * Convert parsed signal to TradeSignal format with automatic level calculation
    */
-  static toTradeSignal(parsed: ParsedSignalData): TradeSignal {
+  static toTradeSignal(parsed: ParsedSignalData, accountEquity?: number): TradeSignal {
+    let stopLoss = parsed.stopLoss || 0;
+    let targets = parsed.targets;
+
+    // If no stop loss provided and we have entry zone, calculate risk-based levels
+    if (!stopLoss && parsed.entryZone && parsed.entryZone.min > 0 && parsed.entryZone.max > 0) {
+      const levels = this.calculateRiskBasedLevels(parsed, accountEquity || 10000);
+      stopLoss = levels.stopLoss;
+      
+      // If no targets provided, use the calculated take profit
+      if (!targets || targets.length === 0) {
+        targets = [levels.takeProfit];
+      }
+
+      logger.info(`🎯 Auto-calculated levels for ${parsed.symbol}:`, {
+        entry: `${parsed.entryZone.min}-${parsed.entryZone.max}`,
+        stopLoss: stopLoss,
+        takeProfit: levels.takeProfit,
+        riskPercent: process.env.RISK_PERCENTAGE || '0.45%'
+      });
+    }
+
     return {
       symbol: parsed.symbol,
-      action: parsed.action === 'AUTO_DETECT' ? 'BUY' : parsed.action, // Default to BUY if auto-detected
+      action: parsed.action === 'AUTO_DETECT' ? 'BUY' : parsed.action,
       entryZone: parsed.entryZone || { min: 0, max: 0 },
-      stopLoss: parsed.stopLoss || 0,
-      targets: parsed.targets,
+      stopLoss: stopLoss,
+      targets: targets,
       confidence: parsed.confidence / 100,
       reason: parsed.reasoning.join('; '),
       plan: parsed.marketContext
     };
+  }
+
+  /**
+   * Calculate risk-based stop loss and take profit levels
+   */
+  private static calculateRiskBasedLevels(parsed: ParsedSignalData, accountEquity: number): {stopLoss: number, takeProfit: number} {
+    if (!parsed.entryZone || parsed.entryZone.min === 0 || parsed.entryZone.max === 0) {
+      return { stopLoss: 0, takeProfit: 0 };
+    }
+
+    // Use the middle of entry zone as entry price
+    const entryPrice = (parsed.entryZone.min + parsed.entryZone.max) / 2;
+    const direction = parsed.action?.toUpperCase();
+    
+    // Get risk percentage from environment (0.45% default)
+    const riskPercent = parseFloat(process.env.RISK_PERCENTAGE || '0.45');
+    const riskAmount = (accountEquity * riskPercent) / 100;
+    
+    // Get symbol information for accurate calculations
+    const symbolInfo = this.getSymbolInfo(parsed.symbol);
+    
+    // Calculate position size that would risk the target amount
+    // For XAUUSD: riskAmount / (stopLossDistance * contractSize * pipValue)
+    // We need to work backwards from desired risk amount to stop loss distance
+    
+    let stopLoss: number;
+    let takeProfit: number;
+
+    if (direction === 'BUY') {
+      // For buy trades, stop loss below entry, take profit above
+      // Use a reasonable stop loss distance (e.g., $20-30 for XAUUSD)
+      const stopLossDistance = parsed.symbol === 'XAUUSD' ? 25 : (entryPrice * 0.005); // $25 for gold, 0.5% for others
+      stopLoss = entryPrice - stopLossDistance;
+      takeProfit = entryPrice + stopLossDistance; // 1:1 ratio
+      
+    } else if (direction === 'SELL') {
+      const stopLossDistance = parsed.symbol === 'XAUUSD' ? 25 : (entryPrice * 0.005);
+      stopLoss = entryPrice + stopLossDistance;
+      takeProfit = entryPrice - stopLossDistance; // 1:1 ratio
+      
+    } else {
+      return { stopLoss: 0, takeProfit: 0 };
+    }
+
+    return {
+      stopLoss: parseFloat(stopLoss.toFixed(symbolInfo.digits)),
+      takeProfit: parseFloat(takeProfit.toFixed(symbolInfo.digits))
+    };
+  }
+
+  /**
+   * Get symbol-specific information for calculations
+   */
+  private static getSymbolInfo(symbol: string) {
+    const symbolMap: { [key: string]: any } = {
+      'XAUUSD': { digits: 2, pipSize: 0.01 },
+      'EURUSD': { digits: 5, pipSize: 0.00001 },
+      'GBPUSD': { digits: 5, pipSize: 0.00001 },
+      'USDJPY': { digits: 3, pipSize: 0.001 }
+    };
+
+    return symbolMap[symbol] || symbolMap['XAUUSD'];
   }
 }

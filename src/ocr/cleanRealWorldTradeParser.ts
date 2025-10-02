@@ -264,32 +264,55 @@ export class CleanRealWorldTradeParser {
     symbol: string
   ): { stopLoss: number; targets: number[] } {
     const entryMid = (entryZone.min + entryZone.max) / 2;
-    const zoneSize = entryZone.max - entryZone.min;
     
-    // Risk management: stop loss at 2x zone size or 1% of price
-    const riskDistance = Math.max(zoneSize * 2, entryMid * 0.01);
+    // Get risk percentage from environment (default 0.45%)
+    const riskPercent = parseFloat(process.env.RISK_PERCENTAGE || '0.45');
+    
+    // Calculate risk-based stop loss distance
+    // For XAUUSD: Use $25-30 as standard risk distance (good for 0.45% risk on $10k account)
+    // For forex pairs: Use percentage-based approach
+    let riskDistance: number;
+    
+    if (symbol === 'XAUUSD' || symbol === 'GOLD') {
+      // For Gold: $25-30 represents good risk for 0.45% on standard account
+      riskDistance = 25;
+    } else if (symbol.includes('JPY')) {
+      // For JPY pairs: 50-100 pips
+      riskDistance = entryMid * 0.005; // 0.5%
+    } else {
+      // For major pairs: 20-50 pips equivalent
+      riskDistance = entryMid * 0.003; // 0.3%
+    }
     
     let stopLoss: number;
     let targets: number[];
 
     if (action === 'BUY') {
+      // Stop loss below entry zone
       stopLoss = entryZone.min - riskDistance;
-      targets = [
-        entryMid + (riskDistance * 1.5), // 1.5R target
-        entryMid + (riskDistance * 3.0)  // 3R target
-      ];
+      // 1:1 Risk-Reward ratio target
+      targets = [entryMid + riskDistance]; // 1R target (1:1 RR)
     } else {
+      // Stop loss above entry zone  
       stopLoss = entryZone.max + riskDistance;
-      targets = [
-        entryMid - (riskDistance * 1.5), // 1.5R target
-        entryMid - (riskDistance * 3.0)  // 3R target
-      ];
+      // 1:1 Risk-Reward ratio target
+      targets = [entryMid - riskDistance]; // 1R target (1:1 RR)
     }
 
     // Round to appropriate decimal places
     const decimals = this.getDecimalPlaces(symbol);
     stopLoss = parseFloat(stopLoss.toFixed(decimals));
     targets = targets.map(t => parseFloat(t.toFixed(decimals)));
+
+    logger.info(`🎯 Calculated risk-based levels for ${symbol}:`, {
+      entryZone: `${entryZone.min}-${entryZone.max}`,
+      entryMid: entryMid,
+      stopLoss: stopLoss,
+      target: targets[0],
+      riskDistance: riskDistance,
+      riskPercent: `${riskPercent}%`,
+      riskReward: '1:1'
+    });
 
     return { stopLoss, targets };
   }

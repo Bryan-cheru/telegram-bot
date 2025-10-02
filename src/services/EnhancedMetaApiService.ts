@@ -51,55 +51,146 @@ export class EnhancedMetaApiService {
    * Execute enhanced trade with comprehensive risk management
    */
   async executeEnhancedTrade(request: EnhancedTradeRequest): Promise<TradeExecutionResult> {
+    let connection: any = null;
+    
     try {
       const { signal, accountId, maxSlippage = 3 } = request;
       const riskPercent = request.riskPercent || parseFloat(process.env.RISK_PERCENTAGE || '0.45');
       
-      // Convert symbol for InstantFunding if needed
-      const convertedSignal = await this.convertSymbolForBroker(signal, accountId);
+      // 🔍 VALIDATION GATE 1: Input Signal
+      logger.info(`🔍 VALIDATION GATE 1: Input Signal Validation`);
+      if (!signal) {
+        logger.error(`❌ GATE 1 FAILED: Signal is null/undefined`);
+        return { success: false, message: 'No signal provided' };
+      }
       
-      logger.info(`🚀 Enhanced execution: ${convertedSignal.symbol} on account ${accountId}`);
+      if (!signal.symbol || !signal.action) {
+        logger.error(`❌ GATE 1 FAILED: Signal missing required fields`, {
+          hasSymbol: !!signal.symbol,
+          hasAction: !!signal.action,
+          signal: signal
+        });
+        return { success: false, message: 'Signal missing required fields (symbol or action)' };
+      }
       
-      // Get account and RPC connection
+      logger.info(`✅ GATE 1 PASSED: Signal validation successful`, {
+        symbol: signal.symbol,
+        action: signal.action,
+        hasStopLoss: !!signal.stopLoss,
+        hasTargets: !!signal.targets?.length,
+        hasEntryZone: !!(signal.entryZone?.min && signal.entryZone?.max)
+      });
+      
+      // 🔗 CONNECTION SETUP: Single connection for entire trade lifecycle
+      logger.info(`🔗 Setting up connection to account ${accountId}`);
       const account = await this.api.metatraderAccountApi.getAccount(accountId);
-      const connection = account.getRPCConnection();
+      connection = account.getRPCConnection();
       await connection.connect();
+      await connection.waitSynchronized();
+      logger.info(`✅ Connection established and synchronized`);
+      
+      // 🔄 SYMBOL CONVERSION: Using the established connection
+      logger.info(`🔄 Converting symbol for broker compatibility`);
+      const convertedSignal = await this.convertSymbolForBroker(signal, connection);
+      
+      // 🔍 VALIDATION GATE 2: Converted Signal
+      logger.info(`🔍 VALIDATION GATE 2: Converted Signal Validation`);
+      if (!convertedSignal || !convertedSignal.symbol || !convertedSignal.action) {
+        logger.error(`❌ GATE 2 FAILED: Signal corruption during conversion`, {
+          originalSymbol: signal.symbol,
+          convertedSignal: convertedSignal
+        });
+        return { success: false, message: 'Signal corrupted during symbol conversion' };
+      }
+      
+      logger.info(`✅ GATE 2 PASSED: Converted signal validation successful`, {
+        originalSymbol: signal.symbol,
+        convertedSymbol: convertedSignal.symbol,
+        symbolChanged: signal.symbol !== convertedSignal.symbol
+      });
 
-      // Pre-trade risk validation
+      // 🔍 VALIDATION GATE 3: Risk Management
+      logger.info(`🔍 VALIDATION GATE 3: Risk Management Validation`);
       const riskCheck = await this.validateTradeRisk(connection, convertedSignal, riskPercent);
       if (!riskCheck.allowed) {
+        logger.error(`❌ GATE 3 FAILED: ${riskCheck.reason}`);
         return { success: false, message: `Risk check failed: ${riskCheck.reason}` };
       }
+      logger.info(`✅ GATE 3 PASSED: Risk validation successful`);
 
-      // Calculate position size
+      // 📊 POSITION SIZE CALCULATION
+      logger.info(`📊 Calculating position size with ${riskPercent}% risk`);
       const positionSize = await this.calculatePositionSize(connection, convertedSignal, riskPercent);
       if (positionSize <= 0) {
+        logger.error(`❌ Position size calculation failed: ${positionSize}`);
         return { success: false, message: 'Invalid position size calculated' };
       }
+      logger.info(`✅ Position size calculated: ${positionSize} lots`);
 
-      // Execute the trade
+      // 🔍 VALIDATION GATE 4: Final Trade Parameters
+      logger.info(`🔍 VALIDATION GATE 4: Final Trade Parameters Validation`);
+      const takeProfit = this.calculate1To1TakeProfit(convertedSignal);
+      
+      if (!convertedSignal.stopLoss || !takeProfit) {
+        logger.error(`❌ GATE 4 FAILED: Missing stop loss or take profit`, {
+          stopLoss: convertedSignal.stopLoss,
+          takeProfit: takeProfit
+        });
+        return { success: false, message: 'Missing stop loss or take profit levels' };
+      }
+      
+      logger.info(`✅ GATE 4 PASSED: All trade parameters valid`, {
+        symbol: convertedSignal.symbol,
+        action: convertedSignal.action,
+        volume: positionSize,
+        stopLoss: convertedSignal.stopLoss,
+        takeProfit: takeProfit
+      });
+
+      // 🚀 ATOMIC TRADE EXECUTION
+      logger.info(`🚀 Executing atomic trade`);
       const result = await this.executeTrade(connection, convertedSignal, positionSize, maxSlippage);
       
       if (result.success) {
+        logger.info(`✅ ATOMIC TRADE SUCCESS: Trade executed successfully`, {
+          ticket: result.ticket,
+          symbol: convertedSignal.symbol,
+          action: convertedSignal.action,
+          volume: positionSize,
+          executionPrice: result.executionPrice,
+          riskPercent: riskPercent + '%'
+        });
+        
         // Start monitoring this account
         setTimeout(() => this.monitorAccountRisk(accountId), 5000);
-        
-        logger.info(`✅ Enhanced trade executed:`, {
-          symbol: signal.symbol,
-          ticket: result.ticket,
-          size: positionSize,
-          risk: riskPercent + '%'
-        });
+      } else {
+        logger.error(`❌ ATOMIC TRADE FAILED:`, result.message);
       }
 
       return { ...result, positionSize };
 
-    } catch (error) {
-      logger.error('Enhanced trade execution failed:', error);
+    } catch (error: any) {
+      logger.error('❌ CRITICAL: Enhanced trade execution error:', {
+        message: error.message,
+        stack: error.stack,
+        accountId: request.accountId,
+        symbol: request.signal?.symbol
+      });
+      
       return {
         success: false,
-        message: `Execution error: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Execution failed: ${error.message || 'Unknown error'}`
       };
+    } finally {
+      // 🧹 CLEANUP: Ensure connection is properly closed if needed
+      if (connection) {
+        try {
+          // Note: MetaAPI connections are typically kept alive, but log the cleanup
+          logger.info(`🧹 Connection cleanup completed for account ${request.accountId}`);
+        } catch (cleanupError) {
+          logger.warn(`⚠️ Connection cleanup warning:`, cleanupError);
+        }
+      }
     }
   }
 
@@ -180,21 +271,76 @@ export class EnhancedMetaApiService {
       const accountInfo = await connection.getAccountInformation();
       if (!accountInfo) return 0.01;
 
+      // Get symbol specification to get accurate contract size and limits
+      const symbolSpec = await connection.getSymbolSpecification(signal.symbol);
+      
       const accountEquity = accountInfo.equity || accountInfo.balance;
       const riskAmount = (accountEquity * riskPercent) / 100;
       
-      // Calculate stop loss distance in pips
-      const stopLossPips = this.calculateStopLossPips(signal);
+      // Calculate entry price
+      const entryPrice = signal.entryPrice || (signal.entryZone?.min && signal.entryZone?.max ? 
+        (signal.entryZone.min + signal.entryZone.max) / 2 : 0);
       
-      // Position sizing calculation
-      const pipValue = signal.symbol.includes('JPY') ? 0.01 : 0.0001;
-      const positionSize = riskAmount / (stopLossPips * pipValue * 100000);
+      if (!entryPrice || !signal.stopLoss) {
+        logger.warn('Missing entry price or stop loss for position sizing');
+        return symbolSpec.minVolume || 0.01;
+      }
       
-      // Apply maximum limits
-      const maxSize = (accountEquity * this.riskSettings.maxPositionSizePercent) / 100 / 100000;
-      const finalSize = Math.min(positionSize, maxSize);
+      // Calculate stop loss distance in actual price points
+      const stopLossDistance = Math.abs(entryPrice - signal.stopLoss);
       
-      return Math.max(0.01, Math.round(finalSize * 100) / 100);
+      // For different asset types, calculate position size differently
+      let positionSize: number;
+      
+      if (signal.symbol.includes('XAU') || signal.symbol.toLowerCase().includes('gold')) {
+        // Gold: Contract size is typically 100 oz, each $1 move = $100 per lot
+        const contractSize = symbolSpec.contractSize || 100;
+        positionSize = riskAmount / (stopLossDistance * contractSize);
+      } else if (signal.symbol.includes('JPY')) {
+        // Japanese Yen pairs: pip = 0.01
+        const pipValue = 0.01;
+        const contractSize = symbolSpec.contractSize || 100000;
+        const stopLossPips = stopLossDistance / pipValue;
+        positionSize = riskAmount / (stopLossPips * pipValue * contractSize / 100000);
+      } else {
+        // Standard forex pairs: pip = 0.0001
+        const pipValue = 0.0001;
+        const contractSize = symbolSpec.contractSize || 100000;
+        const stopLossPips = stopLossDistance / pipValue;
+        positionSize = riskAmount / (stopLossPips * pipValue * contractSize / 100000);
+      }
+      
+      // Apply symbol-specific limits from broker
+      const minVolume = symbolSpec.minVolume || 0.01;
+      const maxVolume = symbolSpec.maxVolume || 10;
+      
+      // Apply risk management limits
+      const maxRiskSize = (accountEquity * this.riskSettings.maxPositionSizePercent) / 100;
+      const maxPositionByRisk = maxRiskSize / (stopLossDistance * (symbolSpec.contractSize || 100000) / 100000);
+      
+      // Take the minimum of all limits
+      const finalSize = Math.min(
+        positionSize,
+        maxVolume,
+        maxPositionByRisk
+      );
+      
+      // Ensure minimum and round to valid step
+      const volumeStep = symbolSpec.volumeStep || 0.01;
+      const validSize = Math.max(minVolume, Math.round(finalSize / volumeStep) * volumeStep);
+      
+      logger.info(`📊 Position Size Calculation:`, {
+        symbol: signal.symbol,
+        riskAmount: riskAmount.toFixed(2),
+        stopLossDistance: stopLossDistance.toFixed(2),
+        contractSize: symbolSpec.contractSize,
+        calculatedSize: positionSize.toFixed(4),
+        maxVolume: maxVolume,
+        finalSize: validSize.toFixed(2),
+        limits: `${minVolume}-${maxVolume}`
+      });
+      
+      return validSize;
       
     } catch (error) {
       logger.error('Position size calculation error:', error);
@@ -205,12 +351,17 @@ export class EnhancedMetaApiService {
   /**
    * Convert symbol for broker using MetaAPI's official approach
    */
-  private async convertSymbolForBroker(signal: TradeSignal, accountId: string): Promise<TradeSignal> {
+  private async convertSymbolForBroker(signal: TradeSignal, connection: any): Promise<TradeSignal> {
     try {
-      const account = await this.api.metatraderAccountApi.getAccount(accountId);
-      const connection = account.getRPCConnection();
+      // Validate input signal first
+      if (!signal || !signal.symbol) {
+        logger.error('❌ Invalid signal passed to convertSymbolForBroker:', signal);
+        throw new Error('Invalid signal object');
+      }
       
-      // Get available symbols from broker (official MetaAPI approach)
+      logger.info('🔄 Converting symbol for broker:', signal.symbol);
+      
+      // Get available symbols from broker (reuse existing connection)
       const availableSymbols = await connection.getSymbols();
       
       // First, try the symbol as-is
@@ -249,7 +400,20 @@ export class EnhancedMetaApiService {
       
     } catch (error) {
       logger.warn('Symbol lookup failed, using original:', error);
-      return signal;
+      
+      // Ensure we return the original signal safely
+      if (!signal) {
+        throw new Error('Signal object is null - cannot proceed with trade');
+      }
+      
+      logger.info('🔄 Returning original signal (fallback):', {
+        symbol: signal.symbol,
+        action: signal.action,
+        entryPrice: signal.entryPrice,
+        stopLoss: signal.stopLoss
+      });
+      
+      return { ...signal }; // Return a copy to prevent mutations
     }
   }
 
@@ -259,12 +423,18 @@ export class EnhancedMetaApiService {
    * Calculate 1:1 risk-reward take profit
    */
   private calculate1To1TakeProfit(signal: TradeSignal): number {
-    const entryPrice = signal.entryPrice || 0;
+    // Use entryPrice if available, otherwise use middle of entryZone
+    let entryPrice = signal.entryPrice;
+    if (!entryPrice && signal.entryZone) {
+      entryPrice = (signal.entryZone.min + signal.entryZone.max) / 2;
+    }
+    
     const stopLoss = signal.stopLoss;
     
-    if (!entryPrice || !stopLoss) {
+    if (!entryPrice || !stopLoss || stopLoss === 0) {
       logger.warn('Missing entry price or stop loss for 1:1 calculation');
-      return signal.targets?.[0] || entryPrice;
+      // Return first target if available, otherwise use entry price
+      return signal.targets?.[0] || entryPrice || 0;
     }
     
     const stopLossDistance = Math.abs(entryPrice - stopLoss);
@@ -294,61 +464,101 @@ export class EnhancedMetaApiService {
       try {
         // Calculate 1:1 risk-reward take profit
         const takeProfit = this.calculate1To1TakeProfit(signal);
-        let result;
         
-        if (signal.action.toLowerCase() === 'buy') {
-          result = await connection.createMarketBuyOrder(
-            signal.symbol,
-            positionSize,
-            signal.stopLoss,
-            takeProfit,
-            {
-              comment: `Enhanced-Signal-${Date.now()}`,
-              slippage: maxSlippage,
-              fillingMode: 'ORDER_FILLING_IOC'
-            }
-          );
+        // Log the trade parameters before execution
+        logger.info(`🎯 Trade parameters for MetaAPI (Attempt ${attempt}):`, {
+          symbol: signal.symbol,
+          action: signal.action.toLowerCase(),
+          positionSize: positionSize,
+          stopLoss: signal.stopLoss,
+          takeProfit: takeProfit,
+          slippage: maxSlippage
+        });
+        
+        // Calculate entry price for limit orders
+        let entryPrice: number;
+        if (signal.entryPrice) {
+          entryPrice = signal.entryPrice;
+        } else if (signal.entryZone) {
+          // Use the middle of the entry zone
+          entryPrice = (signal.entryZone.min + signal.entryZone.max) / 2;
         } else {
-          result = await connection.createMarketSellOrder(
-            signal.symbol,
-            positionSize,
-            signal.stopLoss,
-            takeProfit,
-            {
-              comment: `Enhanced-Signal-${Date.now()}`,
-              slippage: maxSlippage,
-              fillingMode: 'ORDER_FILLING_IOC'
-            }
-          );
+          // Get current price and adjust for limit order
+          const currentPrice = await connection.getSymbolPrice(signal.symbol);
+          if (signal.action.toLowerCase() === 'buy') {
+            // For BUY LIMIT: set entry price slightly below current ask
+            entryPrice = currentPrice.ask - 1; // $1 below current price
+          } else {
+            // For SELL LIMIT: set entry price slightly above current bid
+            entryPrice = currentPrice.bid + 1; // $1 above current price
+          }
         }
 
-        if (result?.positionId) {
+        // Execute using LIMIT orders instead of MARKET orders
+        let result;
+        const orderOptions = {
+          comment: `Enhanced-Signal-${Date.now()}`
+          // Note: slippage is not used for limit orders
+        };
+        
+        logger.info(`📋 Creating ${signal.action} LIMIT order at $${entryPrice}`);
+        
+        if (signal.action.toLowerCase() === 'buy') {
+          result = await connection.createLimitBuyOrder(
+            signal.symbol,
+            positionSize,
+            entryPrice,      // Entry price for limit order
+            signal.stopLoss,
+            takeProfit,
+            orderOptions
+          );
+        } else if (signal.action.toLowerCase() === 'sell') {
+          result = await connection.createLimitSellOrder(
+            signal.symbol,
+            positionSize,
+            entryPrice,      // Entry price for limit order
+            signal.stopLoss,
+            takeProfit,
+            orderOptions
+          );
+        } else {
+          throw new Error(`Invalid trade action: ${signal.action}. Must be BUY or SELL`);
+        }
+
+        logger.info(`✅ Limit order execution result:`, result);
+
+        // For limit orders, we get an orderId (pending order) rather than positionId
+        if (result?.orderId || result?.positionId) {
           return {
             success: true,
-            ticket: result.positionId,
-            message: 'Trade executed successfully',
-            executionPrice: result.price || signal.entryPrice
+            ticket: result.orderId || result.positionId,
+            message: `${signal.action} LIMIT order placed successfully at $${entryPrice}`,
+            executionPrice: entryPrice // The limit price we set
           };
         }
 
-        throw new Error('No position ID returned from trade execution');
+        throw new Error(`Limit order failed: ${result?.description || 'No order ID returned'}`);
 
       } catch (error: any) {
-        logger.warn(`Trade attempt ${attempt}/${maxRetries} failed:`, error.message);
+        const errorMessage = error?.message || error?.toString() || 'Unknown error';
+        logger.warn(`❌ Trade attempt ${attempt}/${maxRetries} failed:`, errorMessage);
         
         if (attempt === maxRetries) {
           return {
             success: false,
-            message: `Trade failed after ${maxRetries} attempts: ${error.message}`
+            message: `Trade failed after ${maxRetries} attempts: ${errorMessage}`
           };
         }
 
-        // Wait before retry
+        // Wait before retry (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       }
     }
 
-    return { success: false, message: 'Max retries exceeded' };
+    return { 
+      success: false, 
+      message: 'Max retries exceeded - trade execution failed' 
+    };
   }
 
   /**
@@ -454,7 +664,7 @@ export class EnhancedMetaApiService {
   }
 
   /**
-   * Calculate stop loss distance in pips
+   * Calculate stop loss distance in pips (for reference only)
    */
   private calculateStopLossPips(signal: TradeSignal): number {
     if (!signal.entryZone?.min || !signal.stopLoss) {
@@ -462,7 +672,16 @@ export class EnhancedMetaApiService {
     }
 
     const entryPrice = (signal.entryZone.min + signal.entryZone.max) / 2;
-    const pipValue = signal.symbol.includes('JPY') ? 0.01 : 0.0001;
+    
+    // Different pip values for different instruments
+    let pipValue: number;
+    if (signal.symbol.includes('XAU') || signal.symbol.toLowerCase().includes('gold')) {
+      pipValue = 0.01; // Gold: $0.01 per pip
+    } else if (signal.symbol.includes('JPY')) {
+      pipValue = 0.01; // JPY pairs: 0.01
+    } else {
+      pipValue = 0.0001; // Standard forex: 0.0001
+    }
     
     return Math.abs(entryPrice - signal.stopLoss) / pipValue;
   }

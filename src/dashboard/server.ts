@@ -9,6 +9,7 @@ import { generalRateLimit, tradingRateLimit, authRateLimit } from '../middleware
 import { InputValidator, ValidationRules } from '../middleware/validation';
 import { authenticateToken, optionalAuth } from '../middleware/auth';
 import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
+import { UserAccountManagementService } from '../services/UserAccountManagementService';
 
 const app = express();
 
@@ -1182,13 +1183,13 @@ app.post('/api/test-connection', async (req, res) => {
   }
 });
 
-// Account configuration endpoints
+// Account configuration endpoints (deprecated - use user account management instead)
 app.get('/api/config/account', (req, res) => {
   res.json({
     success: true,
+    message: 'Use /api/user/accounts for account management',
     config: {
       metaApiToken: process.env.METAAPI_TOKEN ? '***' + process.env.METAAPI_TOKEN.slice(-4) : '',
-      accountId: process.env.METAAPI_ACCOUNT_ID || '',
       botToken: process.env.BOT_TOKEN ? '***' + process.env.BOT_TOKEN.slice(-4) : '',
       channelId: process.env.ALLOWED_CHANNEL_ID || '',
       maxTradeSize: config.trading.maxTradeSize,
@@ -1236,6 +1237,165 @@ app.post('/api/config/account', (req, res) => {
     });
   }
 });
+
+// ========== USER METAAPI ACCOUNT MANAGEMENT ==========
+const userAccountService = new UserAccountManagementService();
+
+// Initialize the service
+setTimeout(async () => {
+  try {
+    await userAccountService.initialize();
+    console.log('✅ User Account Management Service initialized');
+  } catch (error) {
+    console.error('❌ Failed to initialize User Account Management Service:', error);
+  }
+}, 2000);
+
+// Get user's MetaAPI accounts
+app.get('/api/user/accounts', 
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 }
+  ]),
+  async (req, res) => {
+    try {
+      const { userId } = req.query;
+      
+      const result = await userAccountService.getUserAccounts(userId as string);
+      
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to retrieve user accounts: ' + error.message
+      });
+    }
+  }
+);
+
+// Add a new MetaAPI account for user
+app.post('/api/user/accounts',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true },
+    { field: 'brokerServer', type: 'string', required: true, min: 1 },
+    { field: 'accountType', type: 'string', required: true },
+    { field: 'displayName', type: 'string', required: false, max: 100 }
+  ]),
+  async (req, res) => {
+    try {
+      const { userId, accountId, brokerServer, accountType, displayName } = req.body;
+      
+      // Validate account type
+      if (!['DEMO', 'LIVE'].includes(accountType)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Account type must be DEMO or LIVE'
+        });
+      }
+
+      const result = await userAccountService.addUserAccount({
+        userId,
+        accountId,
+        brokerServer,
+        accountType,
+        displayName
+      });
+      
+      if (result.success) {
+        res.status(201).json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to add user account: ' + error.message
+      });
+    }
+  }
+);
+
+// Remove user's MetaAPI account
+app.delete('/api/user/accounts/:accountId',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true }
+  ]),
+  async (req, res) => {
+    try {
+      const { accountId } = req.params;
+      const { userId } = req.query;
+      
+      const result = await userAccountService.removeUserAccount(userId as string, accountId);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to remove user account: ' + error.message
+      });
+    }
+  }
+);
+
+// Update account status (activate/deactivate)
+app.patch('/api/user/accounts/:accountId/status',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true },
+    { field: 'isActive', type: 'boolean', required: true }
+  ]),
+  async (req, res) => {
+    try {
+      const { accountId } = req.params;
+      const { userId, isActive } = req.body;
+      
+      const result = await userAccountService.updateAccountStatus(userId, accountId, isActive);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update account status: ' + error.message
+      });
+    }
+  }
+);
+
+// Test account connection
+app.post('/api/user/accounts/:accountId/test',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true }
+  ]),
+  async (req, res) => {
+    try {
+      const { accountId } = req.params;
+      const { userId } = req.body;
+      
+      const result = await userAccountService.testAccountConnection(userId, accountId);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to test account connection: ' + error.message
+      });
+    }
+  }
+);
 
 app.delete('/api/logs', (req, res) => {
   // Clear the dashboard logs array

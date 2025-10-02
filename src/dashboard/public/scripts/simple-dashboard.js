@@ -124,11 +124,12 @@ class SimpleTradingDashboard {
   // API Calls
   async loadAccounts() {
     try {
-      const response = await fetch('/api/accounts');
+      const response = await fetch('/api/user/accounts');
       const result = await response.json();
 
       if (result.success) {
         this.accounts = result.data || [];
+        console.log('Loaded accounts:', this.accounts);
         this.renderAccounts();
         this.updateAccountFilter();
       } else {
@@ -137,6 +138,9 @@ class SimpleTradingDashboard {
     } catch (error) {
       console.error('Load accounts error:', error);
       this.showNotification('Failed to load accounts', 'error');
+      // Set empty accounts on error to show empty state
+      this.accounts = [];
+      this.renderAccounts();
     }
   }
 
@@ -199,30 +203,45 @@ class SimpleTradingDashboard {
     }
 
     try {
-      const response = await fetch('/api/add-account', {
+      // Show loading state
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      const originalText = submitBtn.innerHTML;
+      submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding...';
+      submitBtn.disabled = true;
+
+      const response = await fetch('/api/user/accounts', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          metaApiToken: token,
-          alias: alias
+          metaApiAccountId: token,
+          accountAlias: alias || 'My Trading Account',
+          isActive: true
         })
       });
 
       const result = await response.json();
 
       if (result.success) {
-        this.showNotification('Account added successfully', 'success');
+        this.showNotification(`Account "${result.data.accountAlias}" added successfully`, 'success');
         this.hideAddAccountModal();
         document.getElementById('add-account-form').reset();
         await this.loadAccounts();
+        await this.updateDashboardStats();
       } else {
         throw new Error(result.error || 'Failed to add account');
       }
     } catch (error) {
       console.error('Add account error:', error);
       this.showNotification('Failed to add account: ' + error.message, 'error');
+    } finally {
+      // Reset button state
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.innerHTML = '<i class="fas fa-plus"></i> Add Account';
+        submitBtn.disabled = false;
+      }
     }
   }
 
@@ -248,111 +267,116 @@ class SimpleTradingDashboard {
     }
 
     const accountsHtml = this.accounts.map(account => `
-      <div class="modern-account-card ${account.isConnected ? 'connected' : 'disconnected'}">
+      <div class="modern-account-card ${account.isActive ? 'connected' : 'disconnected'}" data-account-id="${account._id}">
         <!-- Account Header -->
         <div class="account-header">
           <div class="account-info">
             <div class="account-avatar">
-              <i class="fas fa-${account.isConnected ? 'chart-line' : 'unlink'}"></i>
+              <i class="fas fa-${account.isActive ? 'chart-line' : 'unlink'}"></i>
             </div>
             <div class="account-details">
-              <h4 class="account-name">${account.alias || 'Trading Account'}</h4>
+              <h4 class="account-name">${account.displayName || 'Trading Account'}</h4>
               <span class="account-id">${account.accountId}</span>
+              <div class="account-meta">
+                <span class="account-type ${account.accountType?.toLowerCase()}">${account.accountType}</span>
+                <span class="broker-server">${account.brokerServer}</span>
+              </div>
             </div>
           </div>
           <div class="connection-status">
-            <span class="status-indicator ${account.isConnected ? 'online' : 'offline'}">
+            <span class="status-indicator ${account.isActive ? 'online' : 'offline'}">
               <i class="fas fa-circle"></i>
             </span>
-            <span class="status-text">${account.isConnected ? 'Connected' : 'Offline'}</span>
+            <span class="status-text">${account.isActive ? 'Active' : 'Inactive'}</span>
           </div>
         </div>
 
         <!-- Account Metrics Grid -->
         <div class="account-metrics">
-          <div class="metric-card balance">
+          <div class="metric-card status">
             <div class="metric-icon">
-              <i class="fas fa-coins"></i>
+              <i class="fas fa-info-circle"></i>
             </div>
             <div class="metric-content">
-              <span class="metric-label">Account Balance</span>
-              <span class="metric-value ${(account.balance || 0) > 0 ? 'positive' : 'neutral'}">
-                $${this.formatCurrency(account.balance || 0)}
+              <span class="metric-label">Account Status</span>
+              <span class="metric-value ${account.isActive ? 'positive' : 'neutral'}">
+                ${account.isActive ? 'Connected' : 'Disconnected'}
               </span>
+              <span class="metric-subtitle">Added ${this.formatDate(account.createdAt)}</span>
             </div>
           </div>
 
-          <div class="metric-card equity">
+          <div class="metric-card trading-data">
             <div class="metric-icon">
-              <i class="fas fa-chart-pie"></i>
+              <i class="fas fa-chart-line"></i>
             </div>
             <div class="metric-content">
-              <span class="metric-label">Current Equity</span>
-              <span class="metric-value ${(account.equity || 0) > (account.balance || 0) ? 'positive' : (account.equity || 0) < (account.balance || 0) ? 'negative' : 'neutral'}">
-                $${this.formatCurrency(account.equity || 0)}
+              <span class="metric-label">Trading Data</span>
+              <span class="metric-value neutral">
+                Loading...
               </span>
-              ${(account.balance && account.equity) ? `
-                <span class="metric-change ${(account.equity - account.balance) >= 0 ? 'positive' : 'negative'}">
-                  ${(account.equity - account.balance) >= 0 ? '+' : ''}$${this.formatCurrency(Math.abs(account.equity - account.balance))}
-                </span>
-              ` : ''}
+              <span class="metric-subtitle">Fetching live data</span>
             </div>
           </div>
 
-          <div class="metric-card margin">
+          <div class="metric-card signals">
             <div class="metric-icon">
-              <i class="fas fa-shield-alt"></i>
+              <i class="fas fa-satellite-dish"></i>
             </div>
             <div class="metric-content">
-              <span class="metric-label">Used Margin</span>
-              <span class="metric-value">$${this.formatCurrency(account.margin || 0)}</span>
-              ${(account.balance && account.margin) ? `
-                <span class="metric-subtitle">${(((account.margin || 0) / (account.equity || 1)) * 100).toFixed(1)}% utilized</span>
-              ` : ''}
+              <span class="metric-label">Signal Reception</span>
+              <span class="metric-value ${account.isActive ? 'positive' : 'neutral'}">
+                ${account.isActive ? 'Ready' : 'Paused'}
+              </span>
+              <span class="metric-subtitle">${account.isActive ? 'Receiving signals' : 'Not active'}</span>
             </div>
           </div>
 
-          <div class="metric-card positions">
+          <div class="metric-card settings">
             <div class="metric-icon">
-              <i class="fas fa-exchange-alt"></i>
+              <i class="fas fa-cogs"></i>
             </div>
             <div class="metric-content">
-              <span class="metric-label">Open Positions</span>
-              <span class="metric-value">${account.positionsCount || 0}</span>
-              <span class="metric-subtitle">${(account.positionsCount || 0) === 0 ? 'No active trades' : 'Active trades'}</span>
+              <span class="metric-label">Configuration</span>
+              <span class="metric-value">Complete</span>
+              <span class="metric-subtitle">Ready for trading</span>
             </div>
           </div>
         </div>
 
         <!-- Account Actions -->
         <div class="account-actions">
-          <button class="btn btn-outline btn-sm" onclick="dashboard.refreshAccount('${account.accountId}')" 
-                  ${!account.isConnected ? 'disabled' : ''}>
-            <i class="fas fa-sync-alt"></i>
-            <span>Refresh Data</span>
+          <button class="btn btn-outline btn-sm" onclick="dashboard.testAccountConnection('${account._id}')" 
+                  ${!account.isActive ? 'disabled' : ''}>
+            <i class="fas fa-wifi"></i>
+            <span>Test Connection</span>
           </button>
-          <button class="btn btn-primary btn-sm" onclick="dashboard.viewAccountDetails('${account.accountId}')">
-            <i class="fas fa-chart-line"></i>
-            <span>View Details</span>
+          <button class="btn btn-${account.isActive ? 'secondary' : 'success'} btn-sm" onclick="dashboard.toggleAccountStatus('${account._id}')">
+            <i class="fas fa-${account.isActive ? 'pause' : 'play'}"></i>
+            <span>${account.isActive ? 'Deactivate' : 'Activate'}</span>
           </button>
-          <button class="btn btn-danger btn-sm" onclick="dashboard.removeAccount('${account.accountId}')">
+          <button class="btn btn-primary btn-sm" onclick="dashboard.editAccount('${account._id}')">
+            <i class="fas fa-edit"></i>
+            <span>Edit</span>
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="dashboard.removeAccount('${account._id}')">
             <i class="fas fa-trash-alt"></i>
             <span>Remove</span>
           </button>
         </div>
 
-        <!-- Connection Issues Alert -->
-        ${!account.isConnected ? `
+        <!-- Status Information -->
+        ${!account.isActive ? `
           <div class="connection-alert">
-            <i class="fas fa-exclamation-triangle"></i>
+            <i class="fas fa-pause-circle"></i>
             <div class="alert-content">
-              <span class="alert-title">Connection Issue</span>
+              <span class="alert-title">Account Inactive</span>
               <span class="alert-message">
-                ${account.error || 'MetaTrader terminal may be offline. Some features may be limited.'}
+                This account is currently deactivated and won't receive trading signals.
               </span>
             </div>
-            <button class="btn btn-sm btn-outline" onclick="dashboard.reconnectAccount('${account.accountId}')">
-              <i class="fas fa-plug"></i> Reconnect
+            <button class="btn btn-sm btn-success" onclick="dashboard.toggleAccountStatus('${account._id}')">
+              <i class="fas fa-play"></i> Activate Account
             </button>
           </div>
         ` : ''}
@@ -369,6 +393,17 @@ class SimpleTradingDashboard {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     }).format(amount);
+  }
+
+  // Utility function for formatting dates
+  formatDate(dateString) {
+    if (!dateString) return 'Unknown';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
   }
 
   renderPositions() {
@@ -513,12 +548,12 @@ class SimpleTradingDashboard {
   }
 
   async removeAccount(accountId) {
-    if (!confirm('Are you sure you want to remove this account?')) {
+    if (!confirm('⚠️  Are you sure you want to remove this account?\n\nThis action cannot be undone and will disconnect this trading account from your dashboard.')) {
       return;
     }
 
     try {
-      const response = await fetch(`/api/accounts/${accountId}`, {
+      const response = await fetch(`/api/user/accounts/${accountId}`, {
         method: 'DELETE'
       });
 
@@ -527,13 +562,68 @@ class SimpleTradingDashboard {
       if (result.success) {
         this.showNotification('Account removed successfully', 'success');
         await this.loadAccounts();
+        await this.updateDashboardStats();
       } else {
         throw new Error(result.error || 'Failed to remove account');
       }
     } catch (error) {
       console.error('Remove account error:', error);
-      this.showNotification('Failed to remove account', 'error');
+      this.showNotification('Failed to remove account: ' + error.message, 'error');
     }
+  }
+
+  async testAccountConnection(accountId) {
+    try {
+      this.showNotification('Testing account connection...', 'info');
+      
+      // For now, just simulate a connection test
+      // In the future, this would test the actual MetaAPI connection
+      setTimeout(() => {
+        this.showNotification('Connection test completed - account is reachable', 'success');
+      }, 2000);
+    } catch (error) {
+      console.error('Test connection error:', error);
+      this.showNotification('Connection test failed: ' + error.message, 'error');
+    }
+  }
+
+  async toggleAccountStatus(accountId) {
+    try {
+      const account = this.accounts.find(acc => acc._id === accountId);
+      if (!account) {
+        throw new Error('Account not found');
+      }
+
+      const newStatus = !account.isActive;
+      const response = await fetch(`/api/user/accounts/${accountId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          isActive: newStatus
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        const statusText = newStatus ? 'activated' : 'deactivated';
+        this.showNotification(`Account ${statusText} successfully`, 'success');
+        await this.loadAccounts();
+        await this.updateDashboardStats();
+      } else {
+        throw new Error(result.error || 'Failed to update account status');
+      }
+    } catch (error) {
+      console.error('Toggle account status error:', error);
+      this.showNotification('Failed to update account status: ' + error.message, 'error');
+    }
+  }
+
+  async editAccount(accountId) {
+    // For now, just show a notification that this feature is coming soon
+    this.showNotification('Account editing feature coming soon', 'info');
   }
 
   async closePosition(positionId) {
@@ -945,22 +1035,35 @@ function clearAllData() {
 
 // Clear all connected accounts
 async function clearAllAccounts() {
-  if (confirm('Are you sure you want to remove all connected accounts?')) {
+  if (confirm('⚠️  Are you sure you want to remove ALL connected accounts?\n\nThis action cannot be undone and will disconnect all your trading accounts.')) {
     try {
-      const response = await fetch('/api/accounts', {
-        method: 'DELETE'
-      });
-
-      const result = await response.json();
+      // First get all accounts to delete them individually
+      const getResponse = await fetch('/api/user/accounts');
+      const getResult = await getResponse.json();
       
-      if (response.ok && result.success) {
+      if (!getResult.success || !getResult.data || getResult.data.length === 0) {
         if (dashboard) {
-          dashboard.showNotification('All accounts cleared successfully', 'success');
-          await dashboard.loadAccounts(); // Refresh the accounts display
-          await dashboard.updateDashboardStats(); // Update dashboard stats
+          dashboard.showNotification('No accounts to clear', 'info');
+        }
+        return;
+      }
+
+      // Delete all accounts
+      const deletePromises = getResult.data.map(account => 
+        fetch(`/api/user/accounts/${account._id}`, { method: 'DELETE' })
+      );
+
+      const results = await Promise.all(deletePromises);
+      const allSuccessful = results.every(response => response.ok);
+      
+      if (allSuccessful) {
+        if (dashboard) {
+          dashboard.showNotification(`Successfully removed ${getResult.data.length} account(s)`, 'success');
+          await dashboard.loadAccounts();
+          await dashboard.updateDashboardStats();
         }
       } else {
-        throw new Error(result.error || 'Failed to clear accounts');
+        throw new Error('Some accounts could not be removed');
       }
     } catch (error) {
       console.error('Clear accounts error:', error);

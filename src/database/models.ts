@@ -218,6 +218,7 @@ export class DatabaseModels {
   private static models: {
     TradingUser?: Model<ITradingUser>;
     SignalHistory?: Model<ISignalHistory>;
+    UserMetaApiAccount?: Model<IUserMetaApiAccount>;
   } = {};
 
   static async getModels() {
@@ -226,6 +227,7 @@ export class DatabaseModels {
       
       this.models.TradingUser = connection.model<ITradingUser>('TradingUser', TradingUserSchema);
       this.models.SignalHistory = connection.model<ISignalHistory>('SignalHistory', SignalHistorySchema);
+      this.models.UserMetaApiAccount = connection.model<IUserMetaApiAccount>('UserMetaApiAccount', UserMetaApiAccountSchema);
     }
 
     return this.models;
@@ -241,6 +243,70 @@ export class DatabaseModels {
     return models.SignalHistory!;
   }
 }
+
+/**
+ * User MetaAPI Account Schema
+ * Stores user's configured MetaAPI accounts
+ */
+export interface IUserMetaApiAccount extends Document {
+  _id: Schema.Types.ObjectId;
+  userId: string;
+  accountId: string;
+  brokerServer: string;
+  accountType: 'DEMO' | 'LIVE';
+  displayName: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const UserMetaApiAccountSchema = new Schema<IUserMetaApiAccount>({
+  userId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  accountId: {
+    type: String,
+    required: true,
+    validate: {
+      validator: function(v: string) {
+        // Validate UUID format
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+      },
+      message: 'Invalid MetaAPI account ID format'
+    }
+  },
+  brokerServer: {
+    type: String,
+    required: true
+  },
+  accountType: {
+    type: String,
+    enum: ['DEMO', 'LIVE'],
+    required: true
+  },
+  displayName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Create compound index for user + account uniqueness
+UserMetaApiAccountSchema.index({ userId: 1, accountId: 1 }, { unique: true });
 
 // Export models for easy access
 export const { getTradingUser, getSignalHistory } = DatabaseModels;
