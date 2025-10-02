@@ -54,10 +54,14 @@ export class AuthService {
   private tokenExpiration = '7d';
 
   constructor() {
-    this.jwtSecret = process.env.JWT_SECRET || 'your-super-secure-jwt-secret-change-in-production';
-    
     if (!process.env.JWT_SECRET) {
-      logger.warn('⚠️ JWT_SECRET not set in environment variables, using default (not secure for production)');
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET is required in production environment');
+      }
+      this.jwtSecret = 'dev-jwt-secret-not-for-production';
+      logger.warn('⚠️ JWT_SECRET not set, using development fallback (NOT SECURE)');
+    } else {
+      this.jwtSecret = process.env.JWT_SECRET;
     }
   }
 

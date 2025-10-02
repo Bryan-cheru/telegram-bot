@@ -37,12 +37,12 @@ export class EnhancedMetaApiService {
   constructor(riskSettings?: Partial<RiskSettings>) {
     this.api = new MetaApi(process.env.METAAPI_TOKEN!);
     
-    // Set default risk settings
+    // Load risk settings from environment variables with fallbacks
     this.riskSettings = {
-      maxDrawdownPercent: 10,
-      maxDailyLossPercent: 5,
-      maxPositionSizePercent: 5,
-      maxOpenPositions: 10,
+      maxDrawdownPercent: parseFloat(process.env.MAX_DRAWDOWN_PERCENT || '10'),
+      maxDailyLossPercent: parseFloat(process.env.MAX_DAILY_LOSS_PERCENT || '5'),
+      maxPositionSizePercent: parseFloat(process.env.MAX_POSITION_SIZE_PERCENT || '5'),
+      maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || '10'),
       ...riskSettings
     };
   }
@@ -52,7 +52,8 @@ export class EnhancedMetaApiService {
    */
   async executeEnhancedTrade(request: EnhancedTradeRequest): Promise<TradeExecutionResult> {
     try {
-      const { signal, accountId, riskPercent = 0.45, maxSlippage = 3 } = request;
+      const { signal, accountId, maxSlippage = 3 } = request;
+      const riskPercent = request.riskPercent || parseFloat(process.env.RISK_PERCENTAGE || '0.45');
       
       // Convert symbol for InstantFunding if needed
       const convertedSignal = await this.convertSymbolForBroker(signal, accountId);

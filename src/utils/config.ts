@@ -56,6 +56,12 @@ export const validateConfig = (): boolean => {
     { name: 'METAAPI_TOKEN', value: config.metaApi.token }
   ];
 
+  // Security validation
+  if (config.nodeEnv === 'production' && !process.env.JWT_SECRET) {
+    errors.push('CRITICAL: JWT_SECRET is required in production');
+    console.error('❌ JWT_SECRET missing in production environment');
+  }
+
   // Check required fields
   const missing = required.filter(field => !field.value || field.value.length === 0);
   

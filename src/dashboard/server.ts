@@ -5,12 +5,24 @@ import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
 import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
 import tradingAPIRouter from './noDbTradingAPI';
+import { generalRateLimit, tradingRateLimit, authRateLimit } from '../middleware/rateLimit';
+import { InputValidator, ValidationRules } from '../middleware/validation';
+import { authenticateToken, optionalAuth } from '../middleware/auth';
+import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
 
 const app = express();
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Security middleware
+app.use((req, res, next) => {
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  res.header('X-XSS-Protection', '1; mode=block');
+  next();
+});
 
 // CORS support for API
 app.use('/api', (req, res, next) => {
@@ -23,6 +35,11 @@ app.use('/api', (req, res, next) => {
     next();
   }
 });
+
+// Rate limiting for different endpoints
+app.use('/api/auth', authRateLimit.middleware());
+app.use('/api/trading', tradingRateLimit.middleware());
+app.use('/api', generalRateLimit.middleware());
 
 // Store for real-time data
 import { randomUUID } from 'crypto';
@@ -868,7 +885,12 @@ app.get('/api/multi-accounts', async (req, res) => {
 });
 
 // Close a specific trade on a specific account
-app.post('/api/close-trade/:accountId/:tradeId', async (req, res) => {
+app.post('/api/close-trade/:accountId/:tradeId', 
+  InputValidator.validate([
+    ValidationRules.accountId,
+    { field: 'tradeId', type: 'string', required: true, min: 1 }
+  ]),
+  async (req, res) => {
   try {
     const { accountId, tradeId } = req.params;
     
@@ -1325,5 +1347,9 @@ setTimeout(() => {
     }
   });
 }, 5000); // Wait 5 seconds after server start
+
+// Error handling middleware (must be last)
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 export default app;
