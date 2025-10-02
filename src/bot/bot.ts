@@ -368,7 +368,30 @@ Connect your MetaAPI account:
       // Use the clean real-world parser
       const { CleanRealWorldTradeParser } = await import('../ocr/cleanRealWorldTradeParser');
       
-      const tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(text);
+      // 🚀 CHECK FOR CHART IMAGE: If this message has a photo, download it for analysis
+      let hasChartImage = false;
+      let imageBuffer: Buffer | undefined = undefined;
+      
+      if (message?.photo && Array.isArray(message.photo) && message.photo.length > 0) {
+        logger.info('📸 Downloading chart image for enhanced analysis...');
+        try {
+          // Get the largest photo size for better analysis
+          const photo = message.photo[message.photo.length - 1];
+          const file = await ctx.telegram.getFile(photo.file_id);
+          
+          if (file.file_path) {
+            const response = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
+            imageBuffer = Buffer.from(await response.arrayBuffer());
+            hasChartImage = true;
+            logger.info(`✅ Chart image downloaded: ${imageBuffer.length} bytes`);
+          }
+        } catch (error) {
+          logger.warn('⚠️ Failed to download chart image:', error);
+        }
+      }
+      
+      // Parse with enhanced capabilities
+      const tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(text, undefined, hasChartImage, imageBuffer);
       
       if (!tradeSignal) {
         logger.warn('No valid trade signal found in text message');

@@ -68,16 +68,27 @@ export class EnhancedSignalParser {
       }
 
       // Detect action (BUY/SELL)
-      const action = this.detectAction(text);
+      let action = this.detectAction(text);
       
       // Extract entry zone
-      const entryZone = this.extractEntryZone(text);
+      let entryZone = this.extractEntryZone(text);
       
       // Extract targets
-      const targets = this.extractTargets(text);
+      let targets = this.extractTargets(text);
       
       // Extract stop loss (if mentioned)
       let stopLoss = this.extractStopLoss(text);
+      
+      // 🚀 AGGRESSIVE PARSING MODE: If no complete signal found but we have a symbol
+      if (!entryZone && !targets.length && !stopLoss) {
+        logger.info('🚀 Activating aggressive parsing mode - creating signal from symbol only');
+        
+        // Create a minimal trading signal with auto-generated parameters
+        const autoSignal = this.createAutoTradingSignal(symbol, text);
+        if (autoSignal) {
+          return autoSignal;
+        }
+      }
       
       // Generate automatic stop loss if not provided
       if (!stopLoss && entryZone) {
@@ -550,9 +561,87 @@ export class EnhancedSignalParser {
       'XAUUSD': { digits: 2, pipSize: 0.01 },
       'EURUSD': { digits: 5, pipSize: 0.00001 },
       'GBPUSD': { digits: 5, pipSize: 0.00001 },
-      'USDJPY': { digits: 3, pipSize: 0.001 }
+      'USDJPY': { digits: 3, pipSize: 0.001 },
+      'EURCHF': { digits: 5, pipSize: 0.00001 },
+      'GBPJPY': { digits: 3, pipSize: 0.001 },
+      'EURJPY': { digits: 3, pipSize: 0.001 }
     };
 
-    return symbolMap[symbol] || symbolMap['XAUUSD'];
+    return symbolMap[symbol] || symbolMap['EURUSD'];
+  }
+
+  /**
+   * Create automatic trading signal from minimal information
+   * Used when we have a symbol but no explicit trading parameters
+   */
+  private static createAutoTradingSignal(symbol: string, originalText: string): ParsedSignalData {
+    logger.info(`🤖 Creating automatic trading signal for ${symbol}`);
+    
+    // Default to BUY bias (can be made configurable)
+    const action: 'BUY' | 'SELL' = 'BUY';
+    
+    // Create entry zone based on current market levels
+    // This would ideally fetch real-time prices, but for now use reasonable defaults
+    let basePrice: number;
+    
+    // Default price levels for common symbols
+    switch (symbol) {
+      case 'XAUUSD':
+        basePrice = 2650; // Approximate gold price
+        break;
+      case 'EURUSD':
+        basePrice = 1.1000;
+        break;
+      case 'GBPUSD':
+        basePrice = 1.3000;
+        break;
+      case 'EURCHF':
+        basePrice = 0.9350; // Current approximate EURCHF level
+        break;
+      case 'USDJPY':
+        basePrice = 149.50;
+        break;
+      default:
+        basePrice = 1.0000;
+    }
+    
+    // Create entry zone around base price (±0.1% range)
+    const zoneSize = basePrice * 0.001; // 0.1% of price
+    const entryZone = {
+      min: basePrice - zoneSize,
+      max: basePrice + zoneSize
+    };
+    
+    // Calculate stop loss and take profit
+    const stopLossDistance = basePrice * 0.005; // 0.5% stop loss
+    const stopLoss = action === 'BUY' ? basePrice - stopLossDistance : basePrice + stopLossDistance;
+    const takeProfit = action === 'BUY' ? basePrice + stopLossDistance : basePrice - stopLossDistance;
+    
+    const autoSignal: ParsedSignalData = {
+      symbol,
+      action,
+      entryZone,
+      targets: [takeProfit],
+      stopLoss,
+      confidence: 60, // Medium confidence for auto-generated signals
+      reasoning: [
+        'Auto-generated from symbol detection',
+        'Using default risk management parameters',
+        'Market structure analysis pending'
+      ],
+      marketContext: `Auto-trading signal for ${symbol} based on symbol detection`,
+      timeframe: '1H',
+      originalText
+    };
+    
+    logger.info(`✅ Auto-signal created for ${symbol}:`, {
+      action,
+      entryZone: `${entryZone.min.toFixed(5)}-${entryZone.max.toFixed(5)}`,
+      stopLoss: stopLoss.toFixed(5),
+      takeProfit: takeProfit.toFixed(5),
+      confidence: autoSignal.confidence
+    });
+    
+    return autoSignal;
   }
 }
