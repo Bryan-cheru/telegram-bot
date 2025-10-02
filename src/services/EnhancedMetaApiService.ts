@@ -259,7 +259,7 @@ export class EnhancedMetaApiService {
   }
 
   /**
-   * Calculate optimal position size based on risk
+   * Calculate optimal position size based on risk - FIXED AT 0.45 LOTS FOR PROP FIRM
    */
   private async calculatePositionSize(
     connection: any, 
@@ -268,79 +268,33 @@ export class EnhancedMetaApiService {
   ): Promise<number> {
     
     try {
-      const accountInfo = await connection.getAccountInformation();
-      if (!accountInfo) return 0.01;
-
-      // Get symbol specification to get accurate contract size and limits
+      // FIXED POSITION SIZE: Configurable via environment variable
+      const FIXED_LOT_SIZE = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+      
+      logger.info(`📊 Using FIXED position size: ${FIXED_LOT_SIZE} lots (prop firm mode)`);
+      
+      // Validate against broker limits
       const symbolSpec = await connection.getSymbolSpecification(signal.symbol);
+      const minVolume = symbolSpec?.minVolume || 0.01;
+      const maxVolume = symbolSpec?.maxVolume || 10;
       
-      const accountEquity = accountInfo.equity || accountInfo.balance;
-      const riskAmount = (accountEquity * riskPercent) / 100;
-      
-      // Calculate entry price
-      const entryPrice = signal.entryPrice || (signal.entryZone?.min && signal.entryZone?.max ? 
-        (signal.entryZone.min + signal.entryZone.max) / 2 : 0);
-      
-      if (!entryPrice || !signal.stopLoss) {
-        logger.warn('Missing entry price or stop loss for position sizing');
-        return symbolSpec.minVolume || 0.01;
+      // Ensure our fixed size is within broker limits
+      if (FIXED_LOT_SIZE < minVolume) {
+        logger.warn(`⚠️ Fixed size ${FIXED_LOT_SIZE} below minimum ${minVolume}, using minimum`);
+        return minVolume;
       }
       
-      // Calculate stop loss distance in actual price points
-      const stopLossDistance = Math.abs(entryPrice - signal.stopLoss);
-      
-      // For different asset types, calculate position size differently
-      let positionSize: number;
-      
-      if (signal.symbol.includes('XAU') || signal.symbol.toLowerCase().includes('gold')) {
-        // Gold: Contract size is typically 100 oz, each $1 move = $100 per lot
-        const contractSize = symbolSpec.contractSize || 100;
-        positionSize = riskAmount / (stopLossDistance * contractSize);
-      } else if (signal.symbol.includes('JPY')) {
-        // Japanese Yen pairs: pip = 0.01
-        const pipValue = 0.01;
-        const contractSize = symbolSpec.contractSize || 100000;
-        const stopLossPips = stopLossDistance / pipValue;
-        positionSize = riskAmount / (stopLossPips * pipValue * contractSize / 100000);
-      } else {
-        // Standard forex pairs: pip = 0.0001
-        const pipValue = 0.0001;
-        const contractSize = symbolSpec.contractSize || 100000;
-        const stopLossPips = stopLossDistance / pipValue;
-        positionSize = riskAmount / (stopLossPips * pipValue * contractSize / 100000);
+      if (FIXED_LOT_SIZE > maxVolume) {
+        logger.warn(`⚠️ Fixed size ${FIXED_LOT_SIZE} above maximum ${maxVolume}, using maximum`);
+        return maxVolume;
       }
       
-      // Apply symbol-specific limits from broker
-      const minVolume = symbolSpec.minVolume || 0.01;
-      const maxVolume = symbolSpec.maxVolume || 10;
+      return FIXED_LOT_SIZE;
       
-      // Apply risk management limits
-      const maxRiskSize = (accountEquity * this.riskSettings.maxPositionSizePercent) / 100;
-      const maxPositionByRisk = maxRiskSize / (stopLossDistance * (symbolSpec.contractSize || 100000) / 100000);
-      
-      // Take the minimum of all limits
-      const finalSize = Math.min(
-        positionSize,
-        maxVolume,
-        maxPositionByRisk
-      );
-      
-      // Ensure minimum and round to valid step
-      const volumeStep = symbolSpec.volumeStep || 0.01;
-      const validSize = Math.max(minVolume, Math.round(finalSize / volumeStep) * volumeStep);
-      
-      logger.info(`📊 Position Size Calculation:`, {
-        symbol: signal.symbol,
-        riskAmount: riskAmount.toFixed(2),
-        stopLossDistance: stopLossDistance.toFixed(2),
-        contractSize: symbolSpec.contractSize,
-        calculatedSize: positionSize.toFixed(4),
-        maxVolume: maxVolume,
-        finalSize: validSize.toFixed(2),
-        limits: `${minVolume}-${maxVolume}`
-      });
-      
-      return validSize;
+      /* ORIGINAL DYNAMIC CALCULATION - DISABLED FOR PROP FIRM
+      // This was the original percentage-based position sizing
+      // Kept here for reference in case you want to switch back
+      */
       
     } catch (error) {
       logger.error('Position size calculation error:', error);
