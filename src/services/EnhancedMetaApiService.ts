@@ -54,7 +54,10 @@ export class EnhancedMetaApiService {
     try {
       const { signal, accountId, riskPercent = 0.45, maxSlippage = 3 } = request;
       
-      logger.info(`🚀 Enhanced execution: ${signal.symbol} on account ${accountId}`);
+      // Convert symbol for InstantFunding if needed
+      const convertedSignal = await this.convertSymbolForBroker(signal, accountId);
+      
+      logger.info(`🚀 Enhanced execution: ${convertedSignal.symbol} on account ${accountId}`);
       
       // Get account and RPC connection
       const account = await this.api.metatraderAccountApi.getAccount(accountId);
@@ -62,19 +65,19 @@ export class EnhancedMetaApiService {
       await connection.connect();
 
       // Pre-trade risk validation
-      const riskCheck = await this.validateTradeRisk(connection, signal, riskPercent);
+      const riskCheck = await this.validateTradeRisk(connection, convertedSignal, riskPercent);
       if (!riskCheck.allowed) {
         return { success: false, message: `Risk check failed: ${riskCheck.reason}` };
       }
 
       // Calculate position size
-      const positionSize = await this.calculatePositionSize(connection, signal, riskPercent);
+      const positionSize = await this.calculatePositionSize(connection, convertedSignal, riskPercent);
       if (positionSize <= 0) {
         return { success: false, message: 'Invalid position size calculated' };
       }
 
       // Execute the trade
-      const result = await this.executeTrade(connection, signal, positionSize, maxSlippage);
+      const result = await this.executeTrade(connection, convertedSignal, positionSize, maxSlippage);
       
       if (result.success) {
         // Start monitoring this account
@@ -197,6 +200,59 @@ export class EnhancedMetaApiService {
       return 0.01;
     }
   }
+
+  /**
+   * Convert symbol for broker using MetaAPI's official approach
+   */
+  private async convertSymbolForBroker(signal: TradeSignal, accountId: string): Promise<TradeSignal> {
+    try {
+      const account = await this.api.metatraderAccountApi.getAccount(accountId);
+      const connection = account.getRPCConnection();
+      
+      // Get available symbols from broker (official MetaAPI approach)
+      const availableSymbols = await connection.getSymbols();
+      
+      // First, try the symbol as-is
+      if (availableSymbols.includes(signal.symbol)) {
+        return signal;
+      }
+      
+      // Try with .x suffix for InstantFunding-style brokers
+      const symbolWithSuffix = signal.symbol + '.x';
+      if (availableSymbols.includes(symbolWithSuffix)) {
+        logger.info(`🔄 Converting ${signal.symbol} → ${symbolWithSuffix} (found in broker symbols)`);
+        
+        return {
+          ...signal,
+          symbol: symbolWithSuffix
+        };
+      }
+      
+      // Try common variations
+      const variations = [
+        signal.symbol + '.m',    // Some brokers use .m
+        signal.symbol + '_',     // Some use underscore
+        signal.symbol.replace('USD', ''),  // Some remove USD
+      ];
+      
+      for (const variation of variations) {
+        if (availableSymbols.includes(variation)) {
+          logger.info(`🔄 Converting ${signal.symbol} → ${variation} (found in broker symbols)`);
+          return { ...signal, symbol: variation };
+        }
+      }
+      
+      // If no conversion found, warn but use original
+      logger.warn(`⚠️ Symbol ${signal.symbol} not found in broker symbols. Available: ${availableSymbols.slice(0, 10).join(', ')}...`);
+      return signal;
+      
+    } catch (error) {
+      logger.warn('Symbol lookup failed, using original:', error);
+      return signal;
+    }
+  }
+
+
 
   /**
    * Calculate 1:1 risk-reward take profit
