@@ -30,17 +30,13 @@ interface TradeExecutionResult {
  * Clean, reliable multi-account executor following MetaAPI best practices
  */
 export class CleanMultiAccountExecutor implements ITradeExecutor {
-  private api: MetaApi;
+  private api: MetaApi | null = null;
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
   
   constructor() {
-    const token = process.env.METAAPI_TOKEN;
-    if (!token) {
-      throw new Error('METAAPI_TOKEN environment variable is required');
-    }
-    
-    this.api = new MetaApi(token);
+    // Don't initialize MetaAPI in constructor - wait for initialize() call
+    // This ensures environment variables are properly loaded on Render
   }
 
   /**
@@ -48,6 +44,28 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    */
   async initialize(): Promise<void> {
     logger.info('🚀 Initializing Clean Multi-Account Executor...');
+
+    // Initialize MetaAPI here when environment is definitely loaded
+    const token = process.env.METAAPI_TOKEN;
+    if (!token) {
+      throw new Error('METAAPI_TOKEN environment variable is required');
+    }
+    
+    // Enhanced validation for Render deployment
+    if (token.length < 100) {
+      throw new Error(`METAAPI_TOKEN appears invalid (length: ${token.length})`);
+    }
+    
+    logger.info(`🔍 MetaAPI Token Debug: Length=${token.length}, Valid=${!!token}`);
+    logger.info(`🔍 Token sample: ${token.substring(0, 20)}...${token.substring(token.length - 20)}`);
+    
+    try {
+      this.api = new MetaApi(token);
+      logger.info(`✅ MetaAPI instance created successfully`);
+    } catch (initError: any) {
+      logger.error(`❌ Failed to create MetaAPI instance: ${initError.message}`);
+      throw initError;
+    }
 
     const accountsConfig = process.env.METAAPI_ACCOUNTS;
     if (!accountsConfig) {
@@ -104,6 +122,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       
       // Get account
       logger.info(`🔍 Attempting to get account: ${accountConfig.id}`);
+      
+      if (!this.api) {
+        throw new Error('MetaAPI not initialized. Call initialize() first.');
+      }
+      
       accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
       
       // Deploy if needed
