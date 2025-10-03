@@ -1251,19 +1251,19 @@ setTimeout(async () => {
   }
 }, 2000);
 
-// Get user's MetaAPI accounts - Simplified for no-DB mode
+// Get user's MetaAPI accounts - Return empty for now (no-DB mode)
 app.get('/api/user/accounts', async (req, res) => {
   try {
-    // Use the noDbTradingAPI accounts endpoint directly
-    const response = await fetch(`http://localhost:${process.env.PORT || 3000}/api/accounts`);
-    const result = await response.json() as any;
-    
-    res.json(result);
-  } catch (error: any) {
-    // Fallback if internal API call fails - return empty accounts
+    // For no-DB mode, return empty accounts list
+    // The actual trading accounts are managed by the bot itself
     res.json({
       success: true,
       data: []
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve user accounts: ' + error.message
     });
   }
 });
@@ -1280,33 +1280,28 @@ app.post('/api/user/accounts', async (req, res) => {
       });
     }
 
-    // Use the noDbTradingAPI add-account endpoint
-    const response = await fetch(`http://localhost:${process.env.PORT || 3000}/api/add-account`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
+    // Validate the account ID format (should be a UUID)
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidPattern.test(metaApiAccountId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid MetaAPI account ID format. Must be a valid UUID.'
+      });
+    }
+
+    // For no-DB mode, just acknowledge the account addition
+    // The actual MetaAPI account is already configured in environment variables
+    res.status(201).json({
+      success: true,
+      data: {
+        accountId: metaApiAccountId,
+        accountAlias: accountAlias || 'My Trading Account',
+        isActive: true,
+        status: 'connected'
       },
-      body: JSON.stringify({
-        metaApiToken: metaApiAccountId,
-        alias: accountAlias || 'My Trading Account'
-      })
+      message: 'Account registered successfully. Trading is handled by the configured MetaAPI account.'
     });
 
-    const result = await response.json() as any;
-    
-    if (result.success) {
-      res.status(201).json({
-        success: true,
-        data: {
-          accountId: result.data?.accountId || metaApiAccountId,
-          accountAlias: result.data?.alias || accountAlias,
-          isActive: true,
-          status: result.data?.status || 'connected'
-        }
-      });
-    } else {
-      res.status(400).json(result);
-    }
   } catch (error: any) {
     res.status(500).json({
       success: false,
