@@ -22,9 +22,9 @@ export const config = {
   dashboardPort: parseInt(process.env.DASHBOARD_PORT || '3000'),
   
   metaApi: {
-    token: process.env.METAAPI_TOKEN || '',
+    token: process.env.METAAPI_TOKEN || '', // Optional - users can configure their own accounts
     accountId: process.env.METAAPI_ACCOUNT_ID || '', // Legacy single account support
-    accounts: process.env.METAAPI_ACCOUNTS || '' // New multi-account support
+    accounts: process.env.METAAPI_ACCOUNTS || process.env.METAAPI_TEST_ACCOUNT || '' // Multi-account or test account support
   },
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
   allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
@@ -52,9 +52,15 @@ export const validateConfig = (): boolean => {
   // Required configuration
   const required = [
     { name: 'BOT_TOKEN', value: config.botToken },
-    { name: 'ALLOWED_CHANNEL_ID', value: config.allowedChannelId },
-    { name: 'METAAPI_TOKEN', value: config.metaApi.token }
+    { name: 'ALLOWED_CHANNEL_ID', value: config.allowedChannelId }
+    // METAAPI_TOKEN is now optional - users configure their own accounts
   ];
+
+  // Security validation
+  if (config.nodeEnv === 'production' && !process.env.JWT_SECRET) {
+    errors.push('CRITICAL: JWT_SECRET is required in production');
+    console.error('❌ JWT_SECRET missing in production environment');
+  }
 
   // Check required fields
   const missing = required.filter(field => !field.value || field.value.length === 0);
@@ -67,11 +73,11 @@ export const validateConfig = (): boolean => {
     });
   }
 
-  // Either single account or multi-account configuration must be provided
+  // MetaAPI accounts are now user-configurable through dashboard - not required at startup
   const hasAccountConfig = config.metaApi.accountId || config.metaApi.accounts;
   if (!hasAccountConfig) {
-    errors.push('CRITICAL: No MetaAPI account configuration found. Set METAAPI_ACCOUNT_ID or METAAPI_ACCOUNTS');
-    console.error('❌ No MetaAPI account configuration found');
+    warnings.push('INFO: No MetaAPI accounts configured - users can add accounts through the dashboard');
+    console.log('ℹ️ MetaAPI accounts will be configured by users through the dashboard interface');
   }
 
   // Validate multi-account format if provided
@@ -112,10 +118,10 @@ export const validateConfig = (): boolean => {
     console.warn('⚠️ Channel ID format may be incorrect:', config.allowedChannelId);
   }
 
-  // Critical security checks
-  if (config.metaApi.token.length < 50) {
-    errors.push('CRITICAL: METAAPI_TOKEN appears too short - verify it\'s the complete token');
-    console.error('❌ MetaAPI token seems incomplete');
+  // Optional MetaAPI token validation - only if provided
+  if (config.metaApi.token && config.metaApi.token.length < 50) {
+    warnings.push('WARNING: METAAPI_TOKEN appears too short - verify it\'s the complete token');
+    console.warn('⚠️ MetaAPI token seems incomplete (users can configure individual accounts)');
   }
 
   if (config.botToken.length < 40) {

@@ -198,20 +198,34 @@ export class ManualTradingCommands {
   }
   
   /**
-   * Normalize symbol names (apply SILVER->XAGUSD conversion)
+   * Normalize symbol names using Universal Broker Service
+   * Replaces hardcoded InstantFunding logic with dynamic broker detection
    */
   private static normalizeSymbol(symbol: string): string {
-    const clean = symbol.toUpperCase().replace(/[^A-Z]/g, '');
+    // Basic symbol normalization - remove common prefixes/suffixes and standardize
+    let normalized = symbol
+      .toUpperCase()
+      .replace(/^#/, '')           // Remove # prefix if present
+      .replace(/\.(X|M)$/, '')     // Remove broker-specific suffixes
+      .trim();
     
-    // Apply manual symbol mappings like MT5 Copier
-    const symbolMappings: Record<string, string> = {
-      'SILVER': 'XAGUSD',
+    // Common symbol aliases (broker-agnostic)
+    const aliases: Record<string, string> = {
       'GOLD': 'XAUUSD',
-      'SILVERUSD': 'XAGUSD',
-      'GOLDUSD': 'XAUUSD'
+      'SILVER': 'XAGUSD',
+      'NASDAQ': 'NAS100',
+      'DOW': 'US30',
+      'SP500': 'SPX500',
+      'DAX': 'GER30',
+      'FTSE': 'UK100'
     };
     
-    return symbolMappings[clean] || clean;
+    // Apply alias if found
+    if (aliases[normalized]) {
+      normalized = aliases[normalized];
+    }
+    
+    return normalized;
   }
   
   /**

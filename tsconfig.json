@@ -22,7 +22,10 @@
     "tests",
     "**/*.test.ts",
     "**/*.spec.ts",
+    "**/*.old",
+    "**/*.ts.old",
     "src/ml/tradingML.ts",
-    "src/ml/integration-examples.ts"
+    "src/ml/integration-examples.ts",
+    "src/api.old/**/*"
   ]
 }

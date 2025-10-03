@@ -9,7 +9,6 @@
  */
 
 import { TradeSignal, TradeAction, OrderType } from '../types';
-import { CleanSymbolManager } from '../utils/cleanSymbolManager';
 import { logger } from '../utils/logger';
 import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
 
@@ -20,13 +19,16 @@ import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
  */
 export class CleanRealWorldTradeParser {
   private static readonly SYMBOL_PATTERNS = [
-    // Hashtag patterns - highest priority
-    /#(XAUUSD|GOLD|XAGUSD|SILVER)/i,
-    /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)/i,
-    /#(US30|NAS100|SPX500|UK100|GER30|DOW|NASDAQ)/i,
-    /#(USOIL|UKOIL|WTI|BRENT|OIL)/i,
-    // Word boundaries without hashtag
-    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|US30|NAS100)\b/i
+    // Hashtag patterns - highest priority (with optional .x suffix for InstantFunding)
+    /#(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?/i,
+    /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)(?:\.x)?/i,
+    /#(EURCHF|EURGBP|EURJPY|EURAUD|EURCAD|EURNZD|GBPCHF|GBPJPY|GBPAUD|GBPCAD|GBPNZD)(?:\.x)?/i,
+    /#(CHFJPY|CADCHF|AUDCHF|NZDCHF|CADJPY|AUDJPY|NZDJPY|AUDCAD|AUDNZD|CADNZD)(?:\.x)?/i,
+    /#(US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|DOW|NASDAQ)(?:\.x)?/i,
+    /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
+    /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
+    // Word boundaries without hashtag (with optional .x suffix)
+    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225)(?:\.x)?\b/i
   ];
 
   private static readonly ACTION_PATTERNS = {
@@ -262,32 +264,55 @@ export class CleanRealWorldTradeParser {
     symbol: string
   ): { stopLoss: number; targets: number[] } {
     const entryMid = (entryZone.min + entryZone.max) / 2;
-    const zoneSize = entryZone.max - entryZone.min;
     
-    // Risk management: stop loss at 2x zone size or 1% of price
-    const riskDistance = Math.max(zoneSize * 2, entryMid * 0.01);
+    // Get risk percentage from environment (default 0.45%)
+    const riskPercent = parseFloat(process.env.RISK_PERCENTAGE || '0.45');
+    
+    // Calculate risk-based stop loss distance
+    // For XAUUSD: Use $25-30 as standard risk distance (good for 0.45% risk on $10k account)
+    // For forex pairs: Use percentage-based approach
+    let riskDistance: number;
+    
+    if (symbol === 'XAUUSD' || symbol === 'GOLD') {
+      // For Gold: $25-30 represents good risk for 0.45% on standard account
+      riskDistance = 25;
+    } else if (symbol.includes('JPY')) {
+      // For JPY pairs: 50-100 pips
+      riskDistance = entryMid * 0.005; // 0.5%
+    } else {
+      // For major pairs: 20-50 pips equivalent
+      riskDistance = entryMid * 0.003; // 0.3%
+    }
     
     let stopLoss: number;
     let targets: number[];
 
     if (action === 'BUY') {
+      // Stop loss below entry zone
       stopLoss = entryZone.min - riskDistance;
-      targets = [
-        entryMid + (riskDistance * 1.5), // 1.5R target
-        entryMid + (riskDistance * 3.0)  // 3R target
-      ];
+      // 1:1 Risk-Reward ratio target
+      targets = [entryMid + riskDistance]; // 1R target (1:1 RR)
     } else {
+      // Stop loss above entry zone  
       stopLoss = entryZone.max + riskDistance;
-      targets = [
-        entryMid - (riskDistance * 1.5), // 1.5R target
-        entryMid - (riskDistance * 3.0)  // 3R target
-      ];
+      // 1:1 Risk-Reward ratio target
+      targets = [entryMid - riskDistance]; // 1R target (1:1 RR)
     }
 
     // Round to appropriate decimal places
     const decimals = this.getDecimalPlaces(symbol);
     stopLoss = parseFloat(stopLoss.toFixed(decimals));
     targets = targets.map(t => parseFloat(t.toFixed(decimals)));
+
+    logger.info(`🎯 Calculated risk-based levels for ${symbol}:`, {
+      entryZone: `${entryZone.min}-${entryZone.max}`,
+      entryMid: entryMid,
+      stopLoss: stopLoss,
+      target: targets[0],
+      riskDistance: riskDistance,
+      riskPercent: `${riskPercent}%`,
+      riskReward: '1:1'
+    });
 
     return { stopLoss, targets };
   }
@@ -334,19 +359,54 @@ export class CleanRealWorldTradeParser {
   }
 
   /**
-   * Normalize symbol to standard format
+   * Normalize symbol using Universal approach
+   * Replaces hardcoded InstantFunding logic with broker-agnostic normalization
    */
   private static normalizeSymbol(symbol: string): string {
-    const normalized = symbol.toUpperCase();
+    // Basic normalization - remove common variations and standardize
+    let normalized = symbol
+      .toUpperCase()
+      .replace(/\.X$/, '')         // Remove InstantFunding .x suffix
+      .replace(/[^A-Z0-9]/g, '')   // Remove special characters
+      .trim();
     
-    // Handle common variations
-    if (normalized === 'GOLD') return 'XAUUSD';
-    if (normalized === 'SILVER') return 'XAGUSD';
-    if (normalized === 'NASDAQ' || normalized === 'NAS') return 'NAS100';
-    if (normalized === 'DOW') return 'US30';
-    if (normalized === 'SPX') return 'SPX500';
+    // Common symbol mappings (broker-agnostic)
+    const symbolMap: Record<string, string> = {
+      // Metals
+      'GOLD': 'XAUUSD',
+      'SILVER': 'XAGUSD',
+      
+      // Indices  
+      'NASDAQ': 'NAS100',
+      'DOW': 'US30',
+      'DOWJONES': 'US30',
+      'SP500': 'SPX500',
+      'SPX': 'SPX500',
+      'DAX': 'GER30',
+      'GERMANY30': 'GER30',
+      'FTSE': 'UK100',
+      'UK100': 'UK100',
+      
+      // InstantFunding specific mappings
+      'AUS200': 'AUS200',
+      'US100': 'NAS100',
+      'JPN225': 'JPN225',
+      'ESXEUR': 'ESXEUR',
+      'F40EUR': 'F40EUR', 
+      'HSIHED': 'HSIHED',
+      
+      // Forex (already standard)
+      'EURUSD': 'EURUSD',
+      'GBPUSD': 'GBPUSD',
+      'USDJPY': 'USDJPY',
+      'USDCHF': 'USDCHF',
+      'AUDUSD': 'AUDUSD',
+      'USDCAD': 'USDCAD',
+      'EURCHF': 'EURCHF'
+    };
     
-    return normalized;
+    // Apply mapping if found
+    return symbolMap[normalized] || normalized;
   }
 
   /**
@@ -395,29 +455,110 @@ export class CleanRealWorldTradeParser {
    * Validate trade signal has all required fields
    */
   static validateTradeSignal(signal: TradeSignal | null): signal is TradeSignal {
-    if (!signal) return false;
+    if (!signal) {
+      logger.warn('❌ Validation failed: Signal is null');
+      return false;
+    }
+
+    logger.info('🔍 Validating trade signal:', {
+      symbol: signal.symbol,
+      action: signal.action,
+      entryZone: signal.entryZone,
+      stopLoss: signal.stopLoss,
+      targets: signal.targets
+    });
 
     // Check required fields
-    if (!signal.symbol || !signal.action) return false;
-    if (!signal.entryZone || typeof signal.entryZone.min !== 'number' || typeof signal.entryZone.max !== 'number') return false;
-    if (typeof signal.stopLoss !== 'number') return false;
-    if (!Array.isArray(signal.targets) || signal.targets.length === 0) return false;
+    if (!signal.symbol || !signal.action) {
+      logger.warn('❌ Validation failed: Missing symbol or action', {
+        symbol: signal.symbol,
+        action: signal.action
+      });
+      return false;
+    }
+    
+    if (!signal.entryZone || typeof signal.entryZone.min !== 'number' || typeof signal.entryZone.max !== 'number') {
+      logger.warn('❌ Validation failed: Invalid entry zone', {
+        entryZone: signal.entryZone,
+        minType: typeof signal.entryZone?.min,
+        maxType: typeof signal.entryZone?.max
+      });
+      return false;
+    }
+    
+    if (typeof signal.stopLoss !== 'number') {
+      logger.warn('❌ Validation failed: Invalid stop loss', {
+        stopLoss: signal.stopLoss,
+        type: typeof signal.stopLoss
+      });
+      return false;
+    }
+    
+    if (!Array.isArray(signal.targets) || signal.targets.length === 0) {
+      logger.warn('❌ Validation failed: Invalid targets', {
+        targets: signal.targets,
+        isArray: Array.isArray(signal.targets),
+        length: signal.targets?.length
+      });
+      return false;
+    }
 
     // Check logical consistency
-    if (signal.entryZone.min >= signal.entryZone.max) return false;
+    if (signal.entryZone.min >= signal.entryZone.max) {
+      logger.warn('❌ Validation failed: Entry zone min >= max', {
+        min: signal.entryZone.min,
+        max: signal.entryZone.max
+      });
+      return false;
+    }
     
     // Check stop loss makes sense relative to entry
     const avgEntry = (signal.entryZone.min + signal.entryZone.max) / 2;
-    if (signal.action === 'BUY' && signal.stopLoss >= avgEntry) return false;
-    if (signal.action === 'SELL' && signal.stopLoss <= avgEntry) return false;
+    if (signal.action === 'BUY' && signal.stopLoss >= avgEntry) {
+      logger.warn('❌ Validation failed: BUY signal stop loss above entry', {
+        action: signal.action,
+        avgEntry: avgEntry,
+        stopLoss: signal.stopLoss
+      });
+      return false;
+    }
+    if (signal.action === 'SELL' && signal.stopLoss <= avgEntry) {
+      logger.warn('❌ Validation failed: SELL signal stop loss below entry', {
+        action: signal.action,
+        avgEntry: avgEntry,
+        stopLoss: signal.stopLoss
+      });
+      return false;
+    }
 
     // Check targets make sense
     for (const target of signal.targets) {
-      if (typeof target !== 'number') return false;
-      if (signal.action === 'BUY' && target <= avgEntry) return false;
-      if (signal.action === 'SELL' && target >= avgEntry) return false;
+      if (typeof target !== 'number') {
+        logger.warn('❌ Validation failed: Non-numeric target', {
+          target: target,
+          type: typeof target
+        });
+        return false;
+      }
+      if (signal.action === 'BUY' && target <= avgEntry) {
+        logger.warn('❌ Validation failed: BUY target below entry', {
+          action: signal.action,
+          avgEntry: avgEntry,
+          target: target
+        });
+        return false;
+      }
+      if (signal.action === 'SELL' && target >= avgEntry) {
+        logger.warn('❌ Validation failed: SELL target above entry', {
+          action: signal.action,
+          avgEntry: avgEntry,
+          target: target
+        });
+        return false;
+      }
     }
 
+    logger.info('✅ Trade signal validation passed');
     return true;
   }
 }

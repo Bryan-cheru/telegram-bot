@@ -56,3 +56,11 @@ pip-log.txt
 # Temporary files
 tmp/
 temp/
+
+# MetaAPI cache files
+.metaapi/
+*.bin
+
+# Test files (development only)
+test-*.js
+critical-analysis.js

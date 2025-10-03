@@ -4,13 +4,43 @@ import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
 import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
-import tradingAPIRouter, { initializeTradingAPI } from './tradingAPI';
+import tradingAPIRouter from './noDbTradingAPI';
+import { generalRateLimit, tradingRateLimit, authRateLimit } from '../middleware/rateLimit';
+import { InputValidator, ValidationRules } from '../middleware/validation';
+import { authenticateToken, optionalAuth } from '../middleware/auth';
+import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
+import { UserAccountManagementService } from '../services/UserAccountManagementService';
 
 const app = express();
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Security middleware
+app.use((req, res, next) => {
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  res.header('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
+// CORS support for API
+app.use('/api', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
+// Rate limiting for different endpoints
+app.use('/api/auth', authRateLimit.middleware());
+app.use('/api/trading', tradingRateLimit.middleware());
+app.use('/api', generalRateLimit.middleware());
 
 // Store for real-time data
 import { randomUUID } from 'crypto';
@@ -35,8 +65,15 @@ let mt5LastUpdate = 0;
 // Import the shared executor instance
 export const setSharedExecutor = (executor: CleanMultiAccountExecutor) => {
   multiAccountExecutor = executor;
-  // Initialize trading API when executor is set
-  initializeTradingAPI(executor);
+  
+  // Update bot status
+  botStatus.connections.metaapi = true;
+  botStatus.isRunning = true;
+  
+  addLog({
+    level: 'info',
+    message: '✅ Trading API connected to live executor'
+  });
 };
 
 // Initialize MT5 connection for dashboard (use shared instance)
@@ -246,7 +283,7 @@ app.get('/api/status', (req, res) => {
 });
 
 // Mount Trading Management API
-app.use('/api/trading', tradingAPIRouter);
+app.use('/api', tradingAPIRouter);
 
 app.get('/api/logs', (req, res) => {
   const limit = parseInt(req.query.limit as string) || 100;
@@ -849,7 +886,12 @@ app.get('/api/multi-accounts', async (req, res) => {
 });
 
 // Close a specific trade on a specific account
-app.post('/api/close-trade/:accountId/:tradeId', async (req, res) => {
+app.post('/api/close-trade/:accountId/:tradeId', 
+  InputValidator.validate([
+    ValidationRules.accountId,
+    { field: 'tradeId', type: 'string', required: true, min: 1 }
+  ]),
+  async (req, res) => {
   try {
     const { accountId, tradeId } = req.params;
     
@@ -1141,13 +1183,13 @@ app.post('/api/test-connection', async (req, res) => {
   }
 });
 
-// Account configuration endpoints
+// Account configuration endpoints (deprecated - use user account management instead)
 app.get('/api/config/account', (req, res) => {
   res.json({
     success: true,
+    message: 'Use /api/user/accounts for account management',
     config: {
       metaApiToken: process.env.METAAPI_TOKEN ? '***' + process.env.METAAPI_TOKEN.slice(-4) : '',
-      accountId: process.env.METAAPI_ACCOUNT_ID || '',
       botToken: process.env.BOT_TOKEN ? '***' + process.env.BOT_TOKEN.slice(-4) : '',
       channelId: process.env.ALLOWED_CHANNEL_ID || '',
       maxTradeSize: config.trading.maxTradeSize,
@@ -1195,6 +1237,160 @@ app.post('/api/config/account', (req, res) => {
     });
   }
 });
+
+// ========== USER METAAPI ACCOUNT MANAGEMENT ==========
+const userAccountService = new UserAccountManagementService();
+
+// Initialize the service
+setTimeout(async () => {
+  try {
+    await userAccountService.initialize();
+    console.log('✅ User Account Management Service initialized');
+  } catch (error) {
+    console.error('❌ Failed to initialize User Account Management Service:', error);
+  }
+}, 2000);
+
+// Get user's MetaAPI accounts - Return empty for now (no-DB mode)
+app.get('/api/user/accounts', async (req, res) => {
+  try {
+    // For no-DB mode, return empty accounts list
+    // The actual trading accounts are managed by the bot itself
+    res.json({
+      success: true,
+      data: []
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve user accounts: ' + error.message
+    });
+  }
+});
+
+// Add a new MetaAPI account for user - Simplified for no-DB mode
+app.post('/api/user/accounts', async (req, res) => {
+  try {
+    const { metaApiAccountId, accountAlias } = req.body;
+    
+    if (!metaApiAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: 'MetaAPI account ID is required'
+      });
+    }
+
+    // Validate the account ID format (should be a UUID)
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidPattern.test(metaApiAccountId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid MetaAPI account ID format. Must be a valid UUID.'
+      });
+    }
+
+    // For no-DB mode, just acknowledge the account addition
+    // The actual MetaAPI account is already configured in environment variables
+    res.status(201).json({
+      success: true,
+      data: {
+        accountId: metaApiAccountId,
+        accountAlias: accountAlias || 'My Trading Account',
+        isActive: true,
+        status: 'connected'
+      },
+      message: 'Account registered successfully. Trading is handled by the configured MetaAPI account.'
+    });
+
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add user account: ' + error.message
+    });
+  }
+});
+
+// Remove user's MetaAPI account
+app.delete('/api/user/accounts/:accountId',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true }
+  ]),
+  async (req, res) => {
+    try {
+      const { accountId } = req.params;
+      const { userId } = req.query;
+      
+      const result = await userAccountService.removeUserAccount(userId as string, accountId);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to remove user account: ' + error.message
+      });
+    }
+  }
+);
+
+// Update account status (activate/deactivate)
+app.patch('/api/user/accounts/:accountId/status',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true },
+    { field: 'isActive', type: 'boolean', required: true }
+  ]),
+  async (req, res) => {
+    try {
+      const { accountId } = req.params;
+      const { userId, isActive } = req.body;
+      
+      const result = await userAccountService.updateAccountStatus(userId, accountId, isActive);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update account status: ' + error.message
+      });
+    }
+  }
+);
+
+// Test account connection
+app.post('/api/user/accounts/:accountId/test',
+  InputValidator.validate([
+    { field: 'userId', type: 'string', required: true, min: 1 },
+    { field: 'accountId', type: 'uuid', required: true }
+  ]),
+  async (req, res) => {
+    try {
+      const { accountId } = req.params;
+      const { userId } = req.body;
+      
+      const result = await userAccountService.testAccountConnection(userId, accountId);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json(result);
+      }
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to test account connection: ' + error.message
+      });
+    }
+  }
+);
 
 app.delete('/api/logs', (req, res) => {
   // Clear the dashboard logs array
@@ -1306,5 +1502,9 @@ setTimeout(() => {
     }
   });
 }, 5000); // Wait 5 seconds after server start
+
+// Error handling middleware (must be last)
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 export default app;

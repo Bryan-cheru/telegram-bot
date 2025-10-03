@@ -189,21 +189,35 @@ export class VisualChartAnalysisML {
 
     // ENHANCED color ranges for better detection across different chart themes
     const colorRanges = {
-      // Grey/Dark highlights (entry zones) - broader range for different chart themes
-      grey: {
+      // PRIORITY 1: Grey highlighted price scale (entry zones) - MOST IMPORTANT
+      primaryGrey: {
+        r: { min: 120, max: 160 },
+        g: { min: 120, max: 160 },
+        b: { min: 120, max: 160 }
+      },
+      // PRIORITY 2: Dark grey highlighted areas
+      darkGrey: {
+        r: { min: 80, max: 140 },
+        g: { min: 80, max: 140 },
+        b: { min: 80, max: 140 }
+      },
+      // PRIORITY 3: Very dark highlighted scale areas
+      veryDarkGrey: {
+        r: { min: 60, max: 110 },
+        g: { min: 60, max: 110 },
+        b: { min: 60, max: 110 }
+      },
+      // PRIORITY 4: Light grey highlights
+      lightGrey: {
+        r: { min: 160, max: 200 },
+        g: { min: 160, max: 200 },
+        b: { min: 160, max: 200 }
+      },
+      // PRIORITY 5: Medium grey range
+      mediumGrey: {
         r: { min: 100, max: 180 },
         g: { min: 100, max: 180 },
         b: { min: 100, max: 180 }
-      },
-      darkGrey: {
-        r: { min: 80, max: 120 },
-        g: { min: 80, max: 120 },
-        b: { min: 80, max: 120 }
-      },
-      lightGrey: {
-        r: { min: 180, max: 240 },
-        g: { min: 180, max: 240 },
-        b: { min: 180, max: 240 }
       },
       
       // Green highlights (target zones) - enhanced for different shades
@@ -289,6 +303,9 @@ export class VisualChartAnalysisML {
                 region: { x, y, width: 10, height: 10 },
                 colorType: mainColorType
               });
+              
+              // Log detection for debugging
+              logger.debug(`🎨 Color detected: ${colorType} at price ${price.toFixed(5)} (RGB: ${r},${g},${b})`);
             } else {
               // Increase confidence for repeated detections
               existingZone.confidence = Math.min(1.0, existingZone.confidence + 0.1);
@@ -716,14 +733,20 @@ export class VisualChartAnalysisML {
    */
   private mapToMainColorType(colorType: string): 'grey' | 'green' | 'red' {
     const colorMapping: { [key: string]: 'grey' | 'green' | 'red' } = {
+      // Enhanced grey detection for entry zones
       'grey': 'grey',
+      'primaryGrey': 'grey',
       'darkGrey': 'grey',
+      'veryDarkGrey': 'grey',
       'lightGrey': 'grey',
+      'mediumGrey': 'grey',
+      // Green zones for targets
       'green': 'green',
       'lightGreen': 'green',
       'darkGreen': 'green',
       'yellow': 'green', // Often used for targets
       'blue': 'grey',    // Often used for entry zones
+      // Red zones for stops
       'red': 'red',
       'darkRed': 'red',
       'orange': 'red'    // Often used for stops
@@ -747,15 +770,28 @@ export class VisualChartAnalysisML {
     if (colorStrength > 100) confidence += 0.2;
     if (colorStrength > 150) confidence += 0.1;
     
-    // Specific color type bonuses
+    // Specific color type bonuses - PRIORITIZE GREY ENTRY ZONES
     switch (colorType) {
+      case 'primaryGrey':
+        confidence += 0.25; // Highest priority for primary grey entry zones
+        break;
+      case 'darkGrey':
+      case 'veryDarkGrey':
+        confidence += 0.20; // High priority for dark grey zones
+        break;
+      case 'mediumGrey':
+      case 'grey':
+        confidence += 0.15; // Good priority for standard grey zones
+        break;
+      case 'lightGrey':
+        confidence += 0.10; // Lower but still good for light grey
+        break;
       case 'green':
       case 'red':
-        confidence += 0.1; // Primary colors are more reliable
+        confidence += 0.10; // Primary colors are reliable
         break;
-      case 'grey':
-      case 'darkGrey':
-        confidence += 0.05; // Grey is common for entry zones
+      default:
+        confidence += 0.05; // Other colors get small bonus
         break;
     }
     

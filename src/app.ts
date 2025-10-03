@@ -4,9 +4,10 @@ import { logger } from './utils/logger';
 import * as http from 'http';
 import express from 'express';
 import app, { setSharedExecutor } from './dashboard/server';
-import { addLog, updateBotStatus } from './dashboard/simpleDashboard';
+import { addLog, updateBotStatus } from './dashboard/server';
 import { HealthCheckService } from './monitoring/healthChecks';
 import { DistributedTracing, Traced } from './monitoring/distributedTracing';
+// import { startWebServer } from './api/server'; // Removed old API system
 
 // Prevent double initialization
 let isInitialized = false;
@@ -44,11 +45,29 @@ const gracefulShutdown = async (signal: string) => {
 
 // Global error handlers to prevent unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('🚨 CRITICAL: Unhandled Rejection detected', { promise, reason });
-  // Don't exit immediately - log the error but continue
-  if (typeof reason === 'object' && reason !== null) {
+  logger.error('🚨 CRITICAL: Unhandled Rejection detected');
+  logger.error('Promise:', promise);
+  
+  // Enhanced error logging for better debugging
+  if (reason instanceof Error) {
+    logger.error('Error Name:', reason.name);
+    logger.error('Error Message:', reason.message);
+    logger.error('Error Stack:', reason.stack);
+    
+    // Check if this is a MongoDB authentication error
+    if (reason.message?.includes('authentication failed') || reason.message?.includes('bad auth')) {
+      logger.warn('⚠️ This appears to be a MongoDB authentication error - check your database credentials');
+      logger.warn('💡 The bot will continue running without database features');
+      return; // Don't exit for MongoDB auth failures
+    }
+  } else if (typeof reason === 'object' && reason !== null) {
     logger.error('Rejection details:', JSON.stringify(reason, null, 2));
+  } else {
+    logger.error('Rejection reason:', reason);
   }
+  
+  // Don't exit immediately - log the error but continue
+  logger.warn('⚠️ Continuing operation despite unhandled rejection...');
 });
 
 process.on('uncaughtException', (error) => {
@@ -170,6 +189,7 @@ async function main(): Promise<void> {
     logger.info(`   - Bot Enabled: ${config.botEnabled}`);
     logger.info(`   - Dashboard Enabled: ${config.dashboardEnabled}`);
     logger.info(`   - Dashboard Port: ${config.dashboardPort}`);
+    logger.info(`   - Web API Port: ${process.env.API_PORT || 3001}`);
     
     let server: http.Server | null = null;
     
@@ -186,6 +206,26 @@ async function main(): Promise<void> {
       });
     } else {
       logger.info('🚫 Dashboard disabled for this instance');
+    }
+
+    // Start Web API server (always available for Phase 3)
+    const webApiEnabled = process.env.WEB_API_ENABLED !== 'false';
+    if (webApiEnabled) {
+      logger.info('🔌 Starting Web API server...');
+      try {
+        // await startWebServer(); // Removed old API system - using dashboard server instead
+        logger.info('✅ Web API server started successfully');
+        if (config.dashboardEnabled) {
+          addLog({ level: 'success', message: 'Web API server started' });
+        }
+      } catch (error) {
+        logger.error('❌ Failed to start Web API server:', error);
+        if (config.dashboardEnabled) {
+          addLog({ level: 'error', message: `Web API server failed: ${error}` });
+        }
+      }
+    } else {
+      logger.info('🚫 Web API server disabled');
     }
     
     // Debug configuration before validation

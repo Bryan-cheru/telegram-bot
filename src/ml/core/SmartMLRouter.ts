@@ -53,14 +53,22 @@ export class SmartMLRouter {
     
     const fullText = caption ? `${text}\n${caption}` : text;
     
-    // Route 1: FULL_VISUAL (5% of signals)
-    // Only for complex visual signals with specific indicators
-    if (hasImage && this.needsFullVisualAnalysis(fullText)) {
-      return {
-        route: 'FULL_VISUAL',
-        reason: 'Complex visual elements detected',
-        confidence: 0.9
-      };
+    // Route 1: FULL_VISUAL for any image with minimal text content
+    // If there's an image but no explicit prices/levels, use visual analysis
+    if (hasImage) {
+      const hasExplicitPrices = /\b\d{4,5}\.?\d{0,3}\b/g.test(fullText);
+      const hasTradeAction = /\b(buy|sell|long|short)\b/i.test(fullText);
+      
+      // Use full visual analysis if:
+      // 1. Has complex visual indicators, OR
+      // 2. Has image but lacks explicit trading parameters (aggressive mode)
+      if (this.needsFullVisualAnalysis(fullText) || (!hasExplicitPrices && !hasTradeAction)) {
+        return {
+          route: 'FULL_VISUAL',
+          reason: hasExplicitPrices ? 'Complex visual elements detected' : 'Image with minimal text - analyzing chart visually',
+          confidence: 0.9
+        };
+      }
     }
     
     // Route 2: ENHANCED_COLOR (25% of signals)
@@ -224,18 +232,80 @@ export class SmartMLRouter {
       
       if (mlResult.confidence > 0.7 && mlResult.greyEntryZones.length > 0) {
         // Convert ML result to trading signal
-        const entryZone = {
-          min: Math.min(...mlResult.greyEntryZones.map(z => z.price)),
-          max: Math.max(...mlResult.greyEntryZones.map(z => z.price))
-        };
+        const greyPrices = mlResult.greyEntryZones.map(z => z.price);
+        const minPrice = Math.min(...greyPrices);
+        const maxPrice = Math.max(...greyPrices);
         
-        const stopLoss = mlResult.redStopZones.length > 0 ?
-          mlResult.redStopZones[0].price :
-          this.calculateStopLoss(entryZone, mlResult.direction || 'BUY');
+        // 🚨 FIX: Handle single-zone scenario
+        let entryZone: { min: number; max: number };
         
-        const targets = mlResult.greenTargetZones.length > 0 ?
-          mlResult.greenTargetZones.map(z => z.price) :
-          this.calculateTargets(entryZone, mlResult.direction || 'BUY');
+        if (minPrice === maxPrice || greyPrices.length === 1) {
+          // Single zone detected - create a small range around the price
+          const zoneSize = minPrice * 0.001; // 0.1% zone around detected price
+          entryZone = {
+            min: minPrice - zoneSize,
+            max: minPrice + zoneSize
+          };
+          logger.info(`🔧 Single grey zone detected, creating entry range: ${entryZone.min.toFixed(5)} - ${entryZone.max.toFixed(5)}`);
+        } else {
+          // Multiple zones - use min/max range
+          entryZone = {
+            min: minPrice,
+            max: maxPrice
+          };
+        }
+        
+        // 🚨 FIX: Ensure stop loss and targets are properly positioned
+        const avgEntry = (entryZone.min + entryZone.max) / 2;
+        const direction = mlResult.direction || 'SELL'; // Default to SELL based on logs
+        
+        let stopLoss: number;
+        let targets: number[];
+        
+        if (mlResult.redStopZones.length > 0) {
+          stopLoss = mlResult.redStopZones[0].price;
+        } else {
+          stopLoss = this.calculateStopLoss(entryZone, direction);
+        }
+        
+        if (mlResult.greenTargetZones.length > 0) {
+          targets = mlResult.greenTargetZones.map(z => z.price);
+        } else {
+          targets = this.calculateTargets(entryZone, direction);
+        }
+        
+        // 🔧 VALIDATION: Ensure stop loss and targets make logical sense
+        if (direction === 'SELL') {
+          // For SELL: stop loss should be ABOVE entry, targets should be BELOW entry
+          if (stopLoss <= avgEntry) {
+            const buffer = avgEntry * 0.002; // 0.2% buffer
+            stopLoss = entryZone.max + buffer;
+            logger.warn(`⚠️ Adjusting SELL stop loss from ${mlResult.redStopZones[0]?.price} to ${stopLoss} (above entry)`);
+          }
+          
+          // Ensure targets are below entry
+          targets = targets.filter(t => t < avgEntry);
+          if (targets.length === 0) {
+            const buffer = avgEntry * 0.002;
+            targets = [entryZone.min - buffer];
+            logger.warn(`⚠️ No valid SELL targets, creating target at ${targets[0]}`);
+          }
+        } else {
+          // For BUY: stop loss should be BELOW entry, targets should be ABOVE entry  
+          if (stopLoss >= avgEntry) {
+            const buffer = avgEntry * 0.002; // 0.2% buffer
+            stopLoss = entryZone.min - buffer;
+            logger.warn(`⚠️ Adjusting BUY stop loss to ${stopLoss} (below entry)`);
+          }
+          
+          // Ensure targets are above entry
+          targets = targets.filter(t => t > avgEntry);
+          if (targets.length === 0) {
+            const buffer = avgEntry * 0.002;
+            targets = [entryZone.max + buffer];
+            logger.warn(`⚠️ No valid BUY targets, creating target at ${targets[0]}`);
+          }
+        }
 
         return {
           symbol: mlResult.symbol || this.extractSymbol(caption || text) || 'UNKNOWN',

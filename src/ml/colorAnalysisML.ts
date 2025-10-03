@@ -1,5 +1,4 @@
 import { logger } from '../utils/logger';
-import { tradingConfig } from '../utils/tradingConfig';
 
 /**
  * CHART COLOR ANALYSIS ML
@@ -74,7 +73,39 @@ export class ChartColorAnalysisML {
       .filter(price => !isNaN(price) && 
                       price >= priceRange.min && 
                       price <= priceRange.max);
-    
+
+    // 🔥 CRITICAL FIX: Simple sanity checks to prevent chart scale artifacts
+    // No need for complex market data - just reject obviously wrong values
+    prices = prices.filter(price => {
+      // JPY pairs: Never accept single digits or extremely low values
+      if (upperSymbol.includes('JPY')) {
+        if (price < 50) {
+          logger.warn(`❌ Rejected JPY price ${price} - too low (chart scale artifact)`);
+          return false;
+        }
+        if (price > 250) {
+          logger.warn(`❌ Rejected JPY price ${price} - too high`);
+          return false;
+        }
+      }
+      
+      // Gold: Never accept values under 1000
+      if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+        if (price < 1000) {
+          logger.warn(`❌ Rejected Gold price ${price} - too low (chart scale artifact)`);
+          return false;
+        }
+      }
+      
+      // General: Never accept single digits for any symbol
+      if (price < 10) {
+        logger.warn(`❌ Rejected price ${price} - single digit (chart scale artifact)`);
+        return false;
+      }
+      
+      return true;
+    });
+
     // Enhanced filtering for chart scale prices only
     prices = prices.filter(price => {
       const priceStr = price.toString();
@@ -85,10 +116,26 @@ export class ChartColorAnalysisML {
       if (priceStr.match(/^\d{1,2}:\d{2}$/)) return false; // Time format HH:MM
       if (price < 1 && upperSymbol.includes('USD') && !upperSymbol.includes('JPY')) return false;
       
+      // 🔥 CRITICAL: Reject obvious chart scale markers (single digits for most symbols)
+      if (price < 10 && !upperSymbol.includes('NAS') && !upperSymbol.includes('SPX')) {
+        logger.warn(`❌ Rejected likely chart scale marker: ${price} for ${upperSymbol}`);
+        return false;
+      }
+      
       // Symbol-specific chart scale validation
       if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
         // Gold chart scale prices: typically clean numbers, not random decimals
         return price >= 2000 && price <= 4000;
+      }
+      
+      if (upperSymbol.includes('JPY')) {
+        // JPY pairs: Current prices typically 100-200 range, reject single digits
+        if (price < 50 || price > 250) return false;
+        // Reject obvious chart scale markers (single digits)
+        if (price < 20) return false;
+        // Additional validation: reject numbers that look like chart coordinates
+        if (priceStr.length <= 2 && price < 50) return false; // Single/double digits under 50
+        return true;
       }
       
       if (upperSymbol.includes('EUR') || upperSymbol.includes('CAD')) {
@@ -516,7 +563,15 @@ export class ChartColorAnalysisML {
    * Get realistic price range for trading symbols
    */
   private static getSymbolPriceRange(symbol: string): { min: number; max: number } {
-    return tradingConfig.getPriceRange(symbol);
+    // Basic price ranges for common symbols - fallback implementation
+    const ranges: { [key: string]: { min: number; max: number } } = {
+      'XAUUSD': { min: 1800, max: 2200 },
+      'EURUSD': { min: 1.0, max: 1.2 },
+      'GBPUSD': { min: 1.2, max: 1.4 },
+      'USDJPY': { min: 100, max: 150 },
+    };
+    
+    return ranges[symbol] || { min: 0.1, max: 10000 };
   }
 
   /**
