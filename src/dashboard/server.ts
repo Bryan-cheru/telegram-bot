@@ -109,23 +109,48 @@ const initializeMT5 = async () => {
 
 // Update MT5 data periodically
 const updateMT5Data = async () => {
-  if (!multiAccountExecutor) return;
+  if (!multiAccountExecutor) {
+    console.log('🔍 [Dashboard] No MT5 executor available');
+    return;
+  }
   
   try {
     const isConnected = await multiAccountExecutor.isConnected();
-    if (!isConnected) return;
+    console.log(`🔍 [Dashboard] MT5 Connection Status: ${isConnected}`);
+    
+    if (!isConnected) {
+      console.log('🔍 [Dashboard] MT5 not connected, skipping data update');
+      return;
+    }
+    
+    console.log('🔍 [Dashboard] Fetching account data from MT5 executor...');
     
     // Get all accounts data (includes balance, equity, positions, etc.)
     const accountsData = await multiAccountExecutor.getAllAccountsData();
+    console.log(`🔍 [Dashboard] Received ${accountsData.length} accounts data:`, 
+      accountsData.map(acc => ({ 
+        brokerName: acc.brokerName, 
+        status: acc.status, 
+        tradingReady: acc.tradingReady,
+        balance: acc.balance,
+        error: (acc as any).error || null
+      }))
+    );
+    
     mt5AccountsData = accountsData.map((account: any) => ({
       ...account,
       lastUpdate: Date.now()
     }));
     
     mt5LastUpdate = Date.now();
+    console.log('✅ [Dashboard] MT5 account data updated successfully');
     
   } catch (error) {
-    console.error('Error updating Multi-Account MT5 data:', error);
+    console.error('❌ [Dashboard] Error updating Multi-Account MT5 data:', error);
+    addLog({
+      level: 'error',
+      message: `Dashboard data update failed: ${error instanceof Error ? error.message : String(error)}`
+    });
   }
 };
 
@@ -1005,6 +1030,58 @@ app.get('/api/statistics', (req, res) => {
   res.json(stats);
 });
 
+// Dashboard stats endpoint (alias for /api/statistics)
+app.get('/api/stats', (req, res) => {
+  // Calculate trading statistics
+  const stats = calculateTradingStats(tradeHistory);
+  res.json(stats);
+});
+
+// MT5 connection diagnostic endpoint
+app.get('/api/mt5/diagnostic', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      return res.json({
+        success: false,
+        error: 'Multi-account executor not initialized',
+        diagnostic: {
+          executorAvailable: false,
+          connected: false,
+          accountStatuses: []
+        }
+      });
+    }
+
+    const isConnected = await multiAccountExecutor.isConnected();
+    const accountStatuses = multiAccountExecutor.getAccountStatuses();
+    
+    res.json({
+      success: true,
+      diagnostic: {
+        executorAvailable: true,
+        connected: isConnected,
+        accountStatuses: accountStatuses,
+        accountsCount: accountStatuses.length,
+        connectedCount: accountStatuses.filter(acc => acc.status === 'CONNECTED').length,
+        tradingReadyCount: accountStatuses.filter(acc => acc.tradingReady).length,
+        lastDataUpdate: mt5LastUpdate,
+        cachedAccountsCount: mt5AccountsData.length
+      }
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      diagnostic: {
+        executorAvailable: !!multiAccountExecutor,
+        connected: false,
+        error: errorMessage
+      }
+    });
+  }
+});
+
 // Real-time log streaming endpoint with proper memory management
 app.get('/api/logs/stream', (req, res) => {
   res.writeHead(200, {
@@ -1268,10 +1345,10 @@ app.get('/api/user/accounts', async (req, res) => {
   }
 });
 
-// Add a new MetaAPI account for user - Simplified for no-DB mode
+// Add a new MetaAPI account for user - Enhanced with MetaAPI validation
 app.post('/api/user/accounts', async (req, res) => {
   try {
-    const { metaApiAccountId, accountAlias } = req.body;
+    const { metaApiAccountId, accountAlias, metaApiToken } = req.body;
     
     if (!metaApiAccountId) {
       return res.status(400).json({
@@ -1289,20 +1366,81 @@ app.post('/api/user/accounts', async (req, res) => {
       });
     }
 
-    // For no-DB mode, just acknowledge the account addition
-    // The actual MetaAPI account is already configured in environment variables
-    res.status(201).json({
-      success: true,
-      data: {
-        accountId: metaApiAccountId,
-        accountAlias: accountAlias || 'My Trading Account',
-        isActive: true,
-        status: 'connected'
-      },
-      message: 'Account registered successfully. Trading is handled by the configured MetaAPI account.'
-    });
+    // Validate MetaAPI token if provided, or use environment token
+    const tokenToUse = metaApiToken || process.env.METAAPI_TOKEN;
+    
+    if (!tokenToUse) {
+      return res.status(400).json({
+        success: false,
+        error: 'MetaAPI token is required. Please provide your MetaAPI token.'
+      });
+    }
+
+    // Actually validate the account with MetaAPI
+    try {
+      addLog({
+        level: 'info',
+        message: `🔍 Validating MetaAPI account: ${metaApiAccountId}`
+      });
+      
+      const MetaApi = (await import('metaapi.cloud-sdk')).default;
+      const metaApi = new MetaApi(tokenToUse);
+      
+      // Try to get the account to validate it exists and is accessible
+      const account = await metaApi.metatraderAccountApi.getAccount(metaApiAccountId);
+      
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          error: 'MetaAPI account not found. Please check your account ID and token.'
+        });
+      }
+
+      // Get account info (using available properties)
+      const accountInfo = {
+        accountId: account.id,
+        name: account.name,
+        login: account.login,
+        server: account.server,
+        type: account.type,
+        state: account.state,
+        connectionStatus: account.connectionStatus
+      };
+
+      addLog({
+        level: 'info',
+        message: `✅ Account validated: ${account.name} (${account.server})`
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          accountId: metaApiAccountId,
+          accountAlias: accountAlias || account.name || 'My Trading Account',
+          isActive: true,
+          status: 'validated',
+          accountInfo: accountInfo
+        },
+        message: `Account "${account.name}" validated successfully with MetaAPI.`
+      });
+
+    } catch (metaApiError: any) {
+      addLog({
+        level: 'error',
+        message: `❌ MetaAPI validation failed: ${metaApiError.message}`
+      });
+      
+      return res.status(400).json({
+        success: false,
+        error: `MetaAPI validation failed: ${metaApiError.message}. Please check your account ID and token.`
+      });
+    }
 
   } catch (error: any) {
+    addLog({
+      level: 'error',
+      message: `❌ Account addition error: ${error.message}`
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to add user account: ' + error.message

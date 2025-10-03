@@ -135,14 +135,14 @@
                     </div>
                     <div class="card-body">
                         <div class="quick-actions-grid">
-                            <button class="btn btn-primary" onclick="showAddAccountModal()">
-                                <i class="fas fa-plus"></i> Add MetaAPI Account
-                            </button>
                             <button class="btn btn-outline" onclick="refreshAllData()">
                                 <i class="fas fa-sync-alt"></i> Refresh Data
                             </button>
                             <button class="btn btn-outline" onclick="dashboard.switchPage('logs')">
                                 <i class="fas fa-terminal"></i> System Logs
+                            </button>
+                            <button class="btn btn-outline" onclick="dashboard.switchPage('accounts')">
+                                <i class="fas fa-wallet"></i> View Accounts
                             </button>
                         </div>
                     </div>
@@ -169,15 +169,9 @@
             <section id="accounts" class="page">
                 <div class="card">
                     <div class="card-header">
-                        <h2><i class="fas fa-wallet"></i> MetaAPI Accounts</h2>
+                        <h2><i class="fas fa-wallet"></i> Connected Accounts</h2>
                         <div class="header-actions">
-                            <button class="btn btn-primary" onclick="showAddAccountModal()">
-                                <i class="fas fa-plus"></i> Add Account
-                            </button>
-                            <button class="btn btn-secondary" onclick="clearAllAccounts()">
-                                <i class="fas fa-trash"></i> Clear All
-                            </button>
-                            <button class="btn btn-outline" onclick="refreshAccounts()">
+                            <button class="btn btn-outline" data-action="refresh">
                                 <i class="fas fa-sync-alt"></i> Refresh
                             </button>
                         </div>
@@ -202,35 +196,17 @@
                             <select id="account-filter" class="form-select">
                                 <option value="all">All Accounts</option>
                             </select>
-                            <button class="btn btn-outline btn-sm" onclick="refreshPositions()">
+                            <button class="btn btn-outline btn-sm" data-action="refresh">
                                 <i class="fas fa-sync-alt"></i> Refresh
                             </button>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="table-container">
-                            <table class="table" id="positions-table">
-                                <thead>
-                                    <tr>
-                                        <th>Account</th>
-                                        <th>Symbol</th>
-                                        <th>Type</th>
-                                        <th>Volume</th>
-                                        <th>Open Price</th>
-                                        <th>Current Price</th>
-                                        <th>P&L</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="positions-tbody">
-                                    <tr class="no-data">
-                                        <td colspan="8" class="text-center">
-                                            <i class="fas fa-chart-line text-muted"></i>
-                                            <span>No active positions</span>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                        <div id="positions-container">
+                            <div class="loading-state">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                <span>Loading positions...</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -248,26 +224,11 @@
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="table-container">
-                            <table class="table" id="history-table">
-                                <thead>
-                                    <tr>
-                                        <th>Date</th>
-                                        <th>Account</th>
-                                        <th>Symbol</th>
-                                        <th>Type</th>
-                                        <th>Volume</th>
-                                        <th>Entry Price</th>
-                                        <th>Exit Price</th>
-                                        <th>P&L</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="history-tbody">
-                                    <tr class="no-data">
-                                        <td colspan="8" class="text-center">No trade history available</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                        <div id="history-container">
+                            <div class="loading-state">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                <span>Loading trade history...</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -443,11 +404,54 @@
 
             <!-- SYSTEM LOGS PAGE -->
             <section id="logs" class="page">
-                <div class="logs-container">
-                    <!-- Log Controls -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h2><i class="fas fa-terminal"></i> System Logs</h2>
+                <!-- System Status Overview -->
+                <div class="system-status-grid">
+                    <div class="status-item">
+                        <div class="status-icon online">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <div class="status-content">
+                            <h4>Telegram Bot</h4>
+                            <span class="status-text" id="bot-status">Online</span>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-icon online">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <div class="status-content">
+                            <h4>MetaAPI</h4>
+                            <span class="status-text" id="metaapi-status">Connected</span>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-icon online">
+                            <i class="fas fa-exchange-alt"></i>
+                        </div>
+                        <div class="status-content">
+                            <h4>Trade Executor</h4>
+                            <span class="status-text" id="executor-status">Ready</span>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-icon online">
+                            <i class="fas fa-wallet"></i>
+                        </div>
+                        <div class="status-content">
+                            <h4>MT5 Accounts</h4>
+                            <span class="status-text" id="accounts-status">Connected</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Log Terminal -->
+                <div class="log-terminal-container">
+                    <div class="log-terminal" id="log-terminal">
+                        <div class="log-header">
+                            <div class="log-title">
+                                <i class="fas fa-terminal"></i>
+                                <span>Live System Logs</span>
+                            </div>
                             <div class="log-controls">
                                 <select id="log-level-filter" class="form-select">
                                     <option value="all">All Levels</option>
@@ -456,62 +460,21 @@
                                     <option value="error">Errors</option>
                                     <option value="success">Success</option>
                                 </select>
-                                <button id="clear-logs" class="btn btn-secondary">
-                                    <i class="fas fa-trash"></i> Clear Logs
+                                <button id="clear-logs" class="btn btn-outline btn-sm">
+                                    <i class="fas fa-trash"></i> Clear
                                 </button>
-                                <button id="auto-scroll-toggle" class="btn btn-primary active">
+                                <button id="auto-scroll-toggle" class="btn btn-primary btn-sm active">
                                     <i class="fas fa-arrow-down"></i> Auto-scroll
                                 </button>
                             </div>
-                        </div>
-                        <div class="card-body">
-                            <!-- Live System Status -->
-                            <div class="system-status-grid">
-                                <div class="status-item">
-                                    <div class="status-icon online">
-                                        <i class="fas fa-robot"></i>
-                                    </div>
-                                    <div class="status-content">
-                                        <h4>Telegram Bot</h4>
-                                        <span class="status-text" id="bot-status">Online</span>
-                                    </div>
-                                </div>
-                                <div class="status-item">
-                                    <div class="status-icon online">
-                                        <i class="fas fa-chart-line"></i>
-                                    </div>
-                                    <div class="status-content">
-                                        <h4>MetaAPI</h4>
-                                        <span class="status-text" id="metaapi-status">Connected</span>
-                                    </div>
-                                </div>
-                                <div class="status-item">
-                                    <div class="status-icon online">
-                                        <i class="fas fa-exchange-alt"></i>
-                                    </div>
-                                    <div class="status-content">
-                                        <h4>Trade Executor</h4>
-                                        <span class="status-text" id="executor-status">Ready</span>
-                                    </div>
-                                </div>
+                            <div class="log-stats">
+                                <span id="log-count">0 entries</span>
                             </div>
-                            
-                            <!-- Real-time Log Stream -->
-                            <div class="log-terminal" id="log-terminal">
-                                <div class="log-header">
-                                    <i class="fas fa-terminal"></i>
-                                    <span>Live System Logs</span>
-                                    <div class="log-stats">
-                                        <span id="log-count">0 entries</span>
-                                    </div>
-                                </div>
-                                <div class="log-content" id="log-content">
-                                    <div class="log-entry info">
-                                        <span class="log-time">[Loading...]</span>
-                                        <span class="log-level">INFO</span>
-                                        <span class="log-message">Initializing log system...</span>
-                                    </div>
-                                </div>
+                        </div>
+                        <div class="log-content" id="logs-container">
+                            <div class="loading-state">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                <span>Loading live logs...</span>
                             </div>
                         </div>
                     </div>
@@ -575,43 +538,13 @@
         </div>
     </main>
 
-    <!-- Add Account Modal -->
-    <div id="add-account-modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-plus"></i> Add MetaAPI Account</h3>
-                <button class="modal-close" onclick="hideAddAccountModal()">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <form id="add-account-form">
-                    <div class="form-group">
-                        <label for="metaapi-token">MetaAPI Token</label>
-                        <input type="text" id="metaapi-token" placeholder="Enter your MetaAPI account token" required>
-                        <small>Get this from your MetaAPI dashboard</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="account-alias">Account Alias (Optional)</label>
-                        <input type="text" id="account-alias" placeholder="e.g. My Trading Account">
-                        <small>Friendly name to identify this account</small>
-                    </div>
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-outline" onclick="hideAddAccountModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-plus"></i> Add Account
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+
 
     <!-- Notification Container -->
     <div id="notification-container"></div>
 
     <!-- Scripts -->
-    <script src="scripts/simple-dashboard.js"></script>
+    <script src="scripts/clean-dashboard.js"></script>
 
     <style>
         /* Modal Styles */

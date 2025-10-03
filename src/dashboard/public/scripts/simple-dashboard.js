@@ -67,32 +67,31 @@ class SimpleTradingDashboard {
   }
 
   setupEventListeners() {
-    // Add account form
-    const addAccountForm = document.getElementById('add-account-form');
-    if (addAccountForm) {
-      addAccountForm.addEventListener('submit', this.handleAddAccount.bind(this));
-    }
-
-    // Close modal on outside click
-    document.addEventListener('click', (e) => {
-      const modal = document.getElementById('add-account-modal');
-      if (e.target === modal) {
-        this.hideAddAccountModal();
+    // Auto-refresh on visibility change
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        this.loadInitialData();
       }
     });
   }
 
-  // Data Loading
+  // Data Loading - Auto-fetch account data from environment
   async loadInitialData() {
     try {
+      this.showNotification('Loading account data...', 'info');
+      
       await Promise.all([
-        this.loadAccounts(),
+        this.loadMT5Accounts(),
         this.loadSystemStatus(),
+        this.loadPositions(),
+        this.loadTradeHistory(),
         this.updateDashboardStats()
       ]);
+      
+      this.showNotification('Account data loaded successfully!', 'success');
     } catch (error) {
       console.error('Error loading initial data:', error);
-      this.showNotification('Failed to load dashboard data', 'error');
+      this.showNotification('Failed to load account data from environment', 'error');
     }
   }
 
@@ -121,59 +120,63 @@ class SimpleTradingDashboard {
     }
   }
 
-  // API Calls
-  async loadAccounts() {
+  // API Calls - Load MT5 accounts from environment
+  async loadMT5Accounts() {
     try {
-      const response = await fetch('/api/user/accounts');
+      const response = await fetch('/api/mt5/account');
       const result = await response.json();
 
       if (result.success) {
         this.accounts = result.data || [];
-        console.log('Loaded accounts:', this.accounts);
+        console.log('Loaded MT5 accounts:', this.accounts);
         this.renderAccounts();
         this.updateAccountFilter();
       } else {
-        throw new Error(result.error || 'Failed to load accounts');
+        throw new Error(result.error || 'Failed to load MT5 accounts');
       }
     } catch (error) {
-      console.error('Load accounts error:', error);
-      this.showNotification('Failed to load accounts', 'error');
-      // Set empty accounts on error to show empty state
+      console.error('Load MT5 accounts error:', error);
+      this.showNotification('Failed to load MT5 accounts from environment', 'error');
       this.accounts = [];
       this.renderAccounts();
     }
   }
 
+  // Legacy loadAccounts - redirect to MT5 version
+  async loadAccounts() {
+    return this.loadMT5Accounts();
+  }
+
   async loadPositions() {
     try {
-      const response = await fetch('/api/positions');
+      const response = await fetch('/api/mt5/positions');
       const result = await response.json();
 
       if (result.success) {
         this.positions = result.data || [];
         this.renderPositions();
       } else {
-        throw new Error(result.error || 'Failed to load positions');
+        throw new Error(result.error || 'Failed to load MT5 positions');
       }
     } catch (error) {
-      console.error('Load positions error:', error);
-      this.showNotification('Failed to load positions', 'error');
+      console.error('Load MT5 positions error:', error);
+      this.showNotification('Failed to load MT5 positions from IFPro account', 'error');
     }
   }
 
   async loadTradeHistory() {
     try {
-      const response = await fetch('/api/history');
+      const response = await fetch('/api/mt5/trade-history');
       const result = await response.json();
 
       if (result.success) {
         this.renderTradeHistory(result.data || []);
       } else {
-        throw new Error(result.error || 'Failed to load trade history');
+        throw new Error(result.error || 'Failed to load MT5 trade history');
       }
     } catch (error) {
-      console.error('Load trade history error:', error);
-      this.showNotification('Failed to load trade history', 'error');
+      console.error('Load MT5 trade history error:', error);
+      this.showNotification('Failed to load MT5 trade history from IFPro account', 'error');
     }
   }
 
@@ -190,60 +193,7 @@ class SimpleTradingDashboard {
     }
   }
 
-  // Account Management
-  async handleAddAccount(e) {
-    e.preventDefault();
-    
-    const token = document.getElementById('metaapi-token').value.trim();
-    const alias = document.getElementById('account-alias').value.trim();
-
-    if (!token) {
-      this.showNotification('MetaAPI token is required', 'error');
-      return;
-    }
-
-    try {
-      // Show loading state
-      const submitBtn = e.target.querySelector('button[type="submit"]');
-      const originalText = submitBtn.innerHTML;
-      submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding...';
-      submitBtn.disabled = true;
-
-      const response = await fetch('/api/user/accounts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          metaApiAccountId: token,
-          accountAlias: alias || 'My Trading Account',
-          isActive: true
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        this.showNotification(`Account "${result.data.accountAlias}" added successfully`, 'success');
-        this.hideAddAccountModal();
-        document.getElementById('add-account-form').reset();
-        await this.loadAccounts();
-        await this.updateDashboardStats();
-      } else {
-        throw new Error(result.error || 'Failed to add account');
-      }
-    } catch (error) {
-      console.error('Add account error:', error);
-      this.showNotification('Failed to add account: ' + error.message, 'error');
-    } finally {
-      // Reset button state
-      const submitBtn = e.target.querySelector('button[type="submit"]');
-      if (submitBtn) {
-        submitBtn.innerHTML = '<i class="fas fa-plus"></i> Add Account';
-        submitBtn.disabled = false;
-      }
-    }
-  }
+  // Account Management - Automatic from environment
 
   // Rendering Methods
   renderAccounts() {
@@ -256,11 +206,11 @@ class SimpleTradingDashboard {
           <div class="no-data-icon">
             <i class="fas fa-wallet"></i>
           </div>
-          <h3>No Trading Accounts Connected</h3>
-          <p>Connect your MetaAPI trading accounts to start receiving and executing signals</p>
-          <button class="btn btn-primary" onclick="dashboard.showAddAccountModal()">
-            <i class="fas fa-plus"></i> Connect First Account
-          </button>
+          <h3>Loading Trading Accounts...</h3>
+          <p>Fetching account data from environment configuration</p>
+          <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i> Loading IFPro account...
+          </div>
         </div>
       `;
       return;
@@ -517,14 +467,7 @@ class SimpleTradingDashboard {
     select.innerHTML = options.join('');
   }
 
-  // Modal Management
-  showAddAccountModal() {
-    document.getElementById('add-account-modal').style.display = 'block';
-  }
-
-  hideAddAccountModal() {
-    document.getElementById('add-account-modal').style.display = 'none';
-  }
+  // Modal Management - Removed (accounts loaded from environment)
 
   // Account Actions
   async refreshAccount(accountId) {
@@ -981,20 +924,15 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Global utility functions for HTML onclick handlers
-function showAddAccountModal() {
-  if (dashboard) dashboard.showAddAccountModal();
-}
-
-function hideAddAccountModal() {
-  if (dashboard) dashboard.hideAddAccountModal();
-}
+// Add account functions removed - accounts loaded from environment
 
 function refreshAllData() {
   if (dashboard) {
-    dashboard.loadAccounts();
+    dashboard.loadMT5Accounts();
     dashboard.loadPositions();
+    dashboard.loadTradeHistory();
     dashboard.updateDashboardStats();
-    dashboard.showNotification('Data refreshed successfully', 'success');
+    dashboard.showNotification('Account data refreshed from environment', 'success');
   }
 }
 

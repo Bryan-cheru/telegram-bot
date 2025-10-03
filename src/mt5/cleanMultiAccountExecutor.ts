@@ -14,7 +14,6 @@ interface AccountConfig {
   accountType: 'DEMO' | 'LIVE';
   account?: MetatraderAccount;
   connection?: StreamingMetaApiConnectionInstance;
-  rpcConnection?: any; // RPC connection for when terminal is offline
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
 }
 
@@ -99,12 +98,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     try {
       logger.info(`🔗 Connecting ${accountConfig.brokerName} (${accountConfig.accountType})...`);
 
-      // Debug MetaAPI token
-      const token = process.env.METAAPI_TOKEN || '';
-      logger.info(`🔍 Token Debug: Length=${token.length}, First10=${token.substring(0, 10)}..., Last10=...${token.substring(token.length - 10)}`);
-      
       // Get account
-      logger.info(`🔍 Attempting to get account: ${accountConfig.id}`);
       accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
       
       // Deploy if needed
@@ -145,46 +139,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           logger.info(`🔗 ${accountConfig.brokerName} API connected (terminal sync pending)`);
         }
       } else {
-        // Terminal offline but API connected - use RPC connection to fetch account data
+        // Terminal offline but API connected - this is common
+        accountConfig.status = 'CONNECTED';
         logger.warn(`⚠️ ${accountConfig.brokerName} terminal offline but API connected`);
-        logger.info(`🔗 Attempting to fetch account data via RPC connection...`);
-        
-        try {
-          // Use RPC connection when terminal is offline (MetaAPI best practice)
-          const rpcConnection = accountConfig.account!.getRPCConnection();
-          await rpcConnection.connect();
-          
-          // According to MetaAPI docs, RPC doesn't require waitSynchronized for basic operations
-          logger.info(`🔗 RPC connection established for ${accountConfig.brokerName}`);
-          
-          // Fetch account information using RPC API methods
-          const accountInfo = await rpcConnection.getAccountInformation();
-          
-          if (accountInfo) {
-            logger.info(`💰 ${accountConfig.brokerName} Account Info (via RPC):`, {
-              balance: `$${accountInfo.balance?.toLocaleString()}`,
-              equity: `$${accountInfo.equity?.toLocaleString()}`,
-              currency: accountInfo.currency,
-              leverage: accountInfo.leverage,
-              freeMargin: `$${accountInfo.freeMargin?.toLocaleString()}`
-            });
-            
-            // Store RPC connection for data operations when terminal offline
-            accountConfig.rpcConnection = rpcConnection;
-            accountConfig.status = 'CONNECTED';
-            logger.info(`✅ ${accountConfig.brokerName} account data available via RPC (terminal offline)`);
-          } else {
-            logger.warn(`⚠️ No account information returned from ${accountConfig.brokerName} via RPC`);
-            accountConfig.rpcConnection = rpcConnection; // Still store for potential trading
-            accountConfig.status = 'CONNECTED';
-          }
-        } catch (rpcError: any) {
-          logger.error(`❌ Failed to establish RPC connection: ${rpcError.message}`);
-          // Don't fail completely - account might still work for some operations
-          accountConfig.status = 'CONNECTED';
-        }
-        
-        logger.info(`🔗 ${accountConfig.brokerName} ready for API operations (terminal offline)`);
+        logger.info(`🔗 ${accountConfig.brokerName} ready for API operations (trading requires terminal)`);
       }
 
     } catch (error: any) {
@@ -276,51 +234,207 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate Take Profit using ALWAYS 1:1 Risk-Reward ratio
-   * Entry -> SL distance = SL -> TP distance (ALWAYS 1:1 RR, ignores provided targets)
+   * Calculate Stop Loss and Take Profit with realistic distances for $900 risk target
+   * Uses instrument-appropriate distances instead of forcing exact $900 on all instruments
    */
   private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
-    let stopLoss = signal.stopLoss;
+    const fixedLotSize = 0.45;   // Always use 0.45 lot size
+    const targetRisk = 900;      // Target $900 risk
     
-    // Validate SL is realistic based on symbol type
-    const isRealisticSL = this.validateRealisticSL(signal.symbol, entryPrice, stopLoss, signal.action);
+    // Get realistic distance ranges for this instrument
+    const realisticDistance = this.getRealisticRiskDistance(signal.symbol, entryPrice, targetRisk, fixedLotSize);
     
-    if (!stopLoss || !isRealisticSL) {
-      // Calculate conservative SL within realistic limits
-      stopLoss = this.calculateRealisticSL(signal.symbol, entryPrice, signal.action);
-      logger.info(`🔧 Using realistic SL: ${stopLoss.toFixed(5)} (chart SL was unrealistic)`);
-    } else {
-      logger.info(`✅ Using chart SL: ${stopLoss.toFixed(5)} (realistic level)`);
-    }
-
-    // Calculate 1:1 Risk-Reward ratio with realistic TP
-    const riskDistance = Math.abs(entryPrice - stopLoss);
+    let stopLoss: number;
     let takeProfit: number;
-
+    
+    // Calculate SL and TP using realistic distance
     if (signal.action === 'BUY') {
-      takeProfit = entryPrice + riskDistance;
+      stopLoss = entryPrice - realisticDistance;
+      takeProfit = entryPrice + realisticDistance; // 1:1 RR
     } else if (signal.action === 'SELL') {
-      takeProfit = entryPrice - riskDistance;
+      stopLoss = entryPrice + realisticDistance;
+      takeProfit = entryPrice - realisticDistance; // 1:1 RR
     } else {
-      throw new Error(`Invalid action for TP calculation: ${signal.action}`);
+      throw new Error(`Invalid action for SL/TP calculation: ${signal.action}`);
     }
-
-    // Ensure TP is within realistic limits for the symbol
-    takeProfit = this.ensureRealisticTP(signal.symbol, entryPrice, takeProfit, signal.action);
-
-    // Final validation
-    if (signal.action === 'BUY' && takeProfit <= entryPrice) {
-      throw new Error(`Invalid BUY TP: ${takeProfit} must be > Entry ${entryPrice}`);
+    
+    // Calculate actual risk achieved
+    const pipValue = this.getPipValue(signal.symbol);
+    const actualRisk = fixedLotSize * realisticDistance * pipValue;
+    
+    // Final safety validation
+    if (signal.action === 'BUY') {
+      if (stopLoss >= entryPrice) throw new Error(`Invalid BUY SL: ${stopLoss} must be < Entry ${entryPrice}`);
+      if (takeProfit <= entryPrice) throw new Error(`Invalid BUY TP: ${takeProfit} must be > Entry ${entryPrice}`);
+    } else {
+      if (stopLoss <= entryPrice) throw new Error(`Invalid SELL SL: ${stopLoss} must be > Entry ${entryPrice}`);
+      if (takeProfit >= entryPrice) throw new Error(`Invalid SELL TP: ${takeProfit} must be < Entry ${entryPrice}`);
     }
-    if (signal.action === 'SELL' && takeProfit >= entryPrice) {
-      throw new Error(`Invalid SELL TP: ${takeProfit} must be < Entry ${entryPrice}`);
-    }
-
-    // Update signal with corrected stop loss
+    
+    // Update signal with calculated stop loss
     signal.stopLoss = stopLoss;
-
-    logger.info(`🎯 REALISTIC 1:1 RR - Entry: ${entryPrice}, SL: ${stopLoss.toFixed(5)}, TP: ${takeProfit.toFixed(5)}, Risk: ${riskDistance.toFixed(5)}`);
+    
+    logger.info(`💰 REALISTIC RISK STRATEGY - ${signal.symbol}:`);
+    logger.info(`   Target Risk: $${targetRisk} (goal)`);
+    logger.info(`   Lot Size: ${fixedLotSize} lots (fixed)`);
+    logger.info(`   Entry: ${entryPrice.toFixed(5)}`);
+    logger.info(`   Stop Loss: ${stopLoss.toFixed(5)}`);
+    logger.info(`   Take Profit: ${takeProfit.toFixed(5)}`);
+    logger.info(`   Risk Distance: ${realisticDistance.toFixed(5)} points`);
+    logger.info(`   Actual Risk: $${actualRisk.toFixed(2)} (${((actualRisk/targetRisk)*100).toFixed(1)}% of target)`);
+    logger.info(`   Risk/Reward: 1:1 (equal distance)`);
+    
     return takeProfit;
+  }
+
+  /**
+   * Calculate realistic risk distance for different instruments
+   * Balances between $900 target and realistic market conditions
+   */
+  private getRealisticRiskDistance(symbol: string, entryPrice: number, targetRisk: number, lotSize: number): number {
+    const upperSymbol = symbol.toUpperCase();
+    const pipValue = this.getPipValue(symbol);
+    
+    // Calculate ideal distance for $900 risk
+    const idealDistance = targetRisk / (lotSize * pipValue);
+    
+    // Apply realistic limits per instrument
+    let maxDistance: number;
+    let minDistance: number;
+    let recommendedDistance: number;
+    
+    if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      // Gold: Realistic range $20-$150, recommended $50-$100
+      minDistance = 20;   // $20 minimum
+      maxDistance = 150;  // $150 maximum  
+      recommendedDistance = Math.min(idealDistance, 80); // Try for $80 if possible
+      
+    } else if (upperSymbol.includes('JPY')) {
+      // JPY pairs: 0.5-5.0 yen range, recommended 1-3 yen
+      minDistance = 0.5;
+      maxDistance = 5.0;
+      recommendedDistance = Math.min(idealDistance, 2.0);
+      
+    } else if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+      // Major forex: 20-500 pips, recommended 50-200 pips
+      minDistance = 0.0020; // 20 pips
+      maxDistance = 0.0500; // 500 pips
+      recommendedDistance = Math.min(idealDistance, 0.0150); // 150 pips
+      
+    } else {
+      // Other instruments: Use percentage of price
+      minDistance = entryPrice * 0.005;  // 0.5%
+      maxDistance = entryPrice * 0.05;   // 5%
+      recommendedDistance = Math.min(idealDistance, entryPrice * 0.02); // 2%
+    }
+    
+    // Use the most appropriate distance
+    let finalDistance: number;
+    
+    if (idealDistance <= maxDistance && idealDistance >= minDistance) {
+      // Ideal distance is within realistic range - use it
+      finalDistance = idealDistance;
+    } else if (idealDistance > maxDistance) {
+      // Ideal distance too large - use recommended distance
+      finalDistance = recommendedDistance;
+    } else {
+      // Ideal distance too small - use minimum
+      finalDistance = Math.max(minDistance, recommendedDistance * 0.5);
+    }
+    
+    // Calculate what risk this actually gives us
+    const actualRisk = lotSize * finalDistance * pipValue;
+    
+    logger.info(`🎯 Risk distance calculation for ${symbol}:`);
+    logger.info(`   Ideal for $900: ${idealDistance.toFixed(5)} points`);
+    logger.info(`   Realistic range: ${minDistance.toFixed(5)} - ${maxDistance.toFixed(5)}`);
+    logger.info(`   Using: ${finalDistance.toFixed(5)} points`);
+    logger.info(`   Will risk: $${actualRisk.toFixed(2)}`);
+    
+    return finalDistance;
+  }
+
+  /**
+   * Validate if calculated SL and TP levels are realistic for the symbol type
+   */
+  private validateCalculatedLevels(symbol: string, entryPrice: number, stopLoss: number, takeProfit: number, action: string): boolean {
+    if (!stopLoss || stopLoss <= 0 || !takeProfit || takeProfit <= 0) return false;
+    
+    const upperSymbol = symbol.toUpperCase();
+    const slDistance = Math.abs(entryPrice - stopLoss);
+    const tpDistance = Math.abs(entryPrice - takeProfit);
+    const slPercentage = (slDistance / entryPrice) * 100;
+    
+    // Check if SL and TP are on correct sides
+    if (action === 'BUY') {
+      if (stopLoss >= entryPrice || takeProfit <= entryPrice) return false;
+    } else if (action === 'SELL') {
+      if (stopLoss <= entryPrice || takeProfit >= entryPrice) return false;
+    }
+    
+    // Symbol-specific realistic level validation
+    if (upperSymbol.includes('JPY')) {
+      // JPY pairs: levels should be 0.5% - 5% away from entry
+      return slPercentage >= 0.5 && slPercentage <= 5.0 && slDistance >= 0.5 && slDistance <= 8.0;
+    }
+    
+    if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      // Gold: levels should be $5-$200 away from entry
+      return slDistance >= 5 && slDistance <= 200 && tpDistance >= 5 && tpDistance <= 200;
+    }
+    
+    if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+      // Major forex: levels should be 10-800 pips away
+      return slDistance >= 0.0010 && slDistance <= 0.0800 && tpDistance >= 0.0010 && tpDistance <= 0.0800;
+    }
+    
+    // General: 0.5% - 8% range
+    return slPercentage >= 0.5 && slPercentage <= 8.0;
+  }
+
+  /**
+   * Adjust calculated levels to realistic ranges while maintaining risk target as close as possible
+   */
+  private adjustToRealisticLevels(symbol: string, entryPrice: number, targetRiskDistance: number, action: string): { stopLoss: number; takeProfit: number } {
+    const upperSymbol = symbol.toUpperCase();
+    let maxDistance: number;
+    let minDistance: number;
+    
+    // Symbol-specific realistic distance limits
+    if (upperSymbol.includes('JPY')) {
+      minDistance = 0.5;   // 50 pips minimum
+      maxDistance = 8.0;   // 800 pips maximum
+    } else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      minDistance = 5;     // $5 minimum
+      maxDistance = 200;   // $200 maximum
+    } else if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+      minDistance = 0.0010; // 10 pips minimum
+      maxDistance = 0.0800; // 800 pips maximum
+    } else {
+      // General: Use percentage-based limits
+      minDistance = entryPrice * 0.005; // 0.5%
+      maxDistance = entryPrice * 0.08;  // 8%
+    }
+    
+    // Clamp the target distance to realistic limits
+    let adjustedDistance = Math.max(minDistance, Math.min(maxDistance, targetRiskDistance));
+    
+    let stopLoss: number;
+    let takeProfit: number;
+    
+    if (action === 'BUY') {
+      stopLoss = entryPrice - adjustedDistance;
+      takeProfit = entryPrice + adjustedDistance; // Maintain 1:1 RR
+    } else {
+      stopLoss = entryPrice + adjustedDistance;
+      takeProfit = entryPrice - adjustedDistance; // Maintain 1:1 RR
+    }
+    
+    logger.info(`🔧 Adjusted levels for ${symbol}:`);
+    logger.info(`   Target distance: ${targetRiskDistance.toFixed(5)} -> Adjusted: ${adjustedDistance.toFixed(5)}`);
+    logger.info(`   Limits: ${minDistance.toFixed(5)} - ${maxDistance.toFixed(5)}`);
+    
+    return { stopLoss, takeProfit };
   }
 
   /**
@@ -438,117 +552,61 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     try {
       logger.info(`💼 Executing on ${accountConfig.brokerName}...`);
 
-      if (!accountConfig.connection && !accountConfig.rpcConnection) {
-        throw new Error('No connection available (neither streaming nor RPC)');
-      }
-
-      // Use RPC connection if streaming connection is not available
-      const activeConnection = accountConfig.connection || accountConfig.rpcConnection;
-      if (!activeConnection) {
-        throw new Error('No active connection available');
+      if (!accountConfig.connection) {
+        throw new Error('Connection not available');
       }
 
       // Enhanced connection status check for IFPro-Trade debugging
       if (accountConfig.brokerName === 'IFPro-Trade') {
+        const terminalState = accountConfig.connection.terminalState;
+        const accountInfo = terminalState.accountInformation;
         logger.info(`🔍 IFPro-Trade connection status:`);
-        
-        if (accountConfig.connection) {
-          // Streaming connection available
-          const terminalState = accountConfig.connection.terminalState;
-          const accountInfo = terminalState.accountInformation;
-          logger.info(`   - Connection Type: Streaming`);
-          logger.info(`   - Connected: ${terminalState.connected}`);
-          logger.info(`   - ConnectedToBroker: ${terminalState.connectedToBroker}`);
-          logger.info(`   - Synchronized: ${accountConfig.connection.synchronized}`);
-          logger.info(`   - Account Info Available: ${!!accountInfo}`);
-          if (accountInfo) {
-            logger.info(`   - Balance: ${accountInfo.balance}`);
-            logger.info(`   - Equity: ${accountInfo.equity}`);
-            logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
-            logger.info(`   - Currency: ${accountInfo.currency}`);
-          }
-        } else if (accountConfig.rpcConnection) {
-          // RPC connection only
-          logger.info(`   - Connection Type: RPC (Terminal Offline)`);
-          try {
-            const accountInfo = await accountConfig.rpcConnection.getAccountInformation();
-            if (accountInfo) {
-              logger.info(`   - Balance: $${accountInfo.balance?.toLocaleString()}`);
-              logger.info(`   - Equity: $${accountInfo.equity?.toLocaleString()}`);
-              logger.info(`   - Currency: ${accountInfo.currency}`);
-              logger.info(`   - Leverage: ${accountInfo.leverage}`);
-            }
-          } catch (infoError) {
-            logger.warn(`   - Could not fetch account info: ${(infoError as any)?.message || infoError}`);
-          }
+        logger.info(`   - Connected: ${terminalState.connected}`);
+        logger.info(`   - ConnectedToBroker: ${terminalState.connectedToBroker}`);
+        logger.info(`   - Synchronized: ${accountConfig.connection.synchronized}`);
+        logger.info(`   - Account Info Available: ${!!accountInfo}`);
+        if (accountInfo) {
+          logger.info(`   - Balance: ${accountInfo.balance}`);
+          logger.info(`   - Equity: ${accountInfo.equity}`);
+          logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
+          logger.info(`   - Margin Mode: ${accountInfo.marginMode}`);
+          logger.info(`   - Currency: ${accountInfo.currency}`);
+          logger.info(`   - Server: ${accountInfo.server}`);
+          logger.info(`   - Name: ${accountInfo.name}`);
+          logger.info(`   - Login: ${accountInfo.login}`);
         }
       }
 
       // Step 1: Get valid symbol (fallback implementation)
       const validSymbol = signal.symbol;
 
-      // Step 2: Get market data using appropriate connection type (MetaAPI best practice)
-      let marketData = { bid: 0, ask: 0 };
-      
-      // Use streaming connection first (best performance)
-      if (accountConfig.connection?.terminalState) {
-        const price = accountConfig.connection.terminalState.price(validSymbol);
-        marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
-        logger.info(`📊 Market data from streaming: ${validSymbol} bid=${marketData.bid} ask=${marketData.ask}`);
-      }
-      // Fallback to RPC connection for offline terminals
-      else if (accountConfig.rpcConnection) {
-        try {
-          // Subscribe to market data first (required by MetaAPI)
-          await accountConfig.rpcConnection.subscribeToMarketData(validSymbol);
-          const symbolPrice = await accountConfig.rpcConnection.getSymbolPrice(validSymbol);
-          marketData = { bid: symbolPrice.bid, ask: symbolPrice.ask };
-          logger.info(`📊 Market data from RPC: ${validSymbol} bid=${marketData.bid} ask=${marketData.ask}`);
-          // Unsubscribe to clean up
-          await accountConfig.rpcConnection.unsubscribeFromMarketData(validSymbol);
-        } catch (priceError) {
-          logger.warn(`Could not get price for ${validSymbol} via RPC: ${priceError}`);
-          // Use fallback entry price from signal
-          const fallbackPrice = signal.entryPrice || 1.0;
-          marketData = { bid: fallbackPrice, ask: fallbackPrice };
-        }
-      }
+      // Step 2: Get market data from connection
+      const terminalState = accountConfig.connection.terminalState;
+      const price = terminalState.price(validSymbol);
+      const marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
 
-      // Step 3: Calculate entry price and volume using MetaAPI best practices
+      // Step 3: Calculate entry price and volume
       const entryPrice = this.calculateEntryPrice(signal, marketData);
-      // Use fixed lot size for prop firm consistency
-      const volume = this.calculateVolume(accountConfig.connection || accountConfig.rpcConnection, signal);
+      // Calculate position size using proper risk management
+      const volume = this.calculateVolume(accountConfig.connection, signal);
 
       // Step 3.5: Calculate take profit using 1:1 RR default
       const takeProfit = this.calculateTakeProfit(signal, entryPrice);
 
-      // Step 4: Execute trade using appropriate connection (MetaAPI best practice)
+      // Step 4: Execute the trade using MetaAPI (validation happens in getValidSymbol)
       let result;
       const tradeOptions = {
-        comment: `TG_BOT_${signal.symbol}_${Date.now()}`,
-        clientId: `TG_${accountConfig.id}_${Date.now()}`
+        comment: 'Bot Trade'
       };
 
-      // Determine which connection to use for trading
-      const tradingConnection = accountConfig.connection || accountConfig.rpcConnection;
-      
-      if (!tradingConnection) {
-        throw new Error(`No connection available for trading on ${accountConfig.brokerName}`);
-      }
-
       // Check if this should be a market order or limit order
-      const orderType = signal.orderType || 'LIMIT'; // Default to LIMIT for better execution
-      
-      logger.info(`📊 Executing ${orderType} ${signal.action} order for ${validSymbol}`);
-      logger.info(`   Volume: ${volume} lots`);
-      logger.info(`   Entry: ${entryPrice}`);
-      logger.info(`   Stop Loss: ${signal.stopLoss}`);
-      logger.info(`   Take Profit: ${takeProfit}`);
+      // 🎯 DEFAULT TO LIMIT ORDERS (as per your excellent suggestion!)
+      const orderType = signal.orderType || 'LIMIT'; // Always LIMIT by default for better execution
       
       if (orderType === 'MARKET') {
         // Market orders - execute immediately at current price
         if (signal.action === 'BUY') {
-          result = await tradingConnection.createMarketBuyOrder(
+          result = await accountConfig.connection.createMarketBuyOrder(
             validSymbol,
             volume,
             signal.stopLoss,
@@ -556,7 +614,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             tradeOptions
           );
         } else if (signal.action === 'SELL') {
-          result = await tradingConnection.createMarketSellOrder(
+          result = await accountConfig.connection.createMarketSellOrder(
             validSymbol,
             volume,
             signal.stopLoss,
@@ -569,7 +627,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       } else {
         // Limit orders - execute at specified entry price
         if (signal.action === 'BUY') {
-          result = await tradingConnection.createLimitBuyOrder(
+          result = await accountConfig.connection.createLimitBuyOrder(
             validSymbol,
             volume,
             entryPrice,
@@ -578,7 +636,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             tradeOptions
           );
         } else if (signal.action === 'SELL') {
-          result = await tradingConnection.createLimitSellOrder(
+          result = await accountConfig.connection.createLimitSellOrder(
             validSymbol,
             volume,
             entryPrice,
@@ -649,64 +707,225 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate trade volume based on MetaAPI best practices
-   * For prop firm trading, always use fixed lot size as per MetaAPI documentation
+   * Calculate trade volume based on fixed risk and lot size strategy
+   * Fixed: $900 risk per trade with 0.45 lot size
    */
   private calculateVolume(connection: any, signal: TradeSignal): number {
     try {
-      // For prop firm trading, always use fixed lot size (MetaAPI best practice)
-      const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+      const accountInfo = connection.terminalState.accountInformation;
+      const balance = accountInfo?.balance || 10000;
       
-      logger.info(`📊 Using FIXED position size for prop firm trading: ${fixedLotSize} lots`);
-      logger.info(`   Symbol: ${signal.symbol}`);
-      logger.info(`   Entry Price: ${signal.entryPrice || 'Market'}`);
-      logger.info(`   Stop Loss: ${signal.stopLoss || 'Not set'}`);
-      logger.info(`   Take Profit Targets: ${signal.targets?.join(', ') || 'Not set'}`);
+      // FIXED RISK AND LOT SIZE STRATEGY
+      const fixedRiskAmount = 900; // Always risk $900 per trade
+      const fixedLotSize = 0.45;   // Always use 0.45 lot size
       
+      // Calculate entry price (use middle of entry zone)
+      const entryPrice = signal.entryZone ? 
+        (signal.entryZone.min + signal.entryZone.max) / 2 : 
+        signal.entryPrice || 0;
+        
+      // Calculate risk distance for logging purposes
+      let riskDistance = 0;
+      if (signal.stopLoss && entryPrice) {
+        riskDistance = Math.abs(entryPrice - signal.stopLoss);
+      }
+      
+      // Get pip value based on symbol for risk calculation
+      const pipValue = this.getPipValue(signal.symbol);
+      
+      // Calculate actual risk with fixed lot size (for monitoring)
+      const actualRisk = fixedLotSize * riskDistance * pipValue;
+      const actualRiskPercentage = (actualRisk / balance) * 100;
+      
+      logger.info(`💰 FIXED RISK STRATEGY for ${signal.symbol}:`);
+      logger.info(`   Account Balance: $${balance.toLocaleString()}`);
+      logger.info(`   Fixed Risk Amount: $${fixedRiskAmount} (target)`);
+      logger.info(`   Fixed Lot Size: ${fixedLotSize} lots (always)`);
+      logger.info(`   Entry: ${entryPrice}, Stop: ${signal.stopLoss}`);
+      logger.info(`   Risk Distance: ${riskDistance.toFixed(5)} pips`);
+      logger.info(`   Pip Value: $${pipValue} per pip per lot`);
+      logger.info(`   Calculated Actual Risk: $${actualRisk.toFixed(2)} (${actualRiskPercentage.toFixed(2)}%)`);
+      
+      // Always return the fixed lot size
       return fixedLotSize;
       
     } catch (error) {
       logger.error('Volume calculation error:', error);
-      const fallbackSize = parseFloat(process.env.MIN_LOT_SIZE || '0.01');
-      logger.warn(`Using fallback lot size: ${fallbackSize}`);
-      return fallbackSize;
+      // Even on error, return the fixed lot size
+      return 0.45;
     }
   }
 
   /**
-   * Get pip value for different instruments
+   * Get pip value for different instruments - Comprehensive list for Instant Funding & Prop Firms
+   * Values are per 1 standard lot (100,000 units for forex, contract size varies for others)
    */
   private getPipValue(symbol: string): number {
     const upperSymbol = symbol.toUpperCase();
     
-    // Forex pairs
+    // =============================================================================
+    // FOREX PAIRS
+    // =============================================================================
+    
+    // JPY Pairs (pip = 0.01, worth $10 per standard lot)
     if (upperSymbol.includes('JPY')) {
-      return 10; // $10 per pip for JPY pairs (standard lot)
-    } else if (this.isForexPair(upperSymbol)) {
-      return 10; // $10 per pip for major pairs (standard lot)
+      return 10; // $10 per pip (0.01 move)
     }
     
-    // Metals
+    // Major & Minor Forex Pairs (pip = 0.0001, worth $10 per standard lot)
+    if (this.isForexPair(upperSymbol)) {
+      return 10; // $10 per pip (0.0001 move)
+    }
+    
+    // =============================================================================
+    // METALS (Precious Metals)
+    // =============================================================================
+    
     if (['XAUUSD', 'GOLD'].includes(upperSymbol)) {
-      return 1; // $1 per point
+      return 100; // $100 per $1 move (1 lot = 100 troy ounces)
     }
     
     if (['XAGUSD', 'SILVER'].includes(upperSymbol)) {
-      return 50; // $50 per point
+      return 5000; // $5000 per $1 move (1 lot = 5000 troy ounces)
     }
     
-    // Indices
-    if (['NAS100', 'NASDAQ'].includes(upperSymbol)) {
+    if (['XPTUSD', 'PLATINUM'].includes(upperSymbol)) {
+      return 100; // $100 per $1 move (1 lot = 100 troy ounces)
+    }
+    
+    if (['XPDUSD', 'PALLADIUM'].includes(upperSymbol)) {
+      return 100; // $100 per $1 move (1 lot = 100 troy ounces)
+    }
+    
+    // =============================================================================
+    // US INDICES
+    // =============================================================================
+    
+    if (['NAS100', 'NASDAQ', 'US100', 'NDX'].includes(upperSymbol)) {
       return 1; // $1 per point
     }
     
-    if (['SPX500', 'US30'].includes(upperSymbol)) {
+    if (['SPX500', 'US500', 'SP500'].includes(upperSymbol)) {
       return 1; // $1 per point
     }
     
-    // Default for unknown instruments
-    logger.warn(`Unknown instrument ${symbol}, using default pip value`);
-    return 10; // Default to $10 per pip
+    if (['US30', 'DJ30', 'DOWJONES', 'DJI'].includes(upperSymbol)) {
+      return 1; // $1 per point
+    }
+    
+    if (['US2000', 'RUSSELL2000', 'RUT'].includes(upperSymbol)) {
+      return 1; // $1 per point
+    }
+    
+    // =============================================================================
+    // EUROPEAN INDICES
+    // =============================================================================
+    
+    if (['GER30', 'DE30', 'DAX', 'GERMANY30'].includes(upperSymbol)) {
+      return 1; // €1 per point (≈$1 per point)
+    }
+    
+    if (['UK100', 'FTSE100', 'FTSE'].includes(upperSymbol)) {
+      return 1; // £1 per point (≈$1.25 per point)
+    }
+    
+    if (['FR40', 'CAC40', 'FRANCE40'].includes(upperSymbol)) {
+      return 1; // €1 per point (≈$1 per point)
+    }
+    
+    if (['EU50', 'STOXX50', 'EUSTX50'].includes(upperSymbol)) {
+      return 1; // €1 per point (≈$1 per point)
+    }
+    
+    // =============================================================================
+    // ASIAN INDICES
+    // =============================================================================
+    
+    if (['JPN225', 'NIKKEI', 'N225'].includes(upperSymbol)) {
+      return 5; // ¥500 per point (≈$5 per point)
+    }
+    
+    if (['HK50', 'HANGSENG', 'HSI'].includes(upperSymbol)) {
+      return 1; // HK$1 per point (≈$0.13, but treat as $1)
+    }
+    
+    if (['AUS200', 'AU200', 'ASX200'].includes(upperSymbol)) {
+      return 1; // A$1 per point (≈$0.65, but treat as $1)
+    }
+    
+    // =============================================================================
+    // COMMODITIES
+    // =============================================================================
+    
+    // Energy
+    if (['USOIL', 'OIL', 'CL', 'CRUDE'].includes(upperSymbol)) {
+      return 1000; // $1000 per $1 move (1 lot = 1000 barrels)
+    }
+    
+    if (['UKOIL', 'BRENT'].includes(upperSymbol)) {
+      return 1000; // $1000 per $1 move (1 lot = 1000 barrels)
+    }
+    
+    if (['NGAS', 'NATURALGAS', 'NG'].includes(upperSymbol)) {
+      return 10000; // $10000 per $1 move (1 lot = 10,000 MMBtu)
+    }
+    
+    // Agricultural
+    if (['WHEAT', 'WEAT'].includes(upperSymbol)) {
+      return 50; // $50 per point (1 lot = 5000 bushels, 1¢ = $50)
+    }
+    
+    if (['CORN'].includes(upperSymbol)) {
+      return 50; // $50 per point (1 lot = 5000 bushels, 1¢ = $50)
+    }
+    
+    if (['SOYBEAN', 'SOYA'].includes(upperSymbol)) {
+      return 50; // $50 per point (1 lot = 5000 bushels, 1¢ = $50)
+    }
+    
+    // =============================================================================
+    // CRYPTOCURRENCIES (if offered by prop firm)
+    // =============================================================================
+    
+    if (['BTCUSD', 'BITCOIN'].includes(upperSymbol)) {
+      return 1; // $1 per $1 move (varies by broker, usually 0.01-1 lot size)
+    }
+    
+    if (['ETHUSD', 'ETHEREUM'].includes(upperSymbol)) {
+      return 1; // $1 per $1 move (varies by broker)
+    }
+    
+    // =============================================================================
+    // BONDS (Government Bonds)
+    // =============================================================================
+    
+    if (['US10Y', 'TNX', 'TREASURY'].includes(upperSymbol)) {
+      return 1000; // $1000 per full point (1 tick = $15.625)
+    }
+    
+    if (['GER10Y', 'BUND'].includes(upperSymbol)) {
+      return 1000; // €1000 per full point
+    }
+    
+    // =============================================================================
+    // DEFAULT HANDLING
+    // =============================================================================
+    
+    // Check if it looks like a forex pair we missed
+    if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
+      logger.warn(`⚠️ Unknown forex pair ${symbol}, using standard $10 per pip`);
+      return 10;
+    }
+    
+    // Check if it looks like an index (usually has numbers)
+    if (/\d/.test(upperSymbol)) {
+      logger.warn(`⚠️ Unknown index ${symbol}, using $1 per point`);
+      return 1;
+    }
+    
+    // Default for completely unknown instruments
+    logger.warn(`❓ Unknown instrument ${symbol}, using conservative $10 per point`);
+    return 10;
   }
 
   /**
@@ -776,11 +995,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   async getAllAccountsData() {
     const accountStatuses = this.getAccountStatuses();
     
-    return Promise.all(accountStatuses.map(async (acc) => {
+    return accountStatuses.map(acc => {
       const accountConfig = this.accounts.get(acc.id);
       
-      // If account is not connected, return basic info with zeros
-      if (acc.status !== 'CONNECTED' || (!accountConfig?.connection && !accountConfig?.rpcConnection)) {
+      // If account is not connected or no connection, return basic info with zeros
+      if (acc.status !== 'CONNECTED' || !accountConfig?.connection?.terminalState) {
         return {
           ...acc,
           balance: 0,
@@ -793,32 +1012,15 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       }
       
       try {
-        let accountInfo: any = {};
-        let positions: any[] = [];
+        // Get real account information from MetaAPI terminal state
+        const accountInfo = accountConfig.connection.terminalState.accountInformation || {};
+        const positions = accountConfig.connection.terminalState.positions || [];
         
-        // Try streaming connection first (MetaAPI best practice)
-        if (accountConfig.connection?.terminalState) {
-          accountInfo = accountConfig.connection.terminalState.accountInformation || {};
-          positions = accountConfig.connection.terminalState.positions || [];
-        }
-        // Fallback to RPC connection for offline terminal (as per MetaAPI docs)
-        else if (accountConfig.rpcConnection) {
-          try {
-            // Use RPC methods as documented in MetaAPI SDK
-            accountInfo = await accountConfig.rpcConnection.getAccountInformation() || {};
-            positions = await accountConfig.rpcConnection.getPositions() || [];
-          } catch (rpcError) {
-            logger.warn(`RPC data fetch failed for ${acc.brokerName}:`, rpcError);
-            accountInfo = {};
-            positions = [];
-          }
-        }
-        
-        // Extract financial data with proper type handling
-        const balance = accountInfo?.balance || 0;
-        const equity = accountInfo?.equity || balance;
-        const freeMargin = accountInfo?.freeMargin || 0;
-        const marginLevel = accountInfo?.marginLevel || 0;
+        // Extract real financial data
+        const balance = accountInfo.balance || 0;
+        const equity = accountInfo.equity || balance;
+        const freeMargin = accountInfo.freeMargin || 0;
+        const marginLevel = accountInfo.marginLevel || 0;
         
         // Format positions with essential info for dashboard
         const formattedPositions = positions.map((pos: any) => ({
@@ -857,7 +1059,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           error: 'Failed to fetch account data'
         };
       }
-    }));
+    });
   }
 
   async closePosition(accountId: string, positionId: string) {

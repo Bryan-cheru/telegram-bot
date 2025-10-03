@@ -8,6 +8,7 @@
     "dev": "ts-node src/app.ts",
     "build": "tsc -p tsconfig.prod.json && npm run copy-dashboard",
     "copy-dashboard": "node -e \"const fs=require('fs'),path=require('path'); const src='src/dashboard/public', dest='dist/dashboard/public'; fs.mkdirSync(path.dirname(dest), {recursive:true}); fs.cpSync(src, dest, {recursive:true}); console.log('Dashboard files copied to dist');\"",
+    "postinstall": "npm run build",
     "watch": "tsc -w",
     "dashboard": "npm run build && npm start",
     "local": "cross-env NODE_ENV=local npm run dev",
