@@ -98,7 +98,12 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     try {
       logger.info(`🔗 Connecting ${accountConfig.brokerName} (${accountConfig.accountType})...`);
 
+      // Debug MetaAPI token
+      const token = process.env.METAAPI_TOKEN || '';
+      logger.info(`🔍 Token Debug: Length=${token.length}, First10=${token.substring(0, 10)}..., Last10=...${token.substring(token.length - 10)}`);
+      
       // Get account
+      logger.info(`🔍 Attempting to get account: ${accountConfig.id}`);
       accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
       
       // Deploy if needed
