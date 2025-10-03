@@ -45,11 +45,29 @@ const gracefulShutdown = async (signal: string) => {
 
 // Global error handlers to prevent unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('🚨 CRITICAL: Unhandled Rejection detected', { promise, reason });
-  // Don't exit immediately - log the error but continue
-  if (typeof reason === 'object' && reason !== null) {
+  logger.error('🚨 CRITICAL: Unhandled Rejection detected');
+  logger.error('Promise:', promise);
+  
+  // Enhanced error logging for better debugging
+  if (reason instanceof Error) {
+    logger.error('Error Name:', reason.name);
+    logger.error('Error Message:', reason.message);
+    logger.error('Error Stack:', reason.stack);
+    
+    // Check if this is a MongoDB authentication error
+    if (reason.message?.includes('authentication failed') || reason.message?.includes('bad auth')) {
+      logger.warn('⚠️ This appears to be a MongoDB authentication error - check your database credentials');
+      logger.warn('💡 The bot will continue running without database features');
+      return; // Don't exit for MongoDB auth failures
+    }
+  } else if (typeof reason === 'object' && reason !== null) {
     logger.error('Rejection details:', JSON.stringify(reason, null, 2));
+  } else {
+    logger.error('Rejection reason:', reason);
   }
+  
+  // Don't exit immediately - log the error but continue
+  logger.warn('⚠️ Continuing operation despite unhandled rejection...');
 });
 
 process.on('uncaughtException', (error) => {

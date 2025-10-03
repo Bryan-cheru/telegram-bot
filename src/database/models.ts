@@ -223,11 +223,17 @@ export class DatabaseModels {
 
   static async getModels() {
     if (!this.models.TradingUser) {
-      const connection = await dbConnection.connect();
-      
-      this.models.TradingUser = connection.model<ITradingUser>('TradingUser', TradingUserSchema);
-      this.models.SignalHistory = connection.model<ISignalHistory>('SignalHistory', SignalHistorySchema);
-      this.models.UserMetaApiAccount = connection.model<IUserMetaApiAccount>('UserMetaApiAccount', UserMetaApiAccountSchema);
+      try {
+        const connection = await dbConnection.connect();
+        
+        this.models.TradingUser = connection.model<ITradingUser>('TradingUser', TradingUserSchema);
+        this.models.SignalHistory = connection.model<ISignalHistory>('SignalHistory', SignalHistorySchema);
+        this.models.UserMetaApiAccount = connection.model<IUserMetaApiAccount>('UserMetaApiAccount', UserMetaApiAccountSchema);
+      } catch (error) {
+        // Log error but don't throw to prevent unhandled rejections
+        console.error('Failed to initialize database models:', error);
+        throw error; // Re-throw so callers can handle appropriately
+      }
     }
 
     return this.models;

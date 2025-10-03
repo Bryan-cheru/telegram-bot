@@ -75,6 +75,10 @@ export class DatabaseConnection {
 
       connection.on('error', (error) => {
         logger.error('❌ MongoDB connection error:', error);
+        // Prevent unhandled rejections by properly handling connection errors
+        if (error.message?.includes('authentication failed') || error.message?.includes('bad auth')) {
+          logger.warn('⚠️ MongoDB authentication failure - database features will be unavailable');
+        }
       });
 
       connection.on('disconnected', () => {

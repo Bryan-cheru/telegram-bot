@@ -26,9 +26,31 @@ declare global {
 let authService: AuthService;
 
 export const initializeAuth = async (): Promise<void> => {
-  authService = new AuthService();
-  await authService.initialize();
-  logger.info('🔐 Authentication middleware initialized');
+  try {
+    authService = new AuthService();
+    
+    // Add timeout to prevent hanging on MongoDB connection
+    const initPromise = authService.initialize();
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error('Authentication middleware initialization timeout')), 10000);
+    });
+    
+    await Promise.race([initPromise, timeoutPromise]);
+    logger.info('🔐 Authentication middleware initialized');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
+    if (errorMessage.includes('authentication failed') || errorMessage.includes('bad auth')) {
+      logger.warn('⚠️ MongoDB authentication failed - authentication middleware disabled');
+    } else if (errorMessage.includes('timeout')) {
+      logger.warn('⚠️ Authentication middleware initialization timed out - disabled');
+    } else {
+      logger.error('❌ Failed to initialize authentication middleware:', error);
+    }
+    
+    // Don't throw - allow app to continue without auth
+    authService = null as any;
+  }
 };
 
 /**

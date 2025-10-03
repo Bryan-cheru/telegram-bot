@@ -13,16 +13,33 @@ export class MessageHandler {
 
   /**
    * Optional authentication service initialization
+   * Properly handles MongoDB connection failures without causing unhandled rejections
    */
   private async initializeAuthService(): Promise<void> {
     try {
       const { AuthService } = await import('../../auth/AuthService');
       this.authService = new AuthService();
-      await this.authService.initialize();
+      
+      // Add timeout to prevent hanging on MongoDB connection
+      const initPromise = this.authService.initialize();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Authentication service initialization timeout')), 10000);
+      });
+      
+      await Promise.race([initPromise, timeoutPromise]);
       logger.info('✅ Authentication service enabled');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.info('ℹ️ Authentication service not available:', errorMessage);
+      
+      // Log appropriate level based on error type
+      if (errorMessage.includes('authentication failed') || errorMessage.includes('bad auth')) {
+        logger.warn('⚠️ MongoDB authentication failed - running without database features');
+      } else if (errorMessage.includes('timeout')) {
+        logger.warn('⚠️ Authentication service initialization timed out - continuing without database');
+      } else {
+        logger.info('ℹ️ Authentication service not available:', errorMessage);
+      }
+      
       this.authService = null;
     }
   }
