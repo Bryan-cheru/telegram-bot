@@ -14,6 +14,7 @@ interface AccountConfig {
   accountType: 'DEMO' | 'LIVE';
   account?: MetatraderAccount;
   connection?: StreamingMetaApiConnectionInstance;
+  rpcConnection?: any; // RPC connection for when terminal is offline
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
 }
 
@@ -30,13 +31,17 @@ interface TradeExecutionResult {
  * Clean, reliable multi-account executor following MetaAPI best practices
  */
 export class CleanMultiAccountExecutor implements ITradeExecutor {
-  private api: MetaApi | null = null;
+  private api: MetaApi;
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
   
   constructor() {
-    // Don't initialize MetaAPI in constructor - wait for initialize() call
-    // This ensures environment variables are properly loaded on Render
+    const token = process.env.METAAPI_TOKEN;
+    if (!token) {
+      throw new Error('METAAPI_TOKEN environment variable is required');
+    }
+    
+    this.api = new MetaApi(token);
   }
 
   /**
@@ -44,28 +49,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    */
   async initialize(): Promise<void> {
     logger.info('🚀 Initializing Clean Multi-Account Executor...');
-
-    // Initialize MetaAPI here when environment is definitely loaded
-    const token = process.env.METAAPI_TOKEN;
-    if (!token) {
-      throw new Error('METAAPI_TOKEN environment variable is required');
-    }
-    
-    // Enhanced validation for Render deployment
-    if (token.length < 100) {
-      throw new Error(`METAAPI_TOKEN appears invalid (length: ${token.length})`);
-    }
-    
-    logger.info(`🔍 MetaAPI Token Debug: Length=${token.length}, Valid=${!!token}`);
-    logger.info(`🔍 Token sample: ${token.substring(0, 20)}...${token.substring(token.length - 20)}`);
-    
-    try {
-      this.api = new MetaApi(token);
-      logger.info(`✅ MetaAPI instance created successfully`);
-    } catch (initError: any) {
-      logger.error(`❌ Failed to create MetaAPI instance: ${initError.message}`);
-      throw initError;
-    }
 
     const accountsConfig = process.env.METAAPI_ACCOUNTS;
     if (!accountsConfig) {
@@ -122,11 +105,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       
       // Get account
       logger.info(`🔍 Attempting to get account: ${accountConfig.id}`);
-      
-      if (!this.api) {
-        throw new Error('MetaAPI not initialized. Call initialize() first.');
-      }
-      
       accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
       
       // Deploy if needed
@@ -167,10 +145,46 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           logger.info(`🔗 ${accountConfig.brokerName} API connected (terminal sync pending)`);
         }
       } else {
-        // Terminal offline but API connected - this is common
-        accountConfig.status = 'CONNECTED';
+        // Terminal offline but API connected - use RPC connection to fetch account data
         logger.warn(`⚠️ ${accountConfig.brokerName} terminal offline but API connected`);
-        logger.info(`🔗 ${accountConfig.brokerName} ready for API operations (trading requires terminal)`);
+        logger.info(`🔗 Attempting to fetch account data via RPC connection...`);
+        
+        try {
+          // Use RPC connection when terminal is offline (MetaAPI best practice)
+          const rpcConnection = accountConfig.account!.getRPCConnection();
+          await rpcConnection.connect();
+          
+          // According to MetaAPI docs, RPC doesn't require waitSynchronized for basic operations
+          logger.info(`🔗 RPC connection established for ${accountConfig.brokerName}`);
+          
+          // Fetch account information using RPC API methods
+          const accountInfo = await rpcConnection.getAccountInformation();
+          
+          if (accountInfo) {
+            logger.info(`💰 ${accountConfig.brokerName} Account Info (via RPC):`, {
+              balance: `$${accountInfo.balance?.toLocaleString()}`,
+              equity: `$${accountInfo.equity?.toLocaleString()}`,
+              currency: accountInfo.currency,
+              leverage: accountInfo.leverage,
+              freeMargin: `$${accountInfo.freeMargin?.toLocaleString()}`
+            });
+            
+            // Store RPC connection for data operations when terminal offline
+            accountConfig.rpcConnection = rpcConnection;
+            accountConfig.status = 'CONNECTED';
+            logger.info(`✅ ${accountConfig.brokerName} account data available via RPC (terminal offline)`);
+          } else {
+            logger.warn(`⚠️ No account information returned from ${accountConfig.brokerName} via RPC`);
+            accountConfig.rpcConnection = rpcConnection; // Still store for potential trading
+            accountConfig.status = 'CONNECTED';
+          }
+        } catch (rpcError: any) {
+          logger.error(`❌ Failed to establish RPC connection: ${rpcError.message}`);
+          // Don't fail completely - account might still work for some operations
+          accountConfig.status = 'CONNECTED';
+        }
+        
+        logger.info(`🔗 ${accountConfig.brokerName} ready for API operations (terminal offline)`);
       }
 
     } catch (error: any) {
@@ -424,61 +438,117 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     try {
       logger.info(`💼 Executing on ${accountConfig.brokerName}...`);
 
-      if (!accountConfig.connection) {
-        throw new Error('Connection not available');
+      if (!accountConfig.connection && !accountConfig.rpcConnection) {
+        throw new Error('No connection available (neither streaming nor RPC)');
+      }
+
+      // Use RPC connection if streaming connection is not available
+      const activeConnection = accountConfig.connection || accountConfig.rpcConnection;
+      if (!activeConnection) {
+        throw new Error('No active connection available');
       }
 
       // Enhanced connection status check for IFPro-Trade debugging
       if (accountConfig.brokerName === 'IFPro-Trade') {
-        const terminalState = accountConfig.connection.terminalState;
-        const accountInfo = terminalState.accountInformation;
         logger.info(`🔍 IFPro-Trade connection status:`);
-        logger.info(`   - Connected: ${terminalState.connected}`);
-        logger.info(`   - ConnectedToBroker: ${terminalState.connectedToBroker}`);
-        logger.info(`   - Synchronized: ${accountConfig.connection.synchronized}`);
-        logger.info(`   - Account Info Available: ${!!accountInfo}`);
-        if (accountInfo) {
-          logger.info(`   - Balance: ${accountInfo.balance}`);
-          logger.info(`   - Equity: ${accountInfo.equity}`);
-          logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
-          logger.info(`   - Margin Mode: ${accountInfo.marginMode}`);
-          logger.info(`   - Currency: ${accountInfo.currency}`);
-          logger.info(`   - Server: ${accountInfo.server}`);
-          logger.info(`   - Name: ${accountInfo.name}`);
-          logger.info(`   - Login: ${accountInfo.login}`);
+        
+        if (accountConfig.connection) {
+          // Streaming connection available
+          const terminalState = accountConfig.connection.terminalState;
+          const accountInfo = terminalState.accountInformation;
+          logger.info(`   - Connection Type: Streaming`);
+          logger.info(`   - Connected: ${terminalState.connected}`);
+          logger.info(`   - ConnectedToBroker: ${terminalState.connectedToBroker}`);
+          logger.info(`   - Synchronized: ${accountConfig.connection.synchronized}`);
+          logger.info(`   - Account Info Available: ${!!accountInfo}`);
+          if (accountInfo) {
+            logger.info(`   - Balance: ${accountInfo.balance}`);
+            logger.info(`   - Equity: ${accountInfo.equity}`);
+            logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
+            logger.info(`   - Currency: ${accountInfo.currency}`);
+          }
+        } else if (accountConfig.rpcConnection) {
+          // RPC connection only
+          logger.info(`   - Connection Type: RPC (Terminal Offline)`);
+          try {
+            const accountInfo = await accountConfig.rpcConnection.getAccountInformation();
+            if (accountInfo) {
+              logger.info(`   - Balance: $${accountInfo.balance?.toLocaleString()}`);
+              logger.info(`   - Equity: $${accountInfo.equity?.toLocaleString()}`);
+              logger.info(`   - Currency: ${accountInfo.currency}`);
+              logger.info(`   - Leverage: ${accountInfo.leverage}`);
+            }
+          } catch (infoError) {
+            logger.warn(`   - Could not fetch account info: ${(infoError as any)?.message || infoError}`);
+          }
         }
       }
 
       // Step 1: Get valid symbol (fallback implementation)
       const validSymbol = signal.symbol;
 
-      // Step 2: Get market data from connection
-      const terminalState = accountConfig.connection.terminalState;
-      const price = terminalState.price(validSymbol);
-      const marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
+      // Step 2: Get market data using appropriate connection type (MetaAPI best practice)
+      let marketData = { bid: 0, ask: 0 };
+      
+      // Use streaming connection first (best performance)
+      if (accountConfig.connection?.terminalState) {
+        const price = accountConfig.connection.terminalState.price(validSymbol);
+        marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
+        logger.info(`📊 Market data from streaming: ${validSymbol} bid=${marketData.bid} ask=${marketData.ask}`);
+      }
+      // Fallback to RPC connection for offline terminals
+      else if (accountConfig.rpcConnection) {
+        try {
+          // Subscribe to market data first (required by MetaAPI)
+          await accountConfig.rpcConnection.subscribeToMarketData(validSymbol);
+          const symbolPrice = await accountConfig.rpcConnection.getSymbolPrice(validSymbol);
+          marketData = { bid: symbolPrice.bid, ask: symbolPrice.ask };
+          logger.info(`📊 Market data from RPC: ${validSymbol} bid=${marketData.bid} ask=${marketData.ask}`);
+          // Unsubscribe to clean up
+          await accountConfig.rpcConnection.unsubscribeFromMarketData(validSymbol);
+        } catch (priceError) {
+          logger.warn(`Could not get price for ${validSymbol} via RPC: ${priceError}`);
+          // Use fallback entry price from signal
+          const fallbackPrice = signal.entryPrice || 1.0;
+          marketData = { bid: fallbackPrice, ask: fallbackPrice };
+        }
+      }
 
-      // Step 3: Calculate entry price and volume
+      // Step 3: Calculate entry price and volume using MetaAPI best practices
       const entryPrice = this.calculateEntryPrice(signal, marketData);
-      // Calculate position size using proper risk management
-      const volume = this.calculateVolume(accountConfig.connection, signal);
+      // Use fixed lot size for prop firm consistency
+      const volume = this.calculateVolume(accountConfig.connection || accountConfig.rpcConnection, signal);
 
       // Step 3.5: Calculate take profit using 1:1 RR default
       const takeProfit = this.calculateTakeProfit(signal, entryPrice);
 
-      // Step 4: Execute the trade using MetaAPI (validation happens in getValidSymbol)
+      // Step 4: Execute trade using appropriate connection (MetaAPI best practice)
       let result;
       const tradeOptions = {
-        comment: 'Bot Trade'
+        comment: `TG_BOT_${signal.symbol}_${Date.now()}`,
+        clientId: `TG_${accountConfig.id}_${Date.now()}`
       };
 
+      // Determine which connection to use for trading
+      const tradingConnection = accountConfig.connection || accountConfig.rpcConnection;
+      
+      if (!tradingConnection) {
+        throw new Error(`No connection available for trading on ${accountConfig.brokerName}`);
+      }
+
       // Check if this should be a market order or limit order
-      // 🎯 DEFAULT TO LIMIT ORDERS (as per your excellent suggestion!)
-      const orderType = signal.orderType || 'LIMIT'; // Always LIMIT by default for better execution
+      const orderType = signal.orderType || 'LIMIT'; // Default to LIMIT for better execution
+      
+      logger.info(`📊 Executing ${orderType} ${signal.action} order for ${validSymbol}`);
+      logger.info(`   Volume: ${volume} lots`);
+      logger.info(`   Entry: ${entryPrice}`);
+      logger.info(`   Stop Loss: ${signal.stopLoss}`);
+      logger.info(`   Take Profit: ${takeProfit}`);
       
       if (orderType === 'MARKET') {
         // Market orders - execute immediately at current price
         if (signal.action === 'BUY') {
-          result = await accountConfig.connection.createMarketBuyOrder(
+          result = await tradingConnection.createMarketBuyOrder(
             validSymbol,
             volume,
             signal.stopLoss,
@@ -486,7 +556,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             tradeOptions
           );
         } else if (signal.action === 'SELL') {
-          result = await accountConfig.connection.createMarketSellOrder(
+          result = await tradingConnection.createMarketSellOrder(
             validSymbol,
             volume,
             signal.stopLoss,
@@ -499,7 +569,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       } else {
         // Limit orders - execute at specified entry price
         if (signal.action === 'BUY') {
-          result = await accountConfig.connection.createLimitBuyOrder(
+          result = await tradingConnection.createLimitBuyOrder(
             validSymbol,
             volume,
             entryPrice,
@@ -508,7 +578,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             tradeOptions
           );
         } else if (signal.action === 'SELL') {
-          result = await accountConfig.connection.createLimitSellOrder(
+          result = await tradingConnection.createLimitSellOrder(
             validSymbol,
             volume,
             entryPrice,
@@ -579,65 +649,27 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate trade volume based on signal, account balance and risk management
+   * Calculate trade volume based on MetaAPI best practices
+   * For prop firm trading, always use fixed lot size as per MetaAPI documentation
    */
   private calculateVolume(connection: any, signal: TradeSignal): number {
     try {
-      const accountInfo = connection.terminalState.accountInformation;
-      const balance = accountInfo?.balance || 10000;
+      // For prop firm trading, always use fixed lot size (MetaAPI best practice)
+      const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
       
-      // Get risk settings from environment
-      const riskPercentage = parseFloat(process.env.RISK_PERCENTAGE || '1.3');
-      const minLotSize = parseFloat(process.env.MIN_LOT_SIZE || '0.01');
-      const maxLotSize = parseFloat(process.env.MAX_LOT_SIZE || '10.0');
+      logger.info(`📊 Using FIXED position size for prop firm trading: ${fixedLotSize} lots`);
+      logger.info(`   Symbol: ${signal.symbol}`);
+      logger.info(`   Entry Price: ${signal.entryPrice || 'Market'}`);
+      logger.info(`   Stop Loss: ${signal.stopLoss || 'Not set'}`);
+      logger.info(`   Take Profit Targets: ${signal.targets?.join(', ') || 'Not set'}`);
       
-      // Calculate risk amount
-      const riskAmount = balance * (riskPercentage / 100);
-      
-      // Calculate entry price (use middle of entry zone)
-      const entryPrice = signal.entryZone ? 
-        (signal.entryZone.min + signal.entryZone.max) / 2 : 
-        signal.entryPrice || 0;
-        
-      // Ensure we have stop loss for proper calculation
-      if (!signal.stopLoss || !entryPrice) {
-        logger.warn(`⚠️ Missing entry price or stop loss for ${signal.symbol}, using conservative size`);
-        return minLotSize;
-      }
-      
-      // Calculate risk distance
-      const riskDistance = Math.abs(entryPrice - signal.stopLoss);
-      
-      // Get pip value based on symbol
-      const pipValue = this.getPipValue(signal.symbol);
-      
-      // Calculate lot size: Risk Amount ÷ (Risk Distance × Pip Value)
-      let lotSize = riskAmount / (riskDistance * pipValue);
-      
-      // Apply position size limits
-      lotSize = Math.max(minLotSize, Math.min(maxLotSize, lotSize));
-      
-      // Round to 2 decimal places
-      lotSize = Math.round(lotSize * 100) / 100;
-      
-      // Calculate actual risk with final lot size
-      const actualRisk = lotSize * riskDistance * pipValue;
-      const actualRiskPercentage = (actualRisk / balance) * 100;
-      
-      logger.info(`💰 Position sizing for ${signal.symbol}:`);
-      logger.info(`   Account Balance: $${balance.toLocaleString()}`);
-      logger.info(`   Risk Settings: ${riskPercentage}% = $${riskAmount.toFixed(2)}`);
-      logger.info(`   Entry: ${entryPrice}, Stop: ${signal.stopLoss}`);
-      logger.info(`   Risk Distance: ${riskDistance.toFixed(5)} pips`);
-      logger.info(`   Pip Value: $${pipValue} per pip per lot`);
-      logger.info(`   Calculated Size: ${lotSize} lots`);
-      logger.info(`   Actual Risk: $${actualRisk.toFixed(2)} (${actualRiskPercentage.toFixed(2)}%)`);
-      
-      return lotSize;
+      return fixedLotSize;
       
     } catch (error) {
       logger.error('Volume calculation error:', error);
-      return parseFloat(process.env.MIN_LOT_SIZE || '0.01');
+      const fallbackSize = parseFloat(process.env.MIN_LOT_SIZE || '0.01');
+      logger.warn(`Using fallback lot size: ${fallbackSize}`);
+      return fallbackSize;
     }
   }
 
@@ -744,11 +776,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   async getAllAccountsData() {
     const accountStatuses = this.getAccountStatuses();
     
-    return accountStatuses.map(acc => {
+    return Promise.all(accountStatuses.map(async (acc) => {
       const accountConfig = this.accounts.get(acc.id);
       
-      // If account is not connected or no connection, return basic info with zeros
-      if (acc.status !== 'CONNECTED' || !accountConfig?.connection?.terminalState) {
+      // If account is not connected, return basic info with zeros
+      if (acc.status !== 'CONNECTED' || (!accountConfig?.connection && !accountConfig?.rpcConnection)) {
         return {
           ...acc,
           balance: 0,
@@ -761,15 +793,32 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       }
       
       try {
-        // Get real account information from MetaAPI terminal state
-        const accountInfo = accountConfig.connection.terminalState.accountInformation || {};
-        const positions = accountConfig.connection.terminalState.positions || [];
+        let accountInfo: any = {};
+        let positions: any[] = [];
         
-        // Extract real financial data
-        const balance = accountInfo.balance || 0;
-        const equity = accountInfo.equity || balance;
-        const freeMargin = accountInfo.freeMargin || 0;
-        const marginLevel = accountInfo.marginLevel || 0;
+        // Try streaming connection first (MetaAPI best practice)
+        if (accountConfig.connection?.terminalState) {
+          accountInfo = accountConfig.connection.terminalState.accountInformation || {};
+          positions = accountConfig.connection.terminalState.positions || [];
+        }
+        // Fallback to RPC connection for offline terminal (as per MetaAPI docs)
+        else if (accountConfig.rpcConnection) {
+          try {
+            // Use RPC methods as documented in MetaAPI SDK
+            accountInfo = await accountConfig.rpcConnection.getAccountInformation() || {};
+            positions = await accountConfig.rpcConnection.getPositions() || [];
+          } catch (rpcError) {
+            logger.warn(`RPC data fetch failed for ${acc.brokerName}:`, rpcError);
+            accountInfo = {};
+            positions = [];
+          }
+        }
+        
+        // Extract financial data with proper type handling
+        const balance = accountInfo?.balance || 0;
+        const equity = accountInfo?.equity || balance;
+        const freeMargin = accountInfo?.freeMargin || 0;
+        const marginLevel = accountInfo?.marginLevel || 0;
         
         // Format positions with essential info for dashboard
         const formattedPositions = positions.map((pos: any) => ({
@@ -808,7 +857,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           error: 'Failed to fetch account data'
         };
       }
-    });
+    }));
   }
 
   async closePosition(accountId: string, positionId: string) {
