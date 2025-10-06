@@ -49,10 +49,84 @@ class CleanTradingDashboard {
       });
     });
 
-    // Mobile menu toggle
+    // Hamburger menu toggle for mobile
+    const hamburgerMenu = document.getElementById('hamburger-menu');
+    const mobileDropdown = document.getElementById('mobile-dropdown-menu');
+    const mobileOverlay = document.getElementById('mobile-nav-overlay');
+    
+    if (hamburgerMenu && mobileDropdown) {
+      // Toggle hamburger menu and dropdown
+      hamburgerMenu.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hamburgerMenu.classList.toggle('active');
+        mobileDropdown.classList.toggle('active');
+        if (mobileOverlay) {
+          mobileOverlay.classList.toggle('active');
+        }
+      });
+      
+      // Handle mobile menu link clicks
+      const mobileMenuLinks = document.querySelectorAll('.mobile-menu-link');
+      mobileMenuLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const page = e.currentTarget.dataset.page;
+          
+          // Remove active class from all mobile menu links
+          mobileMenuLinks.forEach(l => l.classList.remove('active'));
+          // Add active class to clicked link
+          e.currentTarget.classList.add('active');
+          
+          // Switch page
+          this.switchPage(page);
+          
+          // Close mobile menu
+          hamburgerMenu.classList.remove('active');
+          mobileDropdown.classList.remove('active');
+          if (mobileOverlay) {
+            mobileOverlay.classList.remove('active');
+          }
+        });
+      });
+      
+      // Close dropdown when clicking overlay
+      if (mobileOverlay) {
+        mobileOverlay.addEventListener('click', () => {
+          hamburgerMenu.classList.remove('active');
+          mobileDropdown.classList.remove('active');
+          mobileOverlay.classList.remove('active');
+        });
+      }
+      
+      // Close dropdown when clicking outside (on mobile)
+      document.addEventListener('click', (e) => {
+        if (window.innerWidth <= 768 && 
+            mobileDropdown.classList.contains('active') &&
+            !mobileDropdown.contains(e.target) && 
+            !hamburgerMenu.contains(e.target)) {
+          hamburgerMenu.classList.remove('active');
+          mobileDropdown.classList.remove('active');
+          if (mobileOverlay) {
+            mobileOverlay.classList.remove('active');
+          }
+        }
+      });
+      
+      // Close dropdown on window resize to desktop
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          hamburgerMenu.classList.remove('active');
+          mobileDropdown.classList.remove('active');
+          if (mobileOverlay) {
+            mobileOverlay.classList.remove('active');
+          }
+        }
+      });
+    }
+    
+    // Keep legacy mobile menu toggle for backward compatibility
     const menuToggle = document.getElementById('menu-toggle');
     const sidebar = document.getElementById('sidebar');
-    const mobileOverlay = document.getElementById('mobile-nav-overlay');
     
     if (menuToggle && sidebar) {
       // Toggle sidebar and overlay
