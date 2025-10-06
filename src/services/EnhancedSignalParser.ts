@@ -1,4 +1,4 @@
-/**
+  1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           /**
  * Enhanced Signal Parser
  * Handles diverse signal formats and natural language processing
  * Part of Phase 5: Advanced Features - Smart Signal Recognition
@@ -6,6 +6,7 @@
 
 import { logger } from '../utils/logger';
 import { TradeSignal } from '../types/index';
+import { SymbolParser, ValidationService, FormatService } from '../shared';
 
 export interface ParsedSignalData {
   symbol: string;
@@ -61,7 +62,7 @@ export class EnhancedSignalParser {
       logger.info('🔍 Parsing enhanced signal format...');
 
       // Extract symbol
-      const symbol = this.extractSymbol(text);
+      const symbol = SymbolParser.extractSymbol(text);
       if (!symbol) {
         logger.warn('❌ Could not extract symbol from signal');
         return null;
@@ -128,37 +129,6 @@ export class EnhancedSignalParser {
       logger.error('❌ Enhanced signal parsing failed:', error);
       return null;
     }
-  }
-
-  /**
-   * Extract symbol from various formats
-   */
-  private static extractSymbol(text: string): string | null {
-    // Look for common symbol patterns
-    const symbolPatterns = [
-      /#([A-Z]{3,8})/,           // #XAUUSD
-      /([A-Z]{3}USD)/,           // XAUUSD, EURUSD
-      /([A-Z]{3}\/[A-Z]{3})/,    // XAU/USD, EUR/USD
-      /(GOLD)/i,                 // GOLD
-      /(BITCOIN|BTC)/i,          // BITCOIN, BTC
-      /([A-Z]{2,4}[A-Z]{3})/     // Generic pairs
-    ];
-
-    for (const pattern of symbolPatterns) {
-      const match = text.match(pattern);
-      if (match) {
-        let symbol = match[1] || match[0];
-        symbol = symbol.replace('#', '').replace('/', '').toUpperCase();
-        
-        // Normalize common symbols
-        if (symbol === 'GOLD') symbol = 'XAUUSD';
-        if (symbol === 'BITCOIN' || symbol === 'BTC') symbol = 'BTCUSD';
-        
-        return symbol;
-      }
-    }
-
-    return null;
   }
 
   /**
@@ -577,71 +547,11 @@ export class EnhancedSignalParser {
   private static createAutoTradingSignal(symbol: string, originalText: string): ParsedSignalData {
     logger.info(`🤖 Creating automatic trading signal for ${symbol}`);
     
-    // Default to BUY bias (can be made configurable)
-    const action: 'BUY' | 'SELL' = 'BUY';
+    // ❌ REMOVED: Hardcoded market prices that become stale
+    // Instead, signal auto-generation should use real-time market data
+    // or be disabled when insufficient signal information is provided
     
-    // Create entry zone based on current market levels
-    // This would ideally fetch real-time prices, but for now use reasonable defaults
-    let basePrice: number;
-    
-    // Default price levels for common symbols
-    switch (symbol) {
-      case 'XAUUSD':
-        basePrice = 2650; // Approximate gold price
-        break;
-      case 'EURUSD':
-        basePrice = 1.1000;
-        break;
-      case 'GBPUSD':
-        basePrice = 1.3000;
-        break;
-      case 'EURCHF':
-        basePrice = 0.9350; // Current approximate EURCHF level
-        break;
-      case 'USDJPY':
-        basePrice = 149.50;
-        break;
-      default:
-        basePrice = 1.0000;
-    }
-    
-    // Create entry zone around base price (±0.1% range)
-    const zoneSize = basePrice * 0.001; // 0.1% of price
-    const entryZone = {
-      min: basePrice - zoneSize,
-      max: basePrice + zoneSize
-    };
-    
-    // Calculate stop loss and take profit
-    const stopLossDistance = basePrice * 0.005; // 0.5% stop loss
-    const stopLoss = action === 'BUY' ? basePrice - stopLossDistance : basePrice + stopLossDistance;
-    const takeProfit = action === 'BUY' ? basePrice + stopLossDistance : basePrice - stopLossDistance;
-    
-    const autoSignal: ParsedSignalData = {
-      symbol,
-      action,
-      entryZone,
-      targets: [takeProfit],
-      stopLoss,
-      confidence: 60, // Medium confidence for auto-generated signals
-      reasoning: [
-        'Auto-generated from symbol detection',
-        'Using default risk management parameters',
-        'Market structure analysis pending'
-      ],
-      marketContext: `Auto-trading signal for ${symbol} based on symbol detection`,
-      timeframe: '1H',
-      originalText
-    };
-    
-    logger.info(`✅ Auto-signal created for ${symbol}:`, {
-      action,
-      entryZone: `${entryZone.min.toFixed(5)}-${entryZone.max.toFixed(5)}`,
-      stopLoss: stopLoss.toFixed(5),
-      takeProfit: takeProfit.toFixed(5),
-      confidence: autoSignal.confidence
-    });
-    
-    return autoSignal;
+    logger.warn(`⚠️ Insufficient signal data for ${symbol}. Auto-generation disabled to prevent stale price usage.`);
+    throw new Error('Insufficient signal data - manual signal required');
   }
 }

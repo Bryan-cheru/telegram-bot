@@ -56,11 +56,7 @@ export const validateConfig = (): boolean => {
     // METAAPI_TOKEN is now optional - users configure their own accounts
   ];
 
-  // Security validation
-  if (config.nodeEnv === 'production' && !process.env.JWT_SECRET) {
-    errors.push('CRITICAL: JWT_SECRET is required in production');
-    console.error('❌ JWT_SECRET missing in production environment');
-  }
+  // JWT authentication removed - trading-only system
 
   // Check required fields
   const missing = required.filter(field => !field.value || field.value.length === 0);

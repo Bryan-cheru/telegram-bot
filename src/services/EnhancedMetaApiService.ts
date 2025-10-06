@@ -6,6 +6,9 @@
 import MetaApi from 'metaapi.cloud-sdk';
 import { TradeSignal } from '../types';
 import { logger } from '../utils/logger';
+import { MetaApiConnectionPool } from './MetaApiConnectionPool';
+import { MetaApiRateLimiter } from './MetaApiRateLimiter';
+import { EnhancedPositionSizingService } from './EnhancedPositionSizingService';
 
 interface RiskSettings {
   maxDrawdownPercent: number;
@@ -33,9 +36,15 @@ interface TradeExecutionResult {
 export class EnhancedMetaApiService {
   private api: MetaApi;
   private riskSettings: RiskSettings;
+  private connectionPool: MetaApiConnectionPool;
+  private rateLimiter: MetaApiRateLimiter;
+  private positionSizingService: EnhancedPositionSizingService;
   
   constructor(riskSettings?: Partial<RiskSettings>) {
     this.api = new MetaApi(process.env.METAAPI_TOKEN!);
+    this.connectionPool = new MetaApiConnectionPool();
+    this.rateLimiter = new MetaApiRateLimiter();
+    this.positionSizingService = new EnhancedPositionSizingService();
     
     // Load risk settings from environment variables with fallbacks
     this.riskSettings = {
@@ -81,13 +90,10 @@ export class EnhancedMetaApiService {
         hasEntryZone: !!(signal.entryZone?.min && signal.entryZone?.max)
       });
       
-      // 🔗 CONNECTION SETUP: Single connection for entire trade lifecycle
-      logger.info(`🔗 Setting up connection to account ${accountId}`);
-      const account = await this.api.metatraderAccountApi.getAccount(accountId);
-      connection = account.getRPCConnection();
-      await connection.connect();
-      await connection.waitSynchronized();
-      logger.info(`✅ Connection established and synchronized`);
+      // 🔗 CONNECTION SETUP: Use connection pool for efficiency
+      logger.info(`🔗 Getting connection to account ${accountId} from pool`);
+      connection = await this.connectionPool.getConnection(accountId);
+      logger.info(`✅ Connection obtained from pool`);
       
       // 🔄 SYMBOL CONVERSION: Using the established connection
       logger.info(`🔄 Converting symbol for broker compatibility`);
@@ -118,14 +124,35 @@ export class EnhancedMetaApiService {
       }
       logger.info(`✅ GATE 3 PASSED: Risk validation successful`);
 
-      // 📊 POSITION SIZE CALCULATION
-      logger.info(`📊 Calculating position size with ${riskPercent}% risk`);
-      const positionSize = await this.calculatePositionSize(connection, convertedSignal, riskPercent);
+      // 📊 ENHANCED POSITION SIZE CALCULATION
+      logger.info(`📊 Calculating position size with $900 fixed risk`);
+      const entryPrice = convertedSignal.entryPrice || (convertedSignal.entryZone ? (convertedSignal.entryZone.min + convertedSignal.entryZone.max) / 2 : 0);
+      
+      if (!entryPrice || !convertedSignal.stopLoss) {
+        logger.error(`❌ Missing entry price or stop loss for position sizing`);
+        return { success: false, message: 'Missing entry price or stop loss for accurate position sizing' };
+      }
+
+      const positionCalculation = await this.positionSizingService.calculatePositionSize(
+        connection,
+        convertedSignal.symbol,
+        entryPrice,
+        convertedSignal.stopLoss
+      );
+      
+      if (positionCalculation.warnings.length > 0) {
+        logger.warn(`⚠️ Position sizing warnings:`, positionCalculation.warnings);
+      }
+      
+      const positionSize = positionCalculation.lotSize;
       if (positionSize <= 0) {
         logger.error(`❌ Position size calculation failed: ${positionSize}`);
         return { success: false, message: 'Invalid position size calculated' };
       }
-      logger.info(`✅ Position size calculated: ${positionSize} lots`);
+      
+      logger.info(`✅ Enhanced position size calculated: ${positionSize} lots`);
+      logger.info(`   Risk Amount: $${positionCalculation.riskAmount.toFixed(2)}`);
+      logger.info(`   Method: ${positionCalculation.calculationMethod}`);
 
       // 🔍 VALIDATION GATE 4: Final Trade Parameters
       logger.info(`🔍 VALIDATION GATE 4: Final Trade Parameters Validation`);
@@ -204,8 +231,11 @@ export class EnhancedMetaApiService {
   ): Promise<{allowed: boolean, reason?: string}> {
     
     try {
-      // Get account info
-      const accountInfo = await connection.getAccountInformation();
+      // Get account info with rate limiting
+      const accountInfo = await this.rateLimiter.executeWithRateLimit(
+        'getAccountInformation',
+        () => connection.getAccountInformation()
+      ) as any;
       if (!accountInfo) {
         return { allowed: false, reason: 'Cannot retrieve account information' };
       }
@@ -224,8 +254,11 @@ export class EnhancedMetaApiService {
         };
       }
 
-      // Check position count
-      const positions = await connection.getPositions();
+      // Check position count with rate limiting
+      const positions = await this.rateLimiter.executeWithRateLimit(
+        'getPositions',
+        () => connection.getPositions()
+      ) as any[];
       if (positions.length >= this.riskSettings.maxOpenPositions) {
         return { 
           allowed: false, 
@@ -259,7 +292,7 @@ export class EnhancedMetaApiService {
   }
 
   /**
-   * Calculate optimal position size based on risk - FIXED AT 0.45 LOTS FOR PROP FIRM
+   * Calculate optimal position size based on $900 fixed risk per trade
    */
   private async calculatePositionSize(
     connection: any, 
@@ -268,38 +301,76 @@ export class EnhancedMetaApiService {
   ): Promise<number> {
     
     try {
-      // FIXED POSITION SIZE: Configurable via environment variable
-      const FIXED_LOT_SIZE = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+      // FIXED RISK: Always risk $900 per trade
+      const FIXED_RISK_AMOUNT = 900; // $900 per trade
       
-      logger.info(`📊 Using FIXED position size: ${FIXED_LOT_SIZE} lots (prop firm mode)`);
+      // Get account information
+      const accountInfo = connection.terminalState.accountInformation;
+      const balance = accountInfo?.balance || 197181.33; // Use your current balance as fallback
       
-      // Validate against broker limits
+      // Calculate entry price and stop loss distance
+      const entryPrice = signal.entryPrice || 0;
+      const stopLoss = signal.stopLoss || 0;
+      
+      if (!entryPrice || !stopLoss || entryPrice === stopLoss) {
+        logger.warn('⚠️ Invalid entry price or stop loss, using fallback lot size');
+        return 0.45;
+      }
+      
+      const stopLossDistance = Math.abs(entryPrice - stopLoss);
+      
+      // Get symbol specifications for pip value calculation
       const symbolSpec = await connection.getSymbolSpecification(signal.symbol);
       const minVolume = symbolSpec?.minVolume || 0.01;
       const maxVolume = symbolSpec?.maxVolume || 10;
       
-      // Ensure our fixed size is within broker limits
-      if (FIXED_LOT_SIZE < minVolume) {
-        logger.warn(`⚠️ Fixed size ${FIXED_LOT_SIZE} below minimum ${minVolume}, using minimum`);
-        return minVolume;
+      // Calculate pip value based on symbol type
+      let pipValue = 10; // Default for most forex pairs (USD account)
+      const upperSymbol = signal.symbol.toUpperCase();
+      
+      if (upperSymbol.includes('JPY')) {
+        pipValue = 100000 * 0.01 / entryPrice; // JPY pairs
+      } else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+        pipValue = 1; // $1 per point for gold
+      } else if (this.isForexPair(upperSymbol)) {
+        pipValue = 10; // Standard forex pairs: $10 per pip for 1 lot
       }
       
-      if (FIXED_LOT_SIZE > maxVolume) {
-        logger.warn(`⚠️ Fixed size ${FIXED_LOT_SIZE} above maximum ${maxVolume}, using maximum`);
-        return maxVolume;
-      }
+      // Calculate lot size to risk exactly $900
+      // Formula: Risk Amount / (Stop Loss Distance * Pip Value) = Lot Size
+      let calculatedLotSize = FIXED_RISK_AMOUNT / (stopLossDistance * pipValue);
       
-      return FIXED_LOT_SIZE;
+      // Apply broker limits
+      calculatedLotSize = Math.max(minVolume, calculatedLotSize);
+      calculatedLotSize = Math.min(maxVolume, calculatedLotSize);
       
-      /* ORIGINAL DYNAMIC CALCULATION - DISABLED FOR PROP FIRM
-      // This was the original percentage-based position sizing
-      // Kept here for reference in case you want to switch back
-      */
+      // Round to valid lot size (0.01 increments)
+      calculatedLotSize = Math.round(calculatedLotSize * 100) / 100;
+      
+      logger.info(`💰 $900 Risk-Based Position Sizing for ${signal.symbol}:`);
+      logger.info(`   Entry Price: ${entryPrice}`);
+      logger.info(`   Stop Loss: ${stopLoss}`);
+      logger.info(`   SL Distance: ${stopLossDistance.toFixed(5)}`);
+      logger.info(`   Pip Value: $${pipValue}/lot`);
+      logger.info(`   Target Risk: $${FIXED_RISK_AMOUNT}`);
+      logger.info(`   Calculated Lot Size: ${calculatedLotSize}`);
+      
+      const actualRisk = calculatedLotSize * stopLossDistance * pipValue;
+      logger.info(`   Actual Risk: $${actualRisk.toFixed(2)}`);
+      
+      return calculatedLotSize;
       
     } catch (error) {
       logger.error('Position size calculation error:', error);
       return 0.01;
     }
+  }
+
+  /**
+   * Helper method to identify forex pairs
+   */
+  private isForexPair(symbol: string): boolean {
+    return symbol.length === 6 && /^[A-Z]{6}$/.test(symbol);
   }
 
   /**

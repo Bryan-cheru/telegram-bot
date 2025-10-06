@@ -43,31 +43,58 @@ const gracefulShutdown = async (signal: string) => {
   }
 };
 
-// Global error handlers to prevent unhandled rejections
+// Enhanced error boundary for unhandled rejections
+let rejectionCount = 0;
+const MAX_REJECTIONS = 5;
+const REJECTION_WINDOW = 60000; // 1 minute
+let rejectionWindowStart = Date.now();
+
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('🚨 CRITICAL: Unhandled Rejection detected');
-  logger.error('Promise:', promise);
+  const now = Date.now();
+  
+  // Reset counter if we're in a new window
+  if (now - rejectionWindowStart > REJECTION_WINDOW) {
+    rejectionCount = 0;
+    rejectionWindowStart = now;
+  }
+  
+  rejectionCount++;
+  
+  logger.error('🚨 CRITICAL: Unhandled Rejection detected', {
+    count: rejectionCount,
+    maxAllowed: MAX_REJECTIONS,
+    promise: promise
+  });
   
   // Enhanced error logging for better debugging
   if (reason instanceof Error) {
-    logger.error('Error Name:', reason.name);
-    logger.error('Error Message:', reason.message);
-    logger.error('Error Stack:', reason.stack);
+    logger.error('Error details:', {
+      name: reason.name,
+      message: reason.message,
+      stack: reason.stack
+    });
     
-    // Check if this is a MongoDB authentication error
+    // Handle specific error types gracefully
     if (reason.message?.includes('authentication failed') || reason.message?.includes('bad auth')) {
-      logger.warn('⚠️ This appears to be a MongoDB authentication error - check your database credentials');
-      logger.warn('💡 The bot will continue running without database features');
-      return; // Don't exit for MongoDB auth failures
+      logger.warn('⚠️ MongoDB authentication error - continuing without database features');
+      return;
     }
-  } else if (typeof reason === 'object' && reason !== null) {
-    logger.error('Rejection details:', JSON.stringify(reason, null, 2));
+    
+    if (reason.message?.includes('ECONNREFUSED') || reason.message?.includes('network')) {
+      logger.warn('⚠️ Network connectivity issue - will retry on next operation');
+      return;
+    }
   } else {
-    logger.error('Rejection reason:', reason);
+    logger.error('Rejection reason:', typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason);
   }
   
-  // Don't exit immediately - log the error but continue
-  logger.warn('⚠️ Continuing operation despite unhandled rejection...');
+  // Crash protection: too many rejections indicates serious issues
+  if (rejectionCount >= MAX_REJECTIONS) {
+    logger.error('🚨 FATAL: Too many unhandled rejections - system stability compromised');
+    gracefulShutdown('EXCESSIVE_REJECTIONS');
+  } else {
+    logger.warn(`⚠️ Continuing operation (${rejectionCount}/${MAX_REJECTIONS} rejections in window)`);
+  }
 });
 
 process.on('uncaughtException', (error) => {

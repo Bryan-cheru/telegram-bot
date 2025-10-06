@@ -78,6 +78,47 @@ export class VisualChartAnalysisML {
 
     } catch (error) {
       logger.error('❌ Visual chart analysis failed:', error);
+      
+      // Try OCR-only fallback when visual analysis completely fails
+      try {
+        logger.info('🔄 Attempting OCR-only fallback analysis...');
+        const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
+        const extractedPrices = this.extractPricesFromText(ocrResult.text);
+        
+        if (extractedPrices.length >= 2) {
+          const symbol = this.extractSymbolFromOCR(ocrResult.text);
+          const minPrice = Math.min(...extractedPrices);
+          const maxPrice = Math.max(...extractedPrices);
+          
+          // Create basic zones from extracted prices
+          const greyEntryZones: ColorZone[] = extractedPrices.map(price => ({
+            price,
+            confidence: 0.6, // Lower confidence for OCR-only
+            region: { x: 0, y: 0, width: 10, height: 10 },
+            colorType: 'grey'
+          }));
+          
+          logger.info(`✅ OCR fallback successful: Found ${extractedPrices.length} price levels for ${symbol}`);
+          
+          return {
+            greyEntryZones,
+            greenTargetZones: [],
+            redStopZones: [],
+            priceScale: {
+              minPrice,
+              maxPrice,
+              pixelsPerPip: 1,
+              scaleRegion: { x: 0, y: 0, width: 100, height: 100 }
+            },
+            symbol: symbol || 'UNKNOWN',
+            direction: 'BUY', // Default, will be overridden by ML
+            confidence: Math.min(ocrResult.confidence / 100, 0.8) // Max 80% for OCR-only
+          };
+        }
+      } catch (fallbackError) {
+        logger.error('❌ OCR fallback also failed:', fallbackError);
+      }
+      
       throw error;
     }
   }
@@ -143,13 +184,28 @@ export class VisualChartAnalysisML {
     }
     
     if (prices.length < 2) {
-      logger.warn('⚠️  Could not detect enough prices from scale, using XAUUSD defaults');
-      return {
-        minPrice: 3500,  // Default XAUUSD range
-        maxPrice: 3600,
-        pixelsPerPip: 1,
-        scaleRegion
-      };
+      logger.warn('⚠️  Could not detect enough prices from scale, attempting fallback to main OCR extraction');
+      
+      // Try to extract prices from the full image OCR as fallback
+      const fullImageOCR = await this.textExtractor.extractTextFromImage(imageBuffer);
+      const fallbackPrices = this.extractPricesFromText(fullImageOCR.text);
+      
+      if (fallbackPrices.length >= 2) {
+        const minPrice = Math.min(...fallbackPrices);
+        const maxPrice = Math.max(...fallbackPrices);
+        const pixelsPerPip = scaleRegion.height / (maxPrice - minPrice);
+        
+        logger.info(`📈 Using fallback prices from full OCR: ${minPrice} - ${maxPrice}`);
+        return {
+          minPrice,
+          maxPrice,
+          pixelsPerPip,
+          scaleRegion
+        };
+      }
+      
+      logger.error('❌ Cannot determine price scale - insufficient price data from both scale OCR and full image OCR');
+      throw new Error('Price scale detection failed - no valid prices found in image');
     }
 
     const minPrice = Math.min(...prices);
@@ -367,34 +423,36 @@ export class VisualChartAnalysisML {
     const zones: ColorZone[] = [];
     const prices = this.extractPricesFromText(ocrText);
     
-    // Look for zone indicators in text
-    const lines = ocrText.split('\n');
+    if (prices.length === 0) {
+      logger.warn('❌ No prices found in OCR text');
+      return zones;
+    }
     
-    lines.forEach((line, index) => {
-      // Use simple regex to extract price from line instead of recursive call
-      const priceMatch = line.match(/\b[1-9]\d{3,4}\.?\d{0,2}\b/);
-      if (!priceMatch) return;
-
-      const price = parseFloat(priceMatch[0]);
-      if (!price || !this.isValidPriceForInstrument(price)) return;
+    logger.info(`📊 Found ${prices.length} prices: ${prices.join(', ')}`);
+    
+    // Create zones from all detected prices
+    prices.forEach((price, index) => {
+      // Determine zone type based on context around the price
+      let colorType: 'grey' | 'green' | 'red' = 'grey'; // Default to entry zone
       
-      // Determine zone type based on context keywords
-      let colorType: 'grey' | 'green' | 'red' = 'grey'; // Default
-      
-      if (line.toLowerCase().includes('entry') || line.toLowerCase().includes('zone')) {
-        colorType = 'grey';
-      } else if (line.toLowerCase().includes('target') || line.toLowerCase().includes('tp')) {
+      // Look for keywords in the text near this price
+      const textLower = ocrText.toLowerCase();
+      if (textLower.includes('supply') || textLower.includes('resistance')) {
+        colorType = 'grey'; // Supply/resistance = entry zone
+      } else if (textLower.includes('target') || textLower.includes('tp') || textLower.includes('take profit')) {
         colorType = 'green';
-      } else if (line.toLowerCase().includes('stop') || line.toLowerCase().includes('sl')) {
+      } else if (textLower.includes('stop') || textLower.includes('sl') || textLower.includes('stop loss')) {
         colorType = 'red';
       }
-
+      
       zones.push({
         price,
-        confidence: 0.6, // Lower confidence for OCR-based detection
-        region: { x: 0, y: index * 20, width: 100, height: 20 },
+        confidence: 0.7, // Good confidence for clearly extracted prices
+        region: { x: 0, y: index * 30, width: 100, height: 20 },
         colorType
       });
+      
+      logger.info(`🎯 Created ${colorType} zone at price ${price}`);
     });
 
     return zones;

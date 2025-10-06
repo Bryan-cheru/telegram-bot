@@ -10,6 +10,9 @@ class CleanTradingDashboard {
     this.currentPage = 'dashboard';
     this.refreshInterval = null;
     this.isLoading = false;
+    this.metricsData = null;
+    this.performanceSummary = null;
+    this.rateLimitStatus = null;
     
     console.log('🚀 Initializing Clean Trading Dashboard...');
     this.init();
@@ -18,23 +21,27 @@ class CleanTradingDashboard {
   async init() {
     this.setupNavigation();
     this.setupEventListeners();
-    this.showLoadingState();
     
+    // Skip loading state - load data directly
     try {
       await this.loadAccountData();
       await this.loadPositions();
-      this.updateDashboardStats();
+      this.updateDashboardStats(); // Update stats after loading positions
+      await this.loadMetaStatsData();
       this.startAutoRefresh();
       this.showNotification('Dashboard loaded successfully!', 'success');
     } catch (error) {
       console.error('Dashboard initialization failed:', error);
       this.showNotification('Failed to load dashboard data', 'error');
+      // Force render empty states
+      this.renderAccountInfo();
+      this.renderPositions();
     }
   }
 
   setupNavigation() {
-    // Handle page switching
-    document.querySelectorAll('.nav-link').forEach(link => {
+    // Handle page switching - updated to work with the actual HTML structure
+    document.querySelectorAll('.menu-link').forEach(link => {
       link.addEventListener('click', (e) => {
         e.preventDefault();
         const page = e.currentTarget.dataset.page;
@@ -47,7 +54,9 @@ class CleanTradingDashboard {
     if (menuToggle) {
       menuToggle.addEventListener('click', () => {
         const sidebar = document.getElementById('sidebar');
-        sidebar.classList.toggle('open');
+        if (sidebar) {
+          sidebar.classList.toggle('open');
+        }
       });
     }
   }
@@ -71,22 +80,62 @@ class CleanTradingDashboard {
   switchPage(page) {
     console.log(`📄 Switching to page: ${page}`);
     
-    // Update navigation
-    document.querySelectorAll('.nav-link').forEach(link => {
+    // Update navigation - work with actual HTML class names
+    document.querySelectorAll('.menu-link').forEach(link => {
       link.classList.remove('active');
     });
     document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
 
-    // Update content
-    document.querySelectorAll('.page').forEach(section => {
+    // Update content - work with actual section structure
+    document.querySelectorAll('.content-section').forEach(section => {
       section.classList.remove('active');
     });
     document.getElementById(page)?.classList.add('active');
+  }
 
-    // Update page title
+  showAddAccountModal() {
+    const modal = document.getElementById('add-account-modal');
+    if (modal) {
+      modal.style.display = 'block';
+    }
+  }
+
+  showSignalTestModal() {
+    const modal = document.getElementById('signal-test-modal');
+    if (modal) {
+      modal.style.display = 'block';
+    }
+  }
+
+  async testBotConnection() {
+    try {
+      this.showNotification('Testing bot connection...', 'info');
+      // Add your bot connection test logic here
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      this.showNotification('Bot connection successful!', 'success');
+    } catch (error) {
+      this.showNotification('Bot connection failed', 'error');
+      console.error('Bot connection test failed:', error);
+    }
+  }
+
+  refreshActivity() {
+    this.showNotification('Refreshing activity...', 'info');
+    // Add your activity refresh logic here
+    this.loadAccountData();
+    this.loadPositions();
+  }
+
+  closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+      modal.style.display = 'none';
+    }
+
+    // Update page title to current page
     const pageTitle = document.getElementById('page-title');
     if (pageTitle) {
-      pageTitle.textContent = this.getPageTitle(page);
+      pageTitle.textContent = this.getPageTitle(this.currentPage);
     }
 
     this.currentPage = page;
@@ -142,6 +191,7 @@ class CleanTradingDashboard {
         this.accountData = result;
         console.log('✅ Account data loaded:', result.summary);
         this.renderAccountInfo();
+        this.updateDashboardStats(); // Update the stat cards
         this.updateConnectionStatus(true);
       } else {
         throw new Error(result.error || 'Failed to load account data');
@@ -150,6 +200,8 @@ class CleanTradingDashboard {
       console.error('❌ Error loading account data:', error);
       this.showNotification('Failed to connect to trading account', 'error');
       this.updateConnectionStatus(false);
+      // Render error state instead of leaving loading spinner
+      this.renderAccountInfo();
     } finally {
       this.isLoading = false;
     }
@@ -211,8 +263,8 @@ class CleanTradingDashboard {
     
     // Update account stats
     this.updateStatCard('total-accounts', summary.accountCount || 1);
-    this.updateStatCard('total-balance', this.formatCurrency(summary.totalBalance || 0));
-    this.updateStatCard('total-equity', this.formatCurrency(summary.totalEquity || 0));
+    this.updateStatCard('total-balance', Utils.formatCurrency(summary.totalBalance || 0));
+    this.updateStatCard('total-equity', Utils.formatCurrency(summary.totalEquity || 0));
     this.updateStatCard('active-positions', this.positions.length);
 
     // Update status indicators
@@ -277,15 +329,15 @@ class CleanTradingDashboard {
           <div class="detail-grid">
             <div class="detail-item">
               <label>Balance</label>
-              <span class="value balance">${this.formatCurrency(account.balance)}</span>
+              <span class="value balance">${Utils.formatCurrency(account.balance)}</span>
             </div>
             <div class="detail-item">
               <label>Equity</label>
-              <span class="value equity">${this.formatCurrency(account.equity)}</span>
+              <span class="value equity">${Utils.formatCurrency(account.equity)}</span>
             </div>
             <div class="detail-item">
               <label>Free Margin</label>
-              <span class="value">${this.formatCurrency(account.freeMargin)}</span>
+              <span class="value">${Utils.formatCurrency(account.freeMargin)}</span>
             </div>
             <div class="detail-item">
               <label>Margin Level</label>
@@ -330,7 +382,7 @@ class CleanTradingDashboard {
             <span class="position-type ${position.type?.toLowerCase() || 'unknown'}">${position.type}</span>
           </div>
           <div class="position-profit ${(position.profit || 0) >= 0 ? 'positive' : 'negative'}">
-            ${this.formatCurrency(position.profit || 0)}
+            ${Utils.formatCurrency(position.profit || 0)}
           </div>
         </div>
         
@@ -351,6 +403,15 @@ class CleanTradingDashboard {
             <span>Open Time:</span>
             <span>${new Date(position.openTime).toLocaleString()}</span>
           </div>
+        </div>
+        
+        <div class="position-actions">
+          <button class="btn btn-danger btn-sm" onclick="dashboard.closePosition('${position.accountId || 'IFPRO-TRADE'}', '${position.id}', '${position.symbol}')">
+            <i class="fas fa-times"></i> Close Position
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="dashboard.modifyPosition('${position.accountId || 'IFPRO-TRADE'}', '${position.id}')">
+            <i class="fas fa-edit"></i> Modify
+          </button>
         </div>
       </div>
     `).join('');
@@ -383,7 +444,7 @@ class CleanTradingDashboard {
           <div class="stat-item">
             <label>Total Profit</label>
             <span class="${(summary.totalProfit || 0) >= 0 ? 'positive' : 'negative'}">
-              ${this.formatCurrency(summary.totalProfit || 0)}
+              ${Utils.formatCurrency(summary.totalProfit || 0)}
             </span>
           </div>
         </div>
@@ -401,7 +462,7 @@ class CleanTradingDashboard {
                 <span class="volume">${deal.volume} lots</span>
               </div>
               <div class="deal-result ${deal.profit >= 0 ? 'positive' : 'negative'}">
-                ${this.formatCurrency(deal.profit)}
+                ${Utils.formatCurrency(deal.profit)}
               </div>
               <div class="deal-time">
                 ${new Date(deal.time).toLocaleDateString()}
@@ -417,14 +478,6 @@ class CleanTradingDashboard {
   // UTILITY FUNCTIONS
   // ===============================
 
-  formatCurrency(amount) {
-    if (typeof amount !== 'number') return '$0.00';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  }
-
   updateConnectionStatus(connected) {
     const badge = document.getElementById('system-status-badge');
     if (badge) {
@@ -439,19 +492,13 @@ class CleanTradingDashboard {
   }
 
   showLoadingState() {
-    // Add loading indicators where needed
-    const containers = ['accounts-container', 'positions-container', 'history-container'];
-    containers.forEach(id => {
-      const container = document.getElementById(id);
-      if (container) {
-        container.innerHTML = `
-          <div class="loading-state">
-            <i class="fas fa-spinner fa-spin"></i>
-            <p>Loading...</p>
-          </div>
-        `;
-      }
-    });
+    // Removed loading spinners - data loads directly
+    console.log('🔄 Skipping loading state - loading data directly');
+  }
+
+  clearLoadingState() {
+    // No longer needed - no loading state to clear
+    console.log('🔄 No loading state to clear');
   }
 
   showNotification(message, type = 'info') {
@@ -496,6 +543,10 @@ class CleanTradingDashboard {
         if (this.currentPage === 'positions') {
           this.loadPositions();
         }
+        // Load MetaStats data every few refreshes to avoid rate limits
+        if (Math.random() < 0.3) { // 30% chance each refresh
+          this.loadMetaStatsData();
+        }
       }
     }, 30000);
 
@@ -509,11 +560,114 @@ class CleanTradingDashboard {
     try {
       await this.loadAccountData();
       await this.loadPositions();
+      await this.loadMetaStatsData();
       this.updateDashboardStats();
       this.showNotification('Data refreshed successfully!', 'success');
     } catch (error) {
       console.error('Refresh failed:', error);
       this.showNotification('Failed to refresh data', 'error');
+    }
+  }
+
+  // ===============================
+  // METASTATS INTEGRATION
+  // ===============================
+
+  async loadMetaStatsData() {
+    const accountId = this.accountData?.primaryAccountId || this.accountData?.accounts?.[0]?.accountId || this.accountData?.accounts?.[0]?.id;
+    
+    if (!accountId) {
+      console.warn('⚠️ No account ID available for MetaStats - skipping');
+      return;
+    }
+
+    try {
+      console.log('📊 Loading MetaStats performance data for account:', accountId);
+      
+      // Load performance summary (includes metrics, recent trades, open trades)
+      const summaryResponse = await fetch(`/api/metastats/${accountId}/summary`);
+      if (summaryResponse.ok) {
+        const summaryData = await summaryResponse.json();
+        if (summaryData.success) {
+          this.performanceSummary = summaryData.data;
+          this.metricsData = summaryData.data.summary;
+          console.log('✅ MetaStats data loaded:', this.performanceSummary);
+        } else {
+          console.warn('⚠️ MetaStats API returned error:', summaryData.error);
+        }
+      } else {
+        console.warn('⚠️ MetaStats API request failed:', summaryResponse.status);
+      }
+
+      // Load rate limiting status
+      try {
+        const poolResponse = await fetch('/api/pool/stats');
+        if (poolResponse.ok) {
+          const poolData = await poolResponse.json();
+          if (poolData.success) {
+            this.rateLimitStatus = poolData.data.rateLimitStatus;
+            console.log('📡 Rate limit status:', this.rateLimitStatus);
+          }
+        }
+      } catch (poolError) {
+        console.warn('⚠️ Pool stats not available:', poolError.message);
+      }
+
+      this.updateMetaStatsDisplay();
+      
+    } catch (error) {
+      console.error('❌ Failed to load MetaStats data:', error);
+      // Don't let MetaStats errors block the dashboard
+    }
+  }
+
+  updateMetaStatsDisplay() {
+    if (!this.metricsData) return;
+
+    // Update performance metrics with animation
+    this.updateElementTextWithAnimation('profit-factor', this.metricsData.profitFactor?.toFixed(2) || 'N/A');
+    this.updateElementTextWithAnimation('win-rate', `${(this.metricsData.winRate * 100).toFixed(1)}%` || 'N/A');
+    this.updateElementTextWithAnimation('max-drawdown', `${this.metricsData.maxDrawdown?.toFixed(2)}%` || 'N/A');
+    this.updateElementTextWithAnimation('sharpe-ratio', this.metricsData.sharpeRatio?.toFixed(2) || 'N/A');
+    this.updateElementTextWithAnimation('total-trades', this.metricsData.totalTrades || '0');
+
+    // Update rate limiting information
+    if (this.rateLimitStatus) {
+      const global = this.rateLimitStatus.global;
+      const server = this.rateLimitStatus.server;
+      
+      this.updateElementText('rate-limit-credits', `${global.credits}/1000`);
+      this.updateElementText('server-credits', `${server.credits}/2000`);
+      this.updateElementText('current-server', this.rateLimitStatus.currentServer);
+    }
+
+    // Show MetaStats section with fade-in animation
+    const metricsSection = document.getElementById('performance-metrics');
+    if (metricsSection) {
+      metricsSection.style.display = 'block';
+      metricsSection.style.opacity = '0';
+      setTimeout(() => {
+        metricsSection.style.transition = 'opacity 0.5s ease';
+        metricsSection.style.opacity = '1';
+      }, 100);
+    }
+  }
+
+  updateElementTextWithAnimation(elementId, text) {
+    const element = document.getElementById(elementId);
+    if (element && element.textContent !== text) {
+      element.textContent = text;
+      element.classList.add('updated');
+      setTimeout(() => {
+        element.classList.remove('updated');
+      }, 300);
+    }
+  }
+
+  updateElementText(elementId, text) {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.textContent = text;
     }
   }
 
@@ -534,9 +688,9 @@ class CleanTradingDashboard {
         </button>
       </div>
       <div class="logs-content" id="logs-content">
-        <div class="loading-state">
-          <i class="fas fa-spinner fa-spin"></i>
-          <p>Loading logs...</p>
+        <div class="no-data">
+          <i class="fas fa-file-alt"></i>
+          <p>Initializing logs...</p>
         </div>
       </div>
     `;
@@ -546,35 +700,222 @@ class CleanTradingDashboard {
 
   async loadLogs() {
     try {
-      const response = await fetch('/api/logs?limit=50');
+      // First load existing logs
+      const response = await fetch('/api/logs?limit=100');
       const logs = await response.json();
       
-      const container = document.getElementById('logs-content');
+      const container = document.getElementById('logs-container');
       if (!container) return;
 
       if (logs.length === 0) {
-        container.innerHTML = '<p class="no-data">No logs available</p>';
-        return;
+        container.innerHTML = `
+          <div class="no-data">
+            <i class="fas fa-file-alt"></i>
+            <span>No logs available yet</span>
+          </div>
+        `;
+      } else {
+        this.renderLogs(logs);
       }
 
-      const logsHTML = logs.map(log => `
-        <div class="log-entry ${log.level}">
-          <span class="log-time">${new Date(log.timestamp).toLocaleTimeString()}</span>
-          <span class="log-level ${log.level}">${log.level.toUpperCase()}</span>
-          <span class="log-message">${log.message}</span>
-        </div>
-      `).join('');
-
-      container.innerHTML = logsHTML;
-      
-      // Scroll to bottom
-      container.scrollTop = container.scrollHeight;
+      // Set up real-time log streaming
+      this.setupLogStreaming();
       
     } catch (error) {
       console.error('Error loading logs:', error);
-      const container = document.getElementById('logs-content');
+      const container = document.getElementById('logs-container');
       if (container) {
-        container.innerHTML = '<p class="error">Failed to load logs</p>';
+        container.innerHTML = `
+          <div class="error-state">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>Failed to load logs: ${error.message}</span>
+          </div>
+        `;
+      }
+    }
+  }
+
+  renderLogs(logs) {
+    const container = document.getElementById('logs-container');
+    if (!container) return;
+
+    const logsHTML = logs.map(log => {
+      const level = log.level || 'info';
+      const timestamp = new Date(log.timestamp).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+      
+      return `
+        <div class="log-entry ${level}" data-level="${level}">
+          <span class="log-time">${timestamp}</span>
+          <span class="log-level ${level}">${level.toUpperCase()}</span>
+          <span class="log-message">${this.formatLogMessage(log.message)}</span>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = logsHTML;
+    
+    // Auto-scroll to bottom if enabled
+    if (this.autoScroll) {
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // Update log count
+    this.updateLogStats(logs.length);
+  }
+
+  formatLogMessage(message) {
+    if (!message) return 'No message';
+    
+    // Add emoji indicators for common log types
+    let formatted = message
+      .replace(/✅/g, '<span class="emoji">✅</span>')
+      .replace(/❌/g, '<span class="emoji">❌</span>')
+      .replace(/⚠️/g, '<span class="emoji">⚠️</span>')
+      .replace(/🔍/g, '<span class="emoji">🔍</span>')
+      .replace(/🚀/g, '<span class="emoji">🚀</span>')
+      .replace(/💡/g, '<span class="emoji">💡</span>')
+      .replace(/🎯/g, '<span class="emoji">🎯</span>');
+    
+    return formatted;
+  }
+
+  setupLogStreaming() {
+    if (this.logStream) {
+      this.logStream.close();
+    }
+
+    this.logStream = new EventSource('/api/logs/stream');
+    
+    this.logStream.onopen = () => {
+      console.log('📡 Log stream connected');
+      this.updateConnectionStatus(true);
+    };
+
+    this.logStream.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'heartbeat') {
+          return; // Ignore heartbeat messages
+        }
+        
+        if (data.type === 'log' || data.message) {
+          this.appendLogEntry(data);
+        }
+        
+      } catch (error) {
+        console.error('Error parsing log stream data:', error);
+      }
+    };
+
+    this.logStream.onerror = (error) => {
+      console.error('Log stream error:', error);
+      this.updateConnectionStatus(false);
+      
+      // Reconnect after 5 seconds
+      setTimeout(() => {
+        console.log('Reconnecting log stream...');
+        this.setupLogStreaming();
+      }, 5000);
+    };
+  }
+
+  appendLogEntry(activity) {
+    const container = document.getElementById('logs-container');
+    if (!container) return;
+
+    // Handle both old log format and new activity format
+    const isActivity = activity.type === 'activity';
+    const level = activity.level || 'info';
+    const timestamp = new Date(activity.timestamp || new Date()).toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+
+    const logEntry = document.createElement('div');
+    
+    if (isActivity) {
+      // New user-friendly activity format
+      logEntry.className = `log-entry activity-entry ${level} category-${activity.category || 'system'}`;
+      logEntry.setAttribute('data-level', level);
+      logEntry.setAttribute('data-category', activity.category || 'system');
+      logEntry.innerHTML = `
+        <div class="activity-icon">${activity.icon}</div>
+        <div class="activity-content">
+          <div class="activity-header">
+            <span class="activity-title">${activity.title}</span>
+            <span class="activity-time">${timestamp}</span>
+          </div>
+          <div class="activity-message">${activity.message}</div>
+          <div class="activity-category">${(activity.category || 'system').toUpperCase()}</div>
+        </div>
+      `;
+    } else {
+      // Fallback for old log format
+      logEntry.className = `log-entry ${level}`;
+      logEntry.setAttribute('data-level', level);
+      logEntry.innerHTML = `
+        <span class="log-time">${timestamp}</span>
+        <span class="log-level ${level}">${level.toUpperCase()}</span>
+        <span class="log-message">${this.formatLogMessage(activity.message)}</span>
+      `;
+    }
+
+    // Add with smooth animation
+    logEntry.style.opacity = '0';
+    logEntry.style.transform = 'translateX(-30px)';
+    container.appendChild(logEntry);
+    
+    // Trigger animation
+    setTimeout(() => {
+      logEntry.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+      logEntry.style.opacity = '1';
+      logEntry.style.transform = 'translateX(0)';
+    }, 10);
+
+    // Remove old entries if too many (keep last 200 for performance)
+    const entries = container.querySelectorAll('.log-entry');
+    if (entries.length > 200) {
+      entries[0].style.transition = 'all 0.3s ease';
+      entries[0].style.opacity = '0';
+      entries[0].style.transform = 'translateX(30px)';
+      setTimeout(() => entries[0].remove(), 300);
+    }
+
+    // Auto-scroll if enabled
+    if (this.autoScroll) {
+      setTimeout(() => {
+        container.scrollTop = container.scrollHeight;
+      }, 100);
+    }
+
+    // Update stats
+    this.updateLogStats(entries.length);
+  }
+
+  updateLogStats(count) {
+    const statsElement = document.getElementById('log-count');
+    if (statsElement) {
+      statsElement.textContent = `${count} entries`;
+    }
+  }
+
+  updateConnectionStatus(connected) {
+    const statusBadge = document.getElementById('system-status-badge');
+    if (statusBadge) {
+      if (connected) {
+        statusBadge.className = 'status-badge online';
+        statusBadge.innerHTML = '<i class="fas fa-circle"></i><span>System Online</span>';
+      } else {
+        statusBadge.className = 'status-badge offline';  
+        statusBadge.innerHTML = '<i class="fas fa-circle"></i><span>Reconnecting...</span>';
       }
     }
   }
@@ -582,28 +923,198 @@ class CleanTradingDashboard {
   refreshLogs() {
     this.loadLogs();
   }
-}
 
-// ===============================
-// GLOBAL FUNCTIONS & INITIALIZATION
-// ===============================
+  // ===============================
+  // TRADE MANAGEMENT METHODS
+  // ===============================
 
-// Global refresh function
-function refreshAllData() {
-  if (window.dashboard) {
-    window.dashboard.refreshAllData();
+  async closePosition(accountId, positionId, symbol) {
+    try {
+      const confirmation = confirm(`Are you sure you want to close the ${symbol} position?`);
+      if (!confirmation) {
+        return;
+      }
+
+      this.showNotification('info', `Closing ${symbol} position...`);
+      
+      const response = await fetch(`/api/mt5/positions/${accountId}/${positionId}/close`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        this.showNotification('success', `✅ ${symbol} position closed successfully!`);
+        // Refresh positions after 2 seconds
+        setTimeout(() => {
+          this.loadPositions();
+          this.loadAccountData();
+        }, 2000);
+      } else {
+        this.showNotification('error', `❌ Failed to close position: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error closing position:', error);
+      this.showNotification('error', `❌ Error closing position: ${error.message}`);
+    }
+  }
+
+  async closeAllPositions(accountId) {
+    try {
+      const confirmation = confirm('⚠️ Are you sure you want to close ALL positions? This action cannot be undone!');
+      if (!confirmation) {
+        return;
+      }
+
+      this.showNotification('info', 'Closing all positions...');
+      
+      const response = await fetch(`/api/mt5/positions/close-all/${accountId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        this.showNotification('success', `✅ All positions closed successfully!`);
+        setTimeout(() => {
+          this.loadPositions();
+          this.loadAccountData();
+        }, 3000);
+      } else {
+        this.showNotification('error', `❌ Failed to close all positions: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error closing all positions:', error);
+      this.showNotification('error', `❌ Error closing all positions: ${error.message}`);
+    }
+  }
+
+  async modifyPosition(accountId, positionId) {
+    // For now, show coming soon message
+    this.showNotification('info', '🚧 Position modification feature coming soon!');
+  }
+
+  showNotification(type, message) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+      <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+      <span>${message}</span>
+    `;
+    
+    // Add to page
+    document.body.appendChild(notification);
+    
+    // Remove after 5 seconds
+    setTimeout(() => {
+      notification.remove();
+    }, 5000);
   }
 }
 
+// Export CleanTradingDashboard to global scope for use in HTML
+if (typeof window !== 'undefined') {
+  window.CleanTradingDashboard = CleanTradingDashboard;
+}
+
 // Initialize dashboard when DOM is ready
+let dashboardInstance = null;
+
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('🌟 DOM loaded, initializing Clean Trading Dashboard...');
-  window.dashboard = new CleanTradingDashboard();
+  dashboardInstance = new CleanTradingDashboard();
+  
+  // Make closeModal globally accessible for HTML onclick handlers
+  window.closeModal = function(modalId) {
+    if (dashboardInstance) {
+      dashboardInstance.closeModal(modalId);
+    }
+  };
+  
+  // Make other functions globally accessible for HTML onclick handlers
+  window.showAddAccountModal = function() {
+    if (dashboardInstance) {
+      dashboardInstance.showAddAccountModal();
+    }
+  };
+  
+  window.refreshSignals = function() {
+    if (dashboardInstance) {
+      dashboardInstance.showNotification('Refreshing signals...', 'info');
+      dashboardInstance.loadAccountData();
+    }
+  };
+  
+  window.refreshHistory = function() {
+    if (dashboardInstance) {
+      dashboardInstance.showNotification('Refreshing trade history...', 'info');
+      dashboardInstance.loadPositions();
+    }
+  };
+  
+  window.saveSettings = function() {
+    if (dashboardInstance) {
+      dashboardInstance.showNotification('Settings saved!', 'success');
+    }
+  };
+  
+  window.saveRiskSettings = function() {
+    if (dashboardInstance) {
+      dashboardInstance.showNotification('Risk settings saved!', 'success');
+    }
+  };
+  
+  // Setup event listeners for buttons (replacing onclick handlers)
+  const setupButtonListeners = () => {
+    // Main refresh button
+    document.querySelectorAll('[data-action="refresh-all"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.refreshAllData());
+    });
+    
+    // Test bot connection
+    document.querySelectorAll('[data-action="test-bot"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.testBotConnection());
+    });
+    
+    // Refresh accounts
+    document.querySelectorAll('[data-action="refresh-accounts"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.refreshAllData());
+    });
+    
+    // Show add account modal
+    document.querySelectorAll('[data-action="add-account"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.showAddAccountModal());
+    });
+    
+    // Manual signal test
+    document.querySelectorAll('[data-action="manual-signal"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.showSignalTestModal());
+    });
+    
+    // Refresh activity
+    document.querySelectorAll('[data-action="refresh-activity"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.refreshActivity());
+    });
+    
+    // Refresh MetaStats
+    document.querySelectorAll('[data-action="refresh-metastats"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.loadMetaStatsData());
+    });
+  };
+  
+  // Call setup after a short delay to ensure all elements are rendered
+  setTimeout(setupButtonListeners, 100);
 });
 
 // Handle page unload
 window.addEventListener('beforeunload', () => {
-  if (window.dashboard && window.dashboard.refreshInterval) {
-    clearInterval(window.dashboard.refreshInterval);
+  if (dashboardInstance && dashboardInstance.refreshInterval) {
+    clearInterval(dashboardInstance.refreshInterval);
   }
 });

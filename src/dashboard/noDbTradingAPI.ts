@@ -1,6 +1,8 @@
 import express from 'express';
 import { logger } from '../utils/logger';
 import MetaApi from 'metaapi.cloud-sdk';
+import { MetaStatsService } from '../services/MetaStatsService';
+import { MetaApiConnectionPool } from '../services/MetaApiConnectionPool';
 
 const router = express.Router();
 
@@ -15,6 +17,8 @@ interface ConnectedAccount {
 
 let connectedAccounts: Map<string, ConnectedAccount> = new Map();
 const metaApi = new MetaApi(process.env.METAAPI_TOKEN!);
+const metaStatsService = new MetaStatsService();
+const connectionPool = new MetaApiConnectionPool();
 
 // Rate limiter to prevent log spam
 const lastLogTime = new Map<string, number>();
@@ -39,12 +43,15 @@ function shouldLog(key: string): boolean {
  * Perfect for signal channel business model
  */
 
-// System status endpoint
+// System status endpoint with enhanced metrics
 router.get('/status', async (req: any, res: any) => {
   try {
     const totalAccounts = connectedAccounts.size;
     const connectedCount = Array.from(connectedAccounts.values())
       .filter(acc => acc.connection && acc.connection.connected).length;
+
+    // Get connection pool statistics
+    const poolStats = connectionPool.getPoolStats();
 
     res.json({
       success: true,
@@ -53,6 +60,12 @@ router.get('/status', async (req: any, res: any) => {
         systemStatus: 'Running',
         totalAccounts,
         connectedAccounts: connectedCount,
+        connectionPool: {
+          totalConnections: poolStats.totalConnections,
+          healthyConnections: poolStats.healthyConnections,
+          avgUseCount: poolStats.avgUseCount
+        },
+        rateLimiting: poolStats.rateLimitStatus,
         timestamp: new Date().toISOString()
       }
     });
@@ -61,6 +74,97 @@ router.get('/status', async (req: any, res: any) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// MetaStats - Get account performance metrics
+router.get('/metastats/:accountId/metrics', async (req: any, res: any) => {
+  try {
+    const { accountId } = req.params;
+    const { from, to, includeOpen } = req.query;
+
+    const options: any = {};
+    if (from) options.from = new Date(from);
+    if (to) options.to = new Date(to);
+    if (includeOpen) options.includeOpenPositions = includeOpen === 'true';
+
+    const metrics = await metaStatsService.getAccountMetrics(accountId, options);
+    
+    res.json({
+      success: true,
+      data: metrics
+    });
+  } catch (error) {
+    logger.error('Error getting MetaStats metrics:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to retrieve metrics'
+    });
+  }
+});
+
+// MetaStats - Get performance summary (dashboard)
+router.get('/metastats/:accountId/summary', async (req: any, res: any) => {
+  try {
+    const { accountId } = req.params;
+    
+    const summary = await metaStatsService.getPerformanceSummary(accountId);
+    
+    res.json({
+      success: true,
+      data: summary
+    });
+  } catch (error) {
+    logger.error('Error getting MetaStats summary:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to retrieve performance summary'
+    });
+  }
+});
+
+// MetaStats - Get historical trades
+router.get('/metastats/:accountId/trades', async (req: any, res: any) => {
+  try {
+    const { accountId } = req.params;
+    const { from, to, limit, offset } = req.query;
+
+    const options: any = {};
+    if (from) options.from = new Date(from);
+    if (to) options.to = new Date(to);
+    if (limit) options.limit = parseInt(limit);
+    if (offset) options.offset = parseInt(offset);
+
+    const trades = await metaStatsService.getHistoricalTrades(accountId, options);
+    
+    res.json({
+      success: true,
+      data: trades
+    });
+  } catch (error) {
+    logger.error('Error getting historical trades:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to retrieve trades'
+    });
+  }
+});
+
+// Connection Pool - Get pool statistics
+router.get('/pool/stats', async (req: any, res: any) => {
+  try {
+    const stats = connectionPool.getPoolStats();
+    
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    logger.error('Error getting pool stats:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to retrieve pool statistics'
     });
   }
 });

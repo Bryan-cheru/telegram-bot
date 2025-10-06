@@ -1,5 +1,6 @@
 import { TradeSignal } from '../types';
 import { logger } from './logger';
+import { ValidationService } from '../shared';
 
 export interface ValidationRule {
   field: string;

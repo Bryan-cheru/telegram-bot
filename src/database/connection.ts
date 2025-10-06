@@ -44,26 +44,27 @@ export class DatabaseConnection {
 
       logger.info('🔌 Connecting to MongoDB...');
 
-      // MongoDB Atlas cloud connection configuration
+      // MongoDB Atlas cloud connection configuration with improved timeouts
       const connection = await mongoose.createConnection(mongoUri, {
         // Connection pool settings for Atlas
-        maxPoolSize: parseInt(process.env.CONNECTION_POOL_SIZE || '10'),
-        minPoolSize: 2,
+        maxPoolSize: parseInt(process.env.CONNECTION_POOL_SIZE || '5'), // Reduced for stability
+        minPoolSize: 1,
+        maxIdleTimeMS: 300000, // 5 minutes
         
-        // Timeout settings optimized for cloud Atlas
-        serverSelectionTimeoutMS: 60000, // 60 seconds for Atlas
-        connectTimeoutMS: 60000,
-        socketTimeoutMS: 0, // Disable socket timeout for persistent connections
+        // Reduced timeout settings for faster failure detection
+        serverSelectionTimeoutMS: 15000, // 15 seconds (was 60)
+        connectTimeoutMS: 15000, // 15 seconds (was 60)
+        socketTimeoutMS: 30000, // 30 seconds instead of disabled
         
         // Atlas requires these settings
         retryWrites: true,
         w: 'majority',
         
-        // Buffering for better performance
-        bufferCommands: true,
+        // Buffering settings
+        bufferCommands: false, // Fail fast instead of buffering
         
-        // Connection monitoring for Atlas
-        heartbeatFrequencyMS: 10000
+        // Connection monitoring
+        heartbeatFrequencyMS: 30000 // 30 seconds
       });
 
       this.connection = connection;

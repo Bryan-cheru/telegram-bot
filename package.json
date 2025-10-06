@@ -51,6 +51,7 @@
     "winston": "^3.17.0"
   },
   "devDependencies": {
+    "@jest/globals": "^30.2.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.10.4",
     "cross-env": "^10.0.0",

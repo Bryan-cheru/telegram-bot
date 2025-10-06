@@ -9,6 +9,8 @@ class APIService {
         'Content-Type': 'application/json'
       }
     };
+    this.requestCount = 0;
+    this.errorCount = 0;
   }
 
   async request(endpoint, options = {}) {
@@ -18,12 +20,18 @@ class APIService {
       ...options
     };
 
+    this.requestCount++;
+
     try {
       const response = await fetch(url, config);
       
       if (!response.ok) {
+        this.errorCount++;
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        const error = new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        error.status = response.status;
+        error.endpoint = endpoint;
+        throw error;
       }
 
       // Handle different response types
@@ -34,9 +42,29 @@ class APIService {
         return await response.text();
       }
     } catch (error) {
+      if (!error.status) {
+        // Network or other non-HTTP error
+        this.errorCount++;
+        error.endpoint = endpoint;
+      }
       console.error(`API Error for ${endpoint}:`, error);
       throw error;
     }
+  }
+
+  // Get API statistics
+  getStats() {
+    return {
+      requestCount: this.requestCount,
+      errorCount: this.errorCount,
+      successRate: this.requestCount > 0 ? ((this.requestCount - this.errorCount) / this.requestCount * 100).toFixed(2) + '%' : '0%'
+    };
+  }
+
+  // Reset statistics
+  resetStats() {
+    this.requestCount = 0;
+    this.errorCount = 0;
   }
 
   // Bot status endpoints
@@ -88,10 +116,6 @@ class APIService {
   }
 
   // Logs endpoints
-  async getLogs(limit = 100) {
-    return this.request(`/api/logs?limit=${limit}`);
-  }
-
   async clearLogs() {
     return this.request('/api/logs', { method: 'DELETE' });
   }
@@ -103,6 +127,41 @@ class APIService {
 
   async getPerformanceMetrics() {
     return this.request('/api/metrics');
+  }
+
+  // MetaTrader 5 specific endpoints
+  async getMT5Account() {
+    return this.request('/api/mt5/account');
+  }
+
+  async getMT5Positions() {
+    return this.request('/api/mt5/positions');
+  }
+
+  async getMT5TradeSummary(period = '30d') {
+    return this.request(`/api/mt5/trade-summary?period=${period}`);
+  }
+
+  async closeMT5Position(accountId, positionId) {
+    return this.request(`/api/mt5/positions/${accountId}/${positionId}/close`, {
+      method: 'POST'
+    });
+  }
+
+  async closeAllMT5Positions(accountId) {
+    return this.request(`/api/mt5/positions/close-all/${accountId}`, {
+      method: 'POST'
+    });
+  }
+
+  // Logs endpoints (updated)
+  async getLogs(limit = 100) {
+    return this.request(`/api/logs?limit=${limit}`);
+  }
+
+  async getLogsStream() {
+    // Note: EventSource must be handled separately in the calling code
+    return '/api/logs/stream';
   }
 
   // Health check
@@ -125,3 +184,6 @@ class APIService {
 
 // Export for use in other modules
 window.APIService = APIService;
+
+// Create a global API instance for easy use
+window.api = new APIService();

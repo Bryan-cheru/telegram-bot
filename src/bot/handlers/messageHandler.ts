@@ -4,45 +4,13 @@ import { logger } from '../../utils/logger';
 import { ManualTradingCommands, ManualTradeCommand } from '../../utils/manualTradingCommands';
 
 export class MessageHandler {
-  private authService: any = null;
+  // Authentication removed - trading-only system
 
   constructor() {
-    // Try to initialize auth service (optional)
-    this.initializeAuthService();
+    // System ready for trading message processing
   }
 
-  /**
-   * Optional authentication service initialization
-   * Properly handles MongoDB connection failures without causing unhandled rejections
-   */
-  private async initializeAuthService(): Promise<void> {
-    try {
-      const { AuthService } = await import('../../auth/AuthService');
-      this.authService = new AuthService();
-      
-      // Add timeout to prevent hanging on MongoDB connection
-      const initPromise = this.authService.initialize();
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Authentication service initialization timeout')), 10000);
-      });
-      
-      await Promise.race([initPromise, timeoutPromise]);
-      logger.info('✅ Authentication service enabled');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      // Log appropriate level based on error type
-      if (errorMessage.includes('authentication failed') || errorMessage.includes('bad auth')) {
-        logger.warn('⚠️ MongoDB authentication failed - running without database features');
-      } else if (errorMessage.includes('timeout')) {
-        logger.warn('⚠️ Authentication service initialization timed out - continuing without database');
-      } else {
-        logger.info('ℹ️ Authentication service not available:', errorMessage);
-      }
-      
-      this.authService = null;
-    }
-  }
+  // Authentication removed - focus on trading functionality only
 
   async handleStart(ctx: Context): Promise<void> {
     const welcomeMessage = `

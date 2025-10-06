@@ -160,10 +160,14 @@ export class PerformanceMonitor {
         }
       };
 
-      // Store metrics (keep last 24 hours)
+      // Store metrics (keep last 24 hours) with memory-safe cleanup
       this.metrics.push(metrics);
-      if (this.metrics.length > 2880) { // 24 hours * 60 minutes * 2 (30-second intervals)
-        this.metrics = this.metrics.slice(-2880);
+      
+      // More frequent cleanup to prevent memory spikes
+      if (this.metrics.length > 1440) { // 12 hours * 60 minutes * 2 (30-second intervals)
+        // Remove older half to prevent frequent array operations
+        this.metrics = this.metrics.slice(-720); // Keep last 6 hours
+        logger.debug('Performance metrics array trimmed to prevent memory buildup');
       }
 
       // Log performance summary

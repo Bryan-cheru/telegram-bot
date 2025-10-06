@@ -6,6 +6,7 @@
 
 import { logger } from '../utils/logger';
 import MetaApi, { MetatraderAccount } from 'metaapi.cloud-sdk';
+import { SymbolParser, ValidationService, FormatService } from '../shared';
 
 export interface BrokerInfo {
   name: string;
@@ -152,7 +153,7 @@ export class UniversalBrokerService {
       const availableSymbols = await this.getAvailableSymbols(accountId);
 
       // Normalize input symbol
-      const normalizedSymbol = this.normalizeSymbol(rawSymbol);
+      const normalizedSymbol = SymbolParser.normalizeSymbol(rawSymbol);
 
       // Try exact match first
       let exactMatch = availableSymbols.find(s => s.name.toLowerCase() === normalizedSymbol.toLowerCase());
@@ -285,16 +286,6 @@ export class UniversalBrokerService {
   }
 
   /**
-   * Normalize symbol names for matching
-   */
-  private normalizeSymbol(symbol: string): string {
-    return symbol
-      .toUpperCase()
-      .replace(/[.\-_]/g, '')
-      .trim();
-  }
-
-  /**
    * Find fuzzy matches for symbols
    */
   private findFuzzyMatches(
@@ -317,7 +308,7 @@ export class UniversalBrokerService {
 
     for (const symbol of availableSymbols) {
       let confidence = 0;
-      const symbolName = this.normalizeSymbol(symbol.name);
+      const symbolName = SymbolParser.normalizeSymbol(symbol.name);
       
       // Exact match
       if (symbolName === targetSymbol) {
@@ -327,7 +318,7 @@ export class UniversalBrokerService {
       else {
         for (const [key, aliasList] of Object.entries(aliases)) {
           if (aliasList.includes(targetSymbol) && aliasList.some(alias => 
-            symbolName.includes(this.normalizeSymbol(alias))
+            symbolName.includes(SymbolParser.normalizeSymbol(alias))
           )) {
             confidence = 0.9;
             break;

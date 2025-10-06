@@ -2,128 +2,253 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaTrader Signal Bot Dashboard</title>
     
-    <!-- PWA and mobile app meta tags -->
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="TradingBot Pro">
-    <meta name="theme-color" content="#3b82f6">
-    <meta name="format-detection" content="telephone=no">
-    <meta name="msapplication-tap-highlight" content="no">
-    
-    <title>TradingBot Pro - Signal Channel Dashboard</title>
-    
-    <!-- Fonts and icons -->
-    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"></noscript>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Core Stylesheets -->
     <link rel="stylesheet" href="styles/main.css">
     
-    <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'><path d='M3 13h8V3H9v6H3v4zm6 8h8v-8h-2v6H9v2z'/></svg>">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- App Icons -->
+    <link rel="apple-touch-icon" href="icon-192x192.svg">
+    <link rel="icon" type="image/svg+xml" sizes="192x192" href="icon-192x192.svg">
+    <link rel="icon" type="image/svg+xml" sizes="512x512" href="icon-512x512.svg">
+    <meta name="theme-color" content="#1a202c">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Signal Bot Dashboard">
+    <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
-    <!-- Navigation Sidebar -->
-    <nav class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <div class="logo">
-                <i class="fas fa-chart-line"></i>
-                <span>TradingBot Pro</span>
-            </div>
-        </div>
-        <ul class="nav-menu">
-            <li><a href="#dashboard" class="nav-link active" data-page="dashboard">
-                <i class="fas fa-tachometer-alt"></i> Dashboard
-            </a></li>
-            <li><a href="#accounts" class="nav-link" data-page="accounts">
-                <i class="fas fa-wallet"></i> Connected Accounts
-            </a></li>
-            <li><a href="#positions" class="nav-link" data-page="positions">
-                <i class="fas fa-exchange-alt"></i> Active Positions
-            </a></li>
-            <li><a href="#history" class="nav-link" data-page="history">
-                <i class="fas fa-history"></i> Trade History
-            </a></li>
-            <li><a href="#risk-management" class="nav-link" data-page="risk-management">
-                <i class="fas fa-shield-alt"></i> Risk Management
-            </a></li>
-            <li><a href="#logs" class="nav-link" data-page="logs">
-                <i class="fas fa-terminal"></i> System Logs
-            </a></li>
-            <li><a href="#settings" class="nav-link" data-page="settings">
-                <i class="fas fa-cog"></i> Settings
-            </a></li>
-        </ul>
-    </nav>
-
-    <!-- Main Content -->
-    <main class="main-content">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <button class="menu-toggle" id="menu-toggle">
-                    <i class="fas fa-bars"></i>
-                </button>
-                <h1 id="page-title">Dashboard</h1>
-            </div>
-            <div class="header-right">
-                <div class="status-badge online" id="system-status-badge">
-                    <i class="fas fa-circle"></i>
-                    <span>System Online</span>
+    <!-- Main Application Container -->
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Signal Bot</span>
                 </div>
             </div>
-        </header>
-
-        <!-- Content Area -->
-        <div class="content">
             
-            <!-- DASHBOARD PAGE -->
-            <section id="dashboard" class="page active">
-                <!-- System Overview Stats -->
+            <ul class="sidebar-menu">
+                <li class="menu-item active">
+                    <a href="#overview" class="menu-link" data-page="overview-section">
+                        <i class="fas fa-dashboard"></i>
+                        <span>Overview</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="#accounts" class="menu-link" data-page="accounts-section">
+                        <i class="fas fa-user-circle"></i>
+                        <span>Accounts</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="#signals" class="menu-link" data-page="signals-section">
+                        <i class="fas fa-broadcast-tower"></i>
+                        <span>Signals</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="#trades" class="menu-link" data-page="trades-section">
+                        <i class="fas fa-exchange-alt"></i>
+                        <span>Trades</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="#analytics" class="menu-link" data-page="analytics-section">
+                        <i class="fas fa-chart-bar"></i>
+                        <span>Analytics</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="#settings" class="menu-link" data-page="settings-section">
+                        <i class="fas fa-cog"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+            </ul>
+            
+            <div class="sidebar-footer">
+                <div class="connection-status">
+                    <div class="status-indicator" id="bot-status">
+                        <i class="fas fa-circle"></i>
+                        <span>Bot Status</span>
+                    </div>
+                    <div id="system-status-badge" class="status-badge"></div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header Bar -->
+            <header class="header">
+                <div class="header-left">
+                    <button id="menu-toggle" class="mobile-menu-toggle">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h1 id="page-title">Dashboard Overview</h1>
+                </div>
+                <div class="header-right">
+                    <div class="header-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Connected Accounts</span>
+                            <span class="stat-value" id="connected-accounts">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Active Signals</span>
+                            <span class="stat-value" id="active-signals">0</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" data-action="refresh-all">
+                        <i class="fas fa-sync-alt"></i>
+                        Refresh
+                    </button>
+                </div>
+            </header>
+
+            <!-- Overview Section -->
+            <section id="overview-section" class="content-section active">
+                <!-- Stats Grid -->
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-icon primary">
-                            <i class="fas fa-users"></i>
+                        <div class="stat-icon">
+                            <i class="fas fa-wallet"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Connected Accounts</h3>
-                            <div class="stat-value" id="total-accounts">0</div>
-                            <div class="stat-change" id="accounts-status">Loading...</div>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon success">
-                            <i class="fas fa-dollar-sign"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3>Total Balance</h3>
                             <div class="stat-value" id="total-balance">$0.00</div>
-                            <div class="stat-change" id="balance-change">+$0.00</div>
+                            <div class="stat-label">Total Balance</div>
+                            <div class="stat-change positive" id="balance-change">+0.00%</div>
                         </div>
                     </div>
-                    
+
                     <div class="stat-card">
-                        <div class="stat-icon info">
+                        <div class="stat-icon">
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Total Equity</h3>
-                            <div class="stat-value" id="total-equity">$0.00</div>
-                            <div class="stat-change" id="equity-change">+$0.00 P&L</div>
+                            <div class="stat-value" id="total-profit">$0.00</div>
+                            <div class="stat-label">Today's P&L</div>
+                            <div class="stat-change" id="profit-change">0.00%</div>
                         </div>
                     </div>
-                    
+
                     <div class="stat-card">
-                        <div class="stat-icon warning">
+                        <div class="stat-icon">
                             <i class="fas fa-exchange-alt"></i>
                         </div>
                         <div class="stat-content">
-                            <h3>Active Positions</h3>
-                            <div class="stat-value" id="total-positions">0</div>
-                            <div class="stat-change" id="positions-breakdown">0 Buy • 0 Sell</div>
+                            <div class="stat-value" id="open-trades">0</div>
+                            <div class="stat-label">Open Positions</div>
+                            <div class="stat-subtitle" id="trades-subtitle">No active trades</div>
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fas fa-signal"></i>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-value" id="signal-count">0</div>
+                            <div class="stat-label">Signals Today</div>
+                            <div class="stat-subtitle" id="signal-subtitle">Last: Never</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Performance Analytics Section -->
+                <div id="performance-metrics" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h2><i class="fas fa-chart-area"></i> Trading Performance Analytics</h2>
+                        <div class="card-actions">
+                            <button class="btn btn-outline btn-sm" data-action="refresh-metastats">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="performance-grid">
+                            <div class="metric-card">
+                                <div class="metric-header">
+                                    <i class="fas fa-trophy"></i>
+                                    <span>Profit Factor</span>
+                                </div>
+                                <div class="metric-value" id="profit-factor">N/A</div>
+                                <div class="metric-description">Risk vs Reward Ratio</div>
+                            </div>
+                            
+                            <div class="metric-card">
+                                <div class="metric-header">
+                                    <i class="fas fa-percentage"></i>
+                                    <span>Win Rate</span>
+                                </div>
+                                <div class="metric-value" id="win-rate">N/A</div>
+                                <div class="metric-description">Percentage of Winning Trades</div>
+                            </div>
+                            
+                            <div class="metric-card">
+                                <div class="metric-header">
+                                    <i class="fas fa-arrow-down"></i>
+                                    <span>Max Drawdown</span>
+                                </div>
+                                <div class="metric-value" id="max-drawdown">N/A</div>
+                                <div class="metric-description">Maximum Loss Period</div>
+                            </div>
+                            
+                            <div class="metric-card">
+                                <div class="metric-header">
+                                    <i class="fas fa-chart-line"></i>
+                                    <span>Sharpe Ratio</span>
+                                </div>
+                                <div class="metric-value" id="sharpe-ratio">N/A</div>
+                                <div class="metric-description">Risk-Adjusted Returns</div>
+                            </div>
+                            
+                            <div class="metric-card">
+                                <div class="metric-header">
+                                    <i class="fas fa-exchange-alt"></i>
+                                    <span>Total Trades</span>
+                                </div>
+                                <div class="metric-value" id="total-trades">0</div>
+                                <div class="metric-description">All Time Trade Count</div>
+                            </div>
+                            
+                            <div class="metric-card">
+                                <div class="metric-header">
+                                    <i class="fas fa-tachometer-alt"></i>
+                                    <span>Rate Limits</span>
+                                </div>
+                                <div class="metric-value" id="rate-limit-credits">N/A</div>
+                                <div class="metric-description">API Credits Available</div>
+                            </div>
+                        </div>
+                        
+                        <!-- System Health Section -->
+                        <div class="system-health">
+                            <h3><i class="fas fa-heartbeat"></i> System Health</h3>
+                            <div class="health-grid">
+                                <div class="health-item">
+                                    <span class="health-label">Server Credits:</span>
+                                    <span class="health-value" id="server-credits">N/A</span>
+                                </div>
+                                <div class="health-item">
+                                    <span class="health-label">Current Server:</span>
+                                    <span class="health-value" id="current-server">N/A</span>
+                                </div>
+                                <div class="health-item">
+                                    <span class="health-label">Connection Pool:</span>
+                                    <span class="health-value" id="connection-pool-status">Healthy</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -134,15 +259,22 @@
                         <h2><i class="fas fa-bolt"></i> Quick Actions</h2>
                     </div>
                     <div class="card-body">
-                        <div class="quick-actions-grid">
-                            <button class="btn btn-outline" onclick="refreshAllData()">
-                                <i class="fas fa-sync-alt"></i> Refresh Data
+                        <div class="quick-actions">
+                            <button class="action-btn" data-action="test-bot">
+                                <i class="fas fa-plug"></i>
+                                <span>Test Bot Connection</span>
                             </button>
-                            <button class="btn btn-outline" onclick="dashboard.switchPage('logs')">
-                                <i class="fas fa-terminal"></i> System Logs
+                            <button class="action-btn" data-action="refresh-accounts">
+                                <i class="fas fa-sync-alt"></i>
+                                <span>Refresh Accounts</span>
                             </button>
-                            <button class="btn btn-outline" onclick="dashboard.switchPage('accounts')">
-                                <i class="fas fa-wallet"></i> View Accounts
+                            <button class="action-btn" data-action="add-account">
+                                <i class="fas fa-plus"></i>
+                                <span>Add Account</span>
+                            </button>
+                            <button class="action-btn" data-action="manual-signal">
+                                <i class="fas fa-satellite-dish"></i>
+                                <span>Test Signal</span>
                             </button>
                         </div>
                     </div>
@@ -152,824 +284,442 @@
                 <div class="card">
                     <div class="card-header">
                         <h2><i class="fas fa-clock"></i> Recent Activity</h2>
+                        <button class="btn btn-outline btn-sm" data-action="refresh-activity">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
                     </div>
                     <div class="card-body">
-                        <div class="activity-feed" id="activity-feed">
-                            <div class="activity-item">
-                                <i class="fas fa-info-circle text-info"></i>
-                                <span>System initialized successfully</span>
-                                <small class="activity-time">Just now</small>
+                        <div class="activity-list" id="activity-list">
+                            <div class="empty-state">
+                                <i class="fas fa-history"></i>
+                                <p>No recent activity</p>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- ACCOUNTS PAGE -->
-            <section id="accounts" class="page">
+            <!-- Accounts Section -->
+            <section id="accounts-section" class="content-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-user-circle"></i> Trading Accounts</h2>
+                    <div id="accounts-status" class="status-indicator"></div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" data-action="add-account">
+                            <i class="fas fa-plus"></i> Add Account
+                        </button>
+                        <button class="btn btn-outline" data-action="refresh-accounts">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <div id="accounts-container" class="accounts-grid">
+                    <div class="empty-state">
+                        <i class="fas fa-user-plus"></i>
+                        <h3>No Accounts Connected</h3>
+                        <p>Add your first MetaTrader account to start trading</p>
+                        <button class="btn btn-primary" onclick="showAddAccountModal()">
+                            <i class="fas fa-plus"></i> Add Account
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Signals Section -->
+            <section id="signals-section" class="content-section">
                 <div class="card">
                     <div class="card-header">
-                        <h2><i class="fas fa-wallet"></i> Connected Accounts</h2>
+                        <h2><i class="fas fa-broadcast-tower"></i> Signal History</h2>
                         <div class="header-actions">
-                            <button class="btn btn-outline" data-action="refresh">
+                            <select class="form-select" id="signal-filter">
+                                <option value="all">All Signals</option>
+                                <option value="executed">Executed</option>
+                                <option value="pending">Pending</option>
+                                <option value="failed">Failed</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" onclick="refreshSignals()">
                                 <i class="fas fa-sync-alt"></i> Refresh
                             </button>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="accounts-container" id="accounts-container">
-                            <div class="loading-state">
-                                <i class="fas fa-spinner fa-spin"></i>
-                                <span>Loading accounts...</span>
+                        <div class="signals-list" id="signals-list">
+                            <div class="empty-state">
+                                <i class="fas fa-satellite-dish"></i>
+                                <p>No signals received yet</p>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- POSITIONS PAGE -->
-            <section id="positions" class="page">
-                <div class="card">
+            <!-- Trades Section -->
+            <section id="trades-section" class="content-section">
+                <!-- Bot Status Bar -->
+                <div class="bot-status-bar">
+                    <div class="status-item">
+                        <span class="status-label">Bot Status:</span>
+                        <span class="status-value online" id="bot-status">
+                            <i class="fas fa-circle"></i> ACTIVE
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Auto Trading:</span>
+                        <span class="status-value enabled" id="auto-trading-status">
+                            <i class="fas fa-check-circle"></i> ENABLED
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Last Signal:</span>
+                        <span class="status-value" id="last-signal-time">2 minutes ago</span>
+                    </div>
+                </div>
+
+                <!-- Active Positions Card -->
+                <div class="card positions-card">
                     <div class="card-header">
                         <h2><i class="fas fa-exchange-alt"></i> Active Positions</h2>
                         <div class="header-actions">
                             <select id="account-filter" class="form-select">
                                 <option value="all">All Accounts</option>
                             </select>
-                            <button class="btn btn-outline btn-sm" data-action="refresh">
+                            <button class="btn btn-outline btn-sm" data-action="refresh-positions">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                            <button class="btn btn-danger btn-sm" data-action="close-all-positions">
+                                <i class="fas fa-times-circle"></i> Close All
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="positions-container" class="trades-table-container">
+                            <table class="trades-table enhanced-table" id="positions-table">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Type</th>
+                                        <th>Volume</th>
+                                        <th>Entry Price</th>
+                                        <th>Current Price</th>
+                                        <th>P&L</th>
+                                        <th>Duration</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="empty-row">
+                                        <td colspan="8">
+                                            <div class="empty-state">
+                                                <i class="fas fa-chart-line"></i>
+                                                <p>No open positions</p>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Trading Logs -->
+                <div class="card logs-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-terminal"></i> Trading Logs</h2>
+                        <div class="header-actions">
+                            <select class="form-select" id="log-filter">
+                                <option value="all">All Events</option>
+                                <option value="trades">Trades Only</option>
+                                <option value="errors">Errors Only</option>
+                                <option value="signals">Signals Only</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" data-action="clear-logs">
+                                <i class="fas fa-trash"></i> Clear
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="logs-container" id="trading-logs">
+                            <div class="log-entry success">
+                                <span class="log-time">10:23:45</span>
+                                <span class="log-type">TRADE</span>
+                                <span class="log-message">✅ XAUUSD BUY 0.45 lots executed at 2,651.20</span>
+                            </div>
+                            <div class="log-entry info">
+                                <span class="log-time">10:22:30</span>
+                                <span class="log-type">SIGNAL</span>
+                                <span class="log-message">📡 New signal received: XAUUSD BUY zone 2,650-2,652</span>
+                            </div>
+                            <div class="log-entry success">
+                                <span class="log-time">10:18:12</span>
+                                <span class="log-type">TRADE</span>
+                                <span class="log-message">💰 EURUSD position closed: +$127.50 profit</span>
+                            </div>
+                            <div class="log-entry warning">
+                                <span class="log-time">10:15:03</span>
+                                <span class="log-type">SYSTEM</span>
+                                <span class="log-message">⚠️ Risk limit reached: 2% for today</span>
+                            </div>
+                            <div class="log-entry error">
+                                <span class="log-time">10:12:45</span>
+                                <span class="log-type">ERROR</span>
+                                <span class="log-message">❌ Failed to execute GBPUSD: Insufficient margin</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-history"></i> Trade History</h2>
+                        <div class="header-actions">
+                            <select class="form-select" id="history-period">
+                                <option value="today">Today</option>
+                                <option value="week">This Week</option>
+                                <option value="month">This Month</option>
+                                <option value="all">All Time</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" onclick="refreshHistory()">
                                 <i class="fas fa-sync-alt"></i> Refresh
                             </button>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div id="positions-container">
-                            <div class="loading-state">
-                                <i class="fas fa-spinner fa-spin"></i>
-                                <span>Loading positions...</span>
-                            </div>
+                        <div id="history-container" class="trades-table-container">
+                            <table class="trades-table" id="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Symbol</th>
+                                        <th>Type</th>
+                                        <th>Volume</th>
+                                        <th>Entry</th>
+                                        <th>Exit</th>
+                                        <th>P&L</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="empty-row">
+                                        <td colspan="8">
+                                            <div class="empty-state">
+                                                <i class="fas fa-history"></i>
+                                                <p>No trade history</p>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- HISTORY PAGE -->
-            <section id="history" class="page">
-                <div class="card">
-                    <div class="card-header">
-                        <h2><i class="fas fa-history"></i> Trade History</h2>
-                        <div class="header-actions">
-                            <button class="btn btn-outline btn-sm" onclick="exportTradeHistory()">
-                                <i class="fas fa-download"></i> Export
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="history-container">
-                            <div class="loading-state">
-                                <i class="fas fa-spinner fa-spin"></i>
-                                <span>Loading trade history...</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- RISK MANAGEMENT PAGE -->
-            <section id="risk-management" class="page">
-                <div class="risk-management-grid">
-                    <!-- Risk Trackers Management -->
+            <!-- Analytics Section -->
+            <section id="analytics-section" class="content-section">
+                <div class="analytics-grid">
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-shield-alt"></i> Risk Trackers</h2>
-                            <button class="btn btn-primary btn-sm" onclick="createNewTracker()">
-                                <i class="fas fa-plus"></i> New Tracker
-                            </button>
+                            <h3><i class="fas fa-chart-pie"></i> Performance Overview</h3>
                         </div>
                         <div class="card-body">
-                            <div id="trackers-list" class="trackers-list">
-                                <div class="empty-state">
-                                    <i class="fas fa-shield-alt"></i>
-                                    <p>No risk trackers created yet</p>
-                                    <button class="btn btn-primary" onclick="createNewTracker()">Create First Tracker</button>
+                            <div class="performance-stats">
+                                <div class="perf-stat">
+                                    <span class="perf-label">Win Rate</span>
+                                    <span class="perf-value" id="win-rate">0%</span>
+                                </div>
+                                <div class="perf-stat">
+                                    <span class="perf-label">Total Trades</span>
+                                    <span class="perf-value" id="total-trades">0</span>
+                                </div>
+                                <div class="perf-stat">
+                                    <span class="perf-label">Avg. Profit</span>
+                                    <span class="perf-value" id="avg-profit">$0.00</span>
+                                </div>
+                                <div class="perf-stat">
+                                    <span class="perf-label">Best Trade</span>
+                                    <span class="perf-value" id="best-trade">$0.00</span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Create Tracker Modal -->
-                    <div id="tracker-modal" class="modal">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h3>Create Risk Tracker</h3>
-                                <button class="btn-close" onclick="closeTrackerModal()">&times;</button>
-                            </div>
-                            <div class="modal-body">
-                                <form id="tracker-form">
-                                    <div class="form-group">
-                                        <label for="tracker-name">Tracker Name</label>
-                                        <input type="text" id="tracker-name" name="name" placeholder="e.g., Daily Challenge" required>
-                                    </div>
-                                    
-                                    <div class="form-group">
-                                        <label for="tracker-account">Account</label>
-                                        <select id="tracker-account" name="accountId" required>
-                                            <option value="">Select Account...</option>
-                                        </select>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label for="tracker-period">Tracking Period</label>
-                                        <select id="tracker-period" name="period" required>
-                                            <option value="day">Daily</option>
-                                            <option value="week">Weekly</option>
-                                            <option value="month">Monthly</option>
-                                            <option value="lifetime">Lifetime</option>
-                                        </select>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label for="abs-drawdown">Absolute Drawdown Threshold ($)</label>
-                                        <input type="number" id="abs-drawdown" name="absoluteDrawdownThreshold" 
-                                               placeholder="e.g., 100" min="1" step="1">
-                                        <small>Maximum allowed loss from initial balance</small>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label for="rel-drawdown">Relative Drawdown Threshold (%)</label>
-                                        <input type="number" id="rel-drawdown" name="relativeDrawdownThreshold" 
-                                               placeholder="e.g., 5" min="0.1" max="100" step="0.1">
-                                        <small>Maximum allowed loss as percentage</small>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label for="profit-target">Profit Target ($)</label>
-                                        <input type="number" id="profit-target" name="profitTarget" 
-                                               placeholder="e.g., 500" min="1" step="1">
-                                        <small>Target profit amount</small>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label for="profit-target-rel">Relative Profit Target (%)</label>
-                                        <input type="number" id="profit-target-rel" name="relativeProfitTarget" 
-                                               placeholder="e.g., 10" min="0.1" max="1000" step="0.1">
-                                        <small>Target profit as percentage</small>
-                                    </div>
-
-                                    <div class="form-actions">
-                                        <button type="button" class="btn btn-secondary" onclick="closeTrackerModal()">Cancel</button>
-                                        <button type="submit" class="btn btn-primary">Create Tracker</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Real-time Risk Monitoring -->
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-chart-line"></i> Real-time Risk Monitoring</h2>
+                            <h3><i class="fas fa-chart-line"></i> Equity Curve</h3>
                         </div>
                         <div class="card-body">
-                            <div id="risk-stats-grid" class="risk-stats-grid">
-                                <div class="risk-stat-card">
-                                    <div class="stat-icon warning">
-                                        <i class="fas fa-exclamation-triangle"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <h4>Active Trackers</h4>
-                                        <div class="stat-value" id="active-trackers-count">0</div>
-                                    </div>
-                                </div>
-
-                                <div class="risk-stat-card">
-                                    <div class="stat-icon danger">
-                                        <i class="fas fa-arrow-down"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <h4>Max Drawdown</h4>
-                                        <div class="stat-value" id="max-drawdown-value">$0.00</div>
-                                    </div>
-                                </div>
-
-                                <div class="risk-stat-card">
-                                    <div class="stat-icon success">
-                                        <i class="fas fa-target"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <h4>Targets Hit</h4>
-                                        <div class="stat-value" id="targets-hit-count">0</div>
-                                    </div>
-                                </div>
-
-                                <div class="risk-stat-card">
-                                    <div class="stat-icon info">
-                                        <i class="fas fa-chart-area"></i>
-                                    </div>
-                                    <div class="stat-content">
-                                        <h4>Total P&L</h4>
-                                        <div class="stat-value" id="total-pnl-value">$0.00</div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Equity Chart -->
-                            <div class="equity-chart-container">
-                                <h3>Equity Chart</h3>
-                                <div id="equity-chart" class="chart-placeholder">
-                                    <p>Select an account to view equity chart</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Risk Events & Alerts -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h2><i class="fas fa-bell"></i> Risk Events & Alerts</h2>
-                            <button class="btn btn-secondary btn-sm" onclick="clearRiskEvents()">
-                                <i class="fas fa-trash"></i> Clear All
-                            </button>
-                        </div>
-                        <div class="card-body">
-                            <div id="risk-events-list" class="risk-events-list">
-                                <div class="empty-state">
-                                    <i class="fas fa-bell"></i>
-                                    <p>No risk events recorded</p>
-                                </div>
+                            <div class="chart-container">
+                                <canvas id="equity-chart"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- SYSTEM LOGS PAGE -->
-            <section id="logs" class="page">
-                <!-- System Status Overview -->
-                <div class="system-status-grid">
-                    <div class="status-item">
-                        <div class="status-icon online">
-                            <i class="fas fa-robot"></i>
-                        </div>
-                        <div class="status-content">
-                            <h4>Telegram Bot</h4>
-                            <span class="status-text" id="bot-status">Online</span>
-                        </div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-icon online">
-                            <i class="fas fa-chart-line"></i>
-                        </div>
-                        <div class="status-content">
-                            <h4>MetaAPI</h4>
-                            <span class="status-text" id="metaapi-status">Connected</span>
-                        </div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-icon online">
-                            <i class="fas fa-exchange-alt"></i>
-                        </div>
-                        <div class="status-content">
-                            <h4>Trade Executor</h4>
-                            <span class="status-text" id="executor-status">Ready</span>
-                        </div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-icon online">
-                            <i class="fas fa-wallet"></i>
-                        </div>
-                        <div class="status-content">
-                            <h4>MT5 Accounts</h4>
-                            <span class="status-text" id="accounts-status">Connected</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Live Log Terminal -->
-                <div class="log-terminal-container">
-                    <div class="log-terminal" id="log-terminal">
-                        <div class="log-header">
-                            <div class="log-title">
-                                <i class="fas fa-terminal"></i>
-                                <span>Live System Logs</span>
-                            </div>
-                            <div class="log-controls">
-                                <select id="log-level-filter" class="form-select">
-                                    <option value="all">All Levels</option>
-                                    <option value="info">Info</option>
-                                    <option value="warn">Warnings</option>
-                                    <option value="error">Errors</option>
-                                    <option value="success">Success</option>
-                                </select>
-                                <button id="clear-logs" class="btn btn-outline btn-sm">
-                                    <i class="fas fa-trash"></i> Clear
-                                </button>
-                                <button id="auto-scroll-toggle" class="btn btn-primary btn-sm active">
-                                    <i class="fas fa-arrow-down"></i> Auto-scroll
-                                </button>
-                            </div>
-                            <div class="log-stats">
-                                <span id="log-count">0 entries</span>
-                            </div>
-                        </div>
-                        <div class="log-content" id="logs-container">
-                            <div class="loading-state">
-                                <i class="fas fa-spinner fa-spin"></i>
-                                <span>Loading live logs...</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- SETTINGS PAGE -->
-            <section id="settings" class="page">
+            <!-- Settings Section -->
+            <section id="settings-section" class="content-section">
                 <div class="settings-grid">
-                    <!-- Account Management -->
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-user-cog"></i> Account Management</h2>
+                            <h3><i class="fas fa-robot"></i> Bot Settings</h3>
                         </div>
                         <div class="card-body">
-                            <div class="setting-item">
-                                <label>Default Risk Percentage</label>
-                                <input type="number" id="default-risk" value="2" min="0.1" max="10" step="0.1">
-                                <small>Default risk per trade (1-10%)</small>
+                            <div class="form-group">
+                                <label for="bot-enabled">Enable Bot Trading</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="bot-enabled" checked>
+                                    <span class="slider"></span>
+                                </label>
                             </div>
-                            <div class="setting-item">
-                                <label>Max Position Size</label>
-                                <input type="number" id="max-position-size" value="0.1" min="0.01" max="10" step="0.01">
-                                <small>Maximum lot size per position</small>
+                            <div class="form-group">
+                                <label for="risk-per-trade">Risk Per Trade (%)</label>
+                                <input type="number" id="risk-per-trade" class="form-input" value="2" min="0.1" max="10" step="0.1">
                             </div>
-                            <button class="btn btn-primary" onclick="saveGlobalSettings()">
+                            <div class="form-group">
+                                <label for="max-daily-trades">Max Daily Trades</label>
+                                <input type="number" id="max-daily-trades" class="form-input" value="5" min="1" max="20">
+                            </div>
+                            <button class="btn btn-primary" onclick="saveSettings()">
                                 <i class="fas fa-save"></i> Save Settings
                             </button>
                         </div>
                     </div>
 
-                    <!-- System Configuration -->
                     <div class="card">
                         <div class="card-header">
-                            <h2><i class="fas fa-cogs"></i> System Configuration</h2>
+                            <h3><i class="fas fa-shield-alt"></i> Risk Management</h3>
                         </div>
                         <div class="card-body">
-                            <div class="setting-item">
-                                <label>Auto Refresh Interval</label>
-                                <select id="refresh-interval">
-                                    <option value="5000">5 seconds</option>
-                                    <option value="10000" selected>10 seconds</option>
-                                    <option value="30000">30 seconds</option>
-                                    <option value="60000">1 minute</option>
-                                </select>
+                            <div class="form-group">
+                                <label for="max-drawdown">Max Drawdown (%)</label>
+                                <input type="number" id="max-drawdown" class="form-input" value="10" min="1" max="50">
                             </div>
-                            <div class="setting-item">
-                                <label>
-                                    <input type="checkbox" id="enable-notifications" checked>
-                                    Enable Desktop Notifications
+                            <div class="form-group">
+                                <label for="daily-loss-limit">Daily Loss Limit ($)</label>
+                                <input type="number" id="daily-loss-limit" class="form-input" value="500" min="10">
+                            </div>
+                            <div class="form-group">
+                                <label for="emergency-stop">Emergency Stop</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="emergency-stop">
+                                    <span class="slider"></span>
                                 </label>
                             </div>
-                            <button class="btn btn-outline" onclick="clearAllData()">
-                                <i class="fas fa-trash"></i> Clear All Data
+                            <button class="btn btn-primary" onclick="saveRiskSettings()">
+                                <i class="fas fa-save"></i> Save Risk Settings
                             </button>
                         </div>
                     </div>
                 </div>
             </section>
+        </main>
+    </div>
 
+    <!-- Add Account Modal -->
+    <div id="add-account-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-plus-circle"></i> Add Trading Account</h2>
+                <button class="modal-close" onclick="closeModal('add-account-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="add-account-form" class="form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="account-login">Account Login</label>
+                            <input type="text" id="account-login" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="account-password">Password</label>
+                            <input type="password" id="account-password" class="form-input" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="server-name">Server</label>
+                            <input type="text" id="server-name" class="form-input" placeholder="e.g., ICMarketsSC-Demo" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="account-type">Account Type</label>
+                            <select id="account-type" class="form-select" required>
+                                <option value="">Select Type</option>
+                                <option value="demo">Demo</option>
+                                <option value="live">Live</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="account-name">Account Name (Optional)</label>
+                        <input type="text" id="account-name" class="form-input" placeholder="My Trading Account">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline" onclick="closeModal('add-account-modal')">
+                    Cancel
+                </button>
+                <button type="submit" form="add-account-form" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> Add Account
+                </button>
+            </div>
         </div>
-    </main>
+    </div>
 
+    <!-- Signal Test Modal -->
+    <div id="signal-test-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-satellite-dish"></i> Manual Signal Test</h2>
+                <button class="modal-close" onclick="closeModal('signal-test-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="signal-test-form" class="form">
+                    <div class="form-group">
+                        <label for="test-signal">Signal Text</label>
+                        <textarea id="test-signal" class="form-input" rows="6" 
+                                placeholder="Paste signal text here...&#10;&#10;Example:&#10;EURUSD&#10;BUY @ 1.0850&#10;TP: 1.0900&#10;SL: 1.0800"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="test-account">Target Account</label>
+                            <select id="test-account" class="form-select">
+                                <option value="all">All Connected Accounts</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="test-mode">Test Mode</label>
+                            <select id="test-mode" class="form-select">
+                                <option value="dry-run">Dry Run (No Execution)</option>
+                                <option value="live">Live Execution</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline" onclick="closeModal('signal-test-modal')">
+                    Cancel
+                </button>
+                <button type="submit" form="signal-test-form" class="btn btn-primary">
+                    <i class="fas fa-play"></i> Test Signal
+                </button>
+            </div>
+        </div>
+    </div>
 
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
 
-    <!-- Notification Container -->
-    <div id="notification-container"></div>
-
-    <!-- Scripts -->
+    <!-- Core Scripts -->
+    <script src="scripts/api.js"></script>
+    <script src="scripts/utils.js"></script>
     <script src="scripts/clean-dashboard.js"></script>
-
-    <style>
-        /* Modal Styles */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-            backdrop-filter: blur(4px);
-        }
-
-        .modal-content {
-            background: white;
-            margin: 5% auto;
-            padding: 0;
-            border-radius: 12px;
-            width: 90%;
-            max-width: 500px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 1.5rem;
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        .modal-header h3 {
-            margin: 0;
-            color: #1f2937;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 1.25rem;
-            color: #6b7280;
-            cursor: pointer;
-            padding: 0.5rem;
-            border-radius: 50%;
-            transition: all 0.2s;
-        }
-
-        .modal-close:hover {
-            background: #f3f4f6;
-            color: #374151;
-        }
-
-        .modal-body {
-            padding: 1.5rem;
-        }
-
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-            color: #374151;
-        }
-
-        .form-group input, .form-group select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 1rem;
-            transition: all 0.2s;
-        }
-
-        .form-group input:focus, .form-group select:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-
-        .form-group small {
-            display: block;
-            margin-top: 0.25rem;
-            color: #6b7280;
-            font-size: 0.875rem;
-        }
-
-        .form-actions {
-            display: flex;
-            gap: 1rem;
-            justify-content: flex-end;
-            margin-top: 2rem;
-        }
-
-        .quick-actions-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-        }
-
-        .settings-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 2rem;
-        }
-
-        .setting-item {
-            margin-bottom: 1.5rem;
-        }
-
-        .setting-item label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-            color: #374151;
-        }
-
-        .setting-item input, .setting-item select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 1rem;
-        }
-
-        .setting-item small {
-            display: block;
-            margin-top: 0.25rem;
-            color: #6b7280;
-            font-size: 0.875rem;
-        }
-
-        .accounts-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .account-card {
-            background: white;
-            border: 2px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 1.5rem;
-            transition: all 0.2s;
-        }
-
-        .account-card:hover {
-            border-color: #3b82f6;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
-        }
-
-        .account-card.connected {
-            border-color: #10b981;
-        }
-
-        .account-card.disconnected {
-            border-color: #ef4444;
-        }
-
-        .loading-state, .no-data {
-            text-align: center;
-            padding: 3rem;
-            color: #6b7280;
-        }
-
-        .loading-state i, .no-data i {
-            font-size: 2rem;
-            margin-bottom: 1rem;
-            display: block;
-        }
-
-        /* Notification Styles */
-        #notification-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 2000;
-        }
-
-        .notification {
-            background: white;
-            padding: 1rem 1.5rem;
-            margin-bottom: 0.5rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            border-left: 4px solid #3b82f6;
-            transform: translateX(400px);
-            animation: slideIn 0.3s ease forwards;
-        }
-
-        .notification.success {
-            border-left-color: #10b981;
-        }
-
-        .notification.error {
-            border-left-color: #ef4444;
-        }
-
-        @keyframes slideIn {
-            to {
-                transform: translateX(0);
-            }
-        }
-
-        /* Modern Account Card Styles */
-        .modern-account-card {
-            background: white;
-            border: 2px solid #e5e7eb;
-            border-radius: 16px;
-            padding: 1.5rem;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-        }
-
-        .modern-account-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
-        }
-
-        .modern-account-card.connected {
-            border-color: #10b981;
-            background: linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%);
-        }
-
-        .modern-account-card.disconnected {
-            border-color: #f59e0b;
-            background: linear-gradient(135deg, #ffffff 0%, #fffbeb 100%);
-        }
-
-        .account-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-
-        .account-info {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .account-avatar {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 1.2rem;
-        }
-
-        .account-details h4 {
-            margin: 0 0 0.25rem 0;
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        .account-id {
-            font-size: 0.85rem;
-            color: #6b7280;
-            font-family: monospace;
-        }
-
-        .account-meta {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 0.25rem;
-        }
-
-        .account-type {
-            padding: 0.125rem 0.5rem;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .account-type.demo {
-            background: #dbeafe;
-            color: #1d4ed8;
-        }
-
-        .account-type.live {
-            background: #dcfce7;
-            color: #166534;
-        }
-
-        .broker-server {
-            font-size: 0.75rem;
-            color: #6b7280;
-        }
-
-        .connection-status {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.9rem;
-        }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-        }
-
-        .status-indicator.online {
-            color: #10b981;
-        }
-
-        .status-indicator.offline {
-            color: #f59e0b;
-        }
-
-        .account-metrics {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .metric-card {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 1rem;
-            background: rgba(255, 255, 255, 0.7);
-            border-radius: 12px;
-            border: 1px solid #f3f4f6;
-        }
-
-        .metric-icon {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #6b7280;
-        }
-
-        .metric-content {
-            flex: 1;
-        }
-
-        .metric-label {
-            display: block;
-            font-size: 0.8rem;
-            color: #6b7280;
-            margin-bottom: 0.125rem;
-        }
-
-        .metric-value {
-            font-weight: 600;
-            font-size: 0.95rem;
-        }
-
-        .metric-value.positive {
-            color: #10b981;
-        }
-
-        .metric-value.negative {
-            color: #ef4444;
-        }
-
-        .metric-value.neutral {
-            color: #374151;
-        }
-
-        .metric-subtitle {
-            display: block;
-            font-size: 0.75rem;
-            color: #9ca3af;
-            margin-top: 0.125rem;
-        }
-
-        .account-actions {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-            margin-bottom: 1rem;
-        }
-
-        .connection-alert, .connection-success {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem;
-            border-radius: 8px;
-            font-size: 0.9rem;
-        }
-
-        .connection-alert {
-            background: #fef3c7;
-            border: 1px solid #f59e0b;
-            color: #92400e;
-        }
-
-        .connection-success {
-            background: #d1fae5;
-            border: 1px solid #10b981;
-            color: #065f46;
-        }
-
-        .alert-content {
-            flex: 1;
-        }
-
-        .alert-title {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-
-        .alert-message {
-            display: block;
-            font-size: 0.85rem;
-            opacity: 0.9;
-        }
-    </style>
+    
+    <!-- Dashboard initialization now handled in clean-dashboard.js -->
 </body>
 </html>

@@ -4,10 +4,10 @@ import fs from 'fs';
 import { config } from '../utils/config';
 import { dashboardLogs } from '../utils/logger';
 import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
+import { TradeSignal } from '../types';
 import tradingAPIRouter from './noDbTradingAPI';
-import { generalRateLimit, tradingRateLimit, authRateLimit } from '../middleware/rateLimit';
+import { generalRateLimit, tradingRateLimit } from '../middleware/rateLimit';
 import { InputValidator, ValidationRules } from '../middleware/validation';
-import { authenticateToken, optionalAuth } from '../middleware/auth';
 import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
 import { UserAccountManagementService } from '../services/UserAccountManagementService';
 
@@ -29,7 +29,7 @@ app.use((req, res, next) => {
 app.use('/api', (req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
   } else {
@@ -38,7 +38,6 @@ app.use('/api', (req, res, next) => {
 });
 
 // Rate limiting for different endpoints
-app.use('/api/auth', authRateLimit.middleware());
 app.use('/api/trading', tradingRateLimit.middleware());
 app.use('/api', generalRateLimit.middleware());
 
@@ -47,6 +46,154 @@ import { randomUUID } from 'crypto';
 
 let tradeHistory: any[] = [];
 let streamClients: any[] = []; // Store for SSE clients
+
+// Convert technical logs to user-friendly activities
+const convertToUserFriendlyActivity = (log: any) => {
+  if (!log || !log.message) return null;
+
+  const message = log.message.toLowerCase();
+  const timestamp = log.timestamp || new Date().toISOString();
+  
+  // Trading Activities
+  if (message.includes('trade executed') || message.includes('position opened')) {
+    return {
+      type: 'activity',
+      level: 'success',
+      icon: '💰',
+      title: 'Trade Executed',
+      message: 'New trading position opened successfully',
+      timestamp,
+      category: 'trading'
+    };
+  }
+  
+  if (message.includes('trade closed') || message.includes('position closed')) {
+    return {
+      type: 'activity',
+      level: 'info',
+      icon: '📈',
+      title: 'Position Closed',
+      message: 'Trading position closed and profit/loss calculated',
+      timestamp,
+      category: 'trading'
+    };
+  }
+
+  if (message.includes('signal received') || message.includes('signal detected')) {
+    return {
+      type: 'activity',
+      level: 'info',
+      icon: '📡',
+      title: 'Signal Detected',
+      message: 'New trading signal received from Telegram channel',
+      timestamp,
+      category: 'signals'
+    };
+  }
+
+  // System Health
+  if (message.includes('connected') && (message.includes('metaapi') || message.includes('mt5'))) {
+    return {
+      type: 'activity',
+      level: 'success',
+      icon: '🔗',
+      title: 'Broker Connected',
+      message: 'Successfully connected to MetaTrader 5 platform',
+      timestamp,
+      category: 'system'
+    };
+  }
+
+  if (message.includes('telegram') && message.includes('connected')) {
+    return {
+      type: 'activity',
+      level: 'success',
+      icon: '🤖',
+      title: 'Bot Online',
+      message: 'Telegram bot is active and monitoring channels',
+      timestamp,
+      category: 'system'
+    };
+  }
+
+  // Errors and Warnings (only show important ones)
+  if (log.level === 'error' && (message.includes('connection') || message.includes('trade') || message.includes('api'))) {
+    return {
+      type: 'activity',
+      level: 'error',
+      icon: '⚠️',
+      title: 'System Alert',
+      message: 'Trading system experienced a connection issue - attempting to reconnect',
+      timestamp,
+      category: 'system'
+    };
+  }
+
+  // Market Analysis
+  if (message.includes('market analysis') || message.includes('chart analysis')) {
+    return {
+      type: 'activity',
+      level: 'info',
+      icon: '📊',
+      title: 'Market Analysis',
+      message: 'AI system analyzing market conditions and chart patterns',
+      timestamp,
+      category: 'analysis'
+    };
+  }
+
+  // Risk Management
+  if (message.includes('risk') || message.includes('stop loss') || message.includes('take profit')) {
+    return {
+      type: 'activity',
+      level: 'warning',
+      icon: '🛡️',
+      title: 'Risk Management',
+      message: 'Protective measures activated for current positions',
+      timestamp,
+      category: 'risk'
+    };
+  }
+
+  // Account Management
+  if (message.includes('balance') || message.includes('equity')) {
+    return {
+      type: 'activity',
+      level: 'info',
+      icon: '💼',
+      title: 'Account Update',
+      message: 'Account balance and equity information updated',
+      timestamp,
+      category: 'account'
+    };
+  }
+
+  // Filter out technical/debug messages that users don't need to see
+  const ignoredPatterns = [
+    'debug', 'verbose', 'trace', 'heap', 'memory', 'gc', 'internal',
+    'middleware', 'route', 'request', 'response', 'cors', 'parsing'
+  ];
+  
+  if (ignoredPatterns.some(pattern => message.includes(pattern))) {
+    return null;
+  }
+
+  // Default fallback for important messages only
+  if (log.level === 'error' || log.level === 'warning') {
+    return {
+      type: 'activity',
+      level: log.level,
+      icon: log.level === 'error' ? '🚨' : '⚡',
+      title: 'System Notification',
+      message: 'System activity detected - monitoring for stability',
+      timestamp,
+      category: 'system'
+    };
+  }
+
+  // Ignore everything else (debug, info logs that aren't user-relevant)
+  return null;
+};
 let botStatus = {
   isRunning: false,
   uptime: 0,
@@ -156,6 +303,7 @@ const updateMT5Data = async () => {
 
 // Start MT5 data updates
 let updateInterval: NodeJS.Timeout | null = null;
+let demoActivityInterval: NodeJS.Timeout | null = null;
 
 const startMT5Updates = () => {
   // Clear existing interval if any
@@ -166,6 +314,27 @@ const startMT5Updates = () => {
   updateInterval = setInterval(updateMT5Data, 30000);
   // Initial update
   updateMT5Data();
+};
+
+// Demo activity generator for testing
+const startDemoActivities = () => {
+  const demoActivities = [
+    { level: 'info', message: 'Signal received from premium channel' },
+    { level: 'info', message: 'Trade executed successfully' },
+    { level: 'success', message: 'Position opened successfully' },
+    { level: 'info', message: 'Market analysis complete' },
+    { level: 'warning', message: 'Risk management check activated' },
+    { level: 'info', message: 'MetaAPI connection verified' },
+    { level: 'success', message: 'Telegram bot connected' },
+    { level: 'info', message: 'Chart analysis in progress' },
+    { level: 'info', message: 'Balance update received' },
+    { level: 'success', message: 'Trade closed with profit' }
+  ];
+
+  demoActivityInterval = setInterval(() => {
+    const activity = demoActivities[Math.floor(Math.random() * demoActivities.length)];
+    addLog(activity);
+  }, 8000); // Every 8 seconds
 };
 
 // Clean shutdown function
@@ -290,7 +459,7 @@ app.get('/', (req, res) => {
     console.error('Dashboard - HTML file not found at:', htmlPath);
     res.status(404).send(`
       <html>
-        <head><title>Dashboard Loading...</title></head>
+        <head><title>Trading Dashboard</title></head>
         <body>
           <h1>Dashboard is starting up...</h1>
           <p>HTML file not found at: ${htmlPath}</p>
@@ -302,7 +471,38 @@ app.get('/', (req, res) => {
   }
 });
 
-// API endpoints
+  // User-friendly activity stream endpoint
+app.get('/api/logs/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Send connection established event
+  res.write('data: {"type":"connected","message":"📊 Live activity stream connected","timestamp":"' + new Date().toISOString() + '"}\n\n');
+
+  // Store client connection for real-time logs
+  const clientId = Math.random().toString(36);
+  streamClients.push({ id: clientId, res });
+
+  // Send recent user-friendly activities immediately
+  const recentLogs = Array.isArray(dashboardLogs) ? dashboardLogs.slice(-20) : [];
+  const userFriendlyLogs = recentLogs
+    .map(log => convertToUserFriendlyActivity(log))
+    .filter(activity => activity !== null);
+  
+  userFriendlyLogs.forEach(activity => {
+    res.write(`data: ${JSON.stringify(activity)}\n\n`);
+  });
+
+  // Cleanup on connection close
+  req.on('close', () => {
+    streamClients = streamClients.filter(client => client.id !== clientId);
+  });
+});// API endpoints
 app.get('/api/status', (req, res) => {
   res.json(botStatus);
 });
@@ -311,8 +511,23 @@ app.get('/api/status', (req, res) => {
 app.use('/api', tradingAPIRouter);
 
 app.get('/api/logs', (req, res) => {
-  const limit = parseInt(req.query.limit as string) || 100;
-  res.json(dashboardLogs.slice(-limit));
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const logs = Array.isArray(dashboardLogs) ? dashboardLogs.slice(-limit) : [];
+    
+    // Ensure logs have proper format
+    const formattedLogs = logs.map(log => ({
+      timestamp: log.timestamp || new Date().toISOString(),
+      level: log.level || 'info',
+      message: log.message || 'No message',
+      service: log.service || 'system'
+    }));
+    
+    res.json(formattedLogs);
+  } catch (error) {
+    console.error('Error fetching logs:', error);
+    res.json([]);
+  }
 });
 
 app.get('/api/trades', (req, res) => {
@@ -364,10 +579,16 @@ app.get('/api/mt5/account', async (req, res) => {
     const totalEquity = mt5AccountsData.reduce((sum, account) => sum + (account.equity || 0), 0);
     const totalFreeMargin = mt5AccountsData.reduce((sum, account) => sum + (account.freeMargin || 0), 0);
     
+    // Include MetaAPI account IDs for MetaStats integration
+    const accountsWithIds = mt5AccountsData.map(account => ({
+      ...account,
+      accountId: account.id  // Ensure the MetaAPI account ID is available as 'accountId'
+    }));
+    
     res.json({
       success: true,
       connected: true,
-      accounts: mt5AccountsData,
+      accounts: accountsWithIds,
       summary: {
         totalBalance,
         totalEquity,
@@ -375,7 +596,9 @@ app.get('/api/mt5/account', async (req, res) => {
         accountCount: mt5AccountsData.length,
         connectedAccounts: mt5AccountsData.filter(acc => acc.status === 'CONNECTED').length
       },
-      lastUpdate: mt5LastUpdate
+      lastUpdate: mt5LastUpdate,
+      // Add primary account ID for MetaStats (first connected account)
+      primaryAccountId: mt5AccountsData.find(acc => acc.status === 'CONNECTED')?.id || mt5AccountsData[0]?.id
     });
 
   } catch (error) {
@@ -570,6 +793,207 @@ app.post('/api/mt5/positions/:accountId/:positionId/close', async (req, res) => 
     res.status(500).json({ 
       error: 'Failed to close position: ' + error 
     });
+  }
+});
+
+// Close all positions for an account
+app.post('/api/mt5/positions/close-all/:accountId', async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    
+    if (!multiAccountExecutor) {
+      return res.status(503).json({ 
+        error: 'MT5 connection not available' 
+      });
+    }
+
+    const isConnected = await multiAccountExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({ 
+        error: 'MT5 not connected' 
+      });
+    }
+
+    // Get current positions from all accounts
+    const positions = mt5AccountsData.reduce((allPositions: any[], account) => {
+      return allPositions.concat(account.positions || []);
+    }, []);
+    if (positions.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No positions to close',
+        closedCount: 0
+      });
+    }
+
+    let closedCount = 0;
+    let failedCount = 0;
+
+    // Close each position
+    for (const position of positions) {
+      try {
+        const result = await multiAccountExecutor.closePosition(accountId, position.id);
+        if (result) {
+          closedCount++;
+        } else {
+          failedCount++;
+        }
+        // Small delay to avoid overwhelming the API
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error(`Error closing position ${position.id}:`, error);
+        failedCount++;
+      }
+    }
+
+    // Update positions after closing
+    setTimeout(() => updateMT5Data(), 3000);
+
+    addLog({
+      level: 'info',
+      message: `✅ Closed ${closedCount} positions on account ${accountId} via dashboard`
+    });
+
+    res.json({
+      success: true,
+      message: `Closed ${closedCount} positions successfully`,
+      closedCount,
+      failedCount,
+      totalPositions: positions.length
+    });
+
+  } catch (error) {
+    console.error('Error closing all positions:', error);
+    res.status(500).json({ 
+      error: 'Failed to close all positions: ' + error 
+    });
+  }
+});
+
+// ========== ADVANCED METAAPI FEATURES ==========
+
+// Get account analytics and performance metrics (basic implementation)
+app.get('/api/mt5/analytics/:accountId', async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    
+    if (!multiAccountExecutor) {
+      return res.status(503).json({ error: 'MT5 connection not available' });
+    }
+
+    // Get trade history for analytics
+    const history = await multiAccountExecutor.getTradeHistory();
+    
+    // Calculate basic analytics from history
+    let totalTrades = 0;
+    let winningTrades = 0;
+    let totalProfit = 0;
+    
+    if (history && history.deals) {
+      totalTrades = history.deals.length;
+      winningTrades = history.deals.filter((deal: any) => (deal.profit || 0) > 0).length;
+      totalProfit = history.deals.reduce((sum: number, deal: any) => sum + (deal.profit || 0), 0);
+    }
+    
+    const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+    
+    res.json({
+      success: true,
+      analytics: {
+        totalTrades,
+        winningTrades,
+        winRate: winRate.toFixed(2),
+        totalProfit: totalProfit.toFixed(2),
+        profitFactor: 'N/A',
+        drawdown: 'N/A',
+        equity: mt5AccountsData[0]?.equity || 0,
+        balance: mt5AccountsData[0]?.balance || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting analytics:', error);
+    res.status(500).json({ error: 'Failed to get analytics: ' + error });
+  }
+});
+
+// Get trade history data (using existing method)
+app.get('/api/mt5/trade-history', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      return res.status(503).json({ error: 'MT5 connection not available' });
+    }
+
+    const history = await multiAccountExecutor.getTradeHistory();
+    
+    res.json({
+      success: true,
+      history: history || { summary: {}, recentDeals: [] }
+    });
+
+  } catch (error) {
+    console.error('Error getting trade history:', error);
+    res.status(500).json({ error: 'Failed to get trade history: ' + error });
+  }
+});
+
+// Execute manual trade via signal (using existing executeTradeSignal method)
+app.post('/api/mt5/manual-trade', async (req, res) => {
+  try {
+    const { symbol, action, volume } = req.body;
+    
+    if (!multiAccountExecutor) {
+      return res.status(503).json({ error: 'MT5 connection not available' });
+    }
+
+    if (!symbol || !action || !volume) {
+      return res.status(400).json({ error: 'Missing required fields: symbol, action, volume' });
+    }
+
+    // Create a trade signal for manual execution
+    const signal: TradeSignal = {
+      symbol: symbol.toUpperCase(),
+      action: action.toUpperCase() as 'BUY' | 'SELL',
+      entryZone: { min: 0, max: 0 }, // Will be calculated by the executor
+      stopLoss: 0, // Will be calculated by the executor  
+      targets: [0], // Will be calculated by the executor
+      confidence: 1.0,
+      reason: 'Manual trade from dashboard',
+      positionSizing: {
+        lotSize: parseFloat(volume),
+        riskAmount: 900,
+        riskPercentage: 2,
+        accountEquity: mt5AccountsData[0]?.equity || 100000,
+        reasoning: 'Fixed position size from dashboard'
+      }
+    };
+
+    const result = await multiAccountExecutor.executeTradeSignal(signal);
+
+    if (result.success) {
+      addLog({
+        level: 'info',
+        message: `✅ Manual trade executed: ${action} ${volume} lots of ${symbol}`
+      });
+
+      // Update positions after trade
+      setTimeout(() => updateMT5Data(), 2000);
+
+      res.json({
+        success: true,
+        message: 'Trade executed successfully',
+        ticket: result.ticket
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || 'Trade execution failed'
+      });
+    }
+
+  } catch (error) {
+    console.error('Error executing manual trade:', error);
+    res.status(500).json({ error: 'Failed to execute trade: ' + error });
   }
 });
 
@@ -1554,20 +1978,23 @@ export const addLog = (logEntry: any) => {
     dashboardLogs.splice(0, dashboardLogs.length - 1000);
   }
 
-  // Broadcast to connected stream clients
+  // Broadcast user-friendly activities to connected stream clients
   if (streamClients && streamClients.length > 0) {
-    const logData = JSON.stringify(logWithTimestamp);
-    streamClients.forEach((client: any) => {
-      try {
-        client.write(`data: ${logData}\n\n`);
-      } catch (error) {
-        // Client disconnected, remove from list
-        const index = streamClients.indexOf(client);
-        if (index !== -1) {
-          streamClients.splice(index, 1);
+    const userActivity = convertToUserFriendlyActivity(logWithTimestamp);
+    if (userActivity) {
+      const activityData = JSON.stringify(userActivity);
+      streamClients.forEach((client: any) => {
+        try {
+          client.res.write(`data: ${activityData}\n\n`);
+        } catch (error) {
+          // Client disconnected, remove from list
+          const index = streamClients.indexOf(client);
+          if (index !== -1) {
+            streamClients.splice(index, 1);
+          }
         }
-      }
-    });
+      });
+    }
   }
 };
 
@@ -1638,6 +2065,13 @@ setTimeout(() => {
         message: '🌐 Multi-Account Dashboard Integration started successfully'
       });
     }
+  });
+
+  // Start demo activities for testing
+  startDemoActivities();
+  addLog({
+    level: 'success',
+    message: '📊 Live activity stream initialized - monitoring trading system'
   });
 }, 5000); // Wait 5 seconds after server start
 

@@ -3,6 +3,7 @@ import { TradeSignal, TradeAction } from '../../types';
 import { ChartColorAnalysisML } from '../colorAnalysisML';
 import { VisualChartAnalysisML } from '../visualChartAnalysisML';
 import { PriceExtractorML } from './PriceExtractorML';
+import { SymbolParser, ValidationService, FormatService } from '../../shared';
 
 /**
  * Smart ML Router - Intelligently routes signals to appropriate analysis
@@ -192,7 +193,7 @@ export class SmartMLRouter {
     
     try {
       // Try to extract symbol from caption for better analysis
-      const symbol = this.extractSymbol(caption || text) || 'UNKNOWN';
+      const symbol = SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
       
       const analysis = ChartColorAnalysisML.analyzeChartColors(text, symbol);
       
@@ -257,7 +258,18 @@ export class SmartMLRouter {
         
         // 🚨 FIX: Ensure stop loss and targets are properly positioned
         const avgEntry = (entryZone.min + entryZone.max) / 2;
-        const direction = mlResult.direction || 'SELL'; // Default to SELL based on logs
+        
+        // Use ColorAnalysisML for direction if VisualML didn't provide one
+        let direction: 'BUY' | 'SELL' = mlResult.direction || 'BUY'; // Default to BUY
+        if (!mlResult.direction) {
+          // Extract OCR text for color analysis if needed
+          const ocrText = text || '';
+          const colorAnalysis = ChartColorAnalysisML.analyzeChartColors(ocrText, mlResult.symbol || 'UNKNOWN');
+          if (colorAnalysis.recommendation.action !== 'HOLD') {
+            direction = colorAnalysis.recommendation.action;
+            logger.info(`🎯 Using ColorAnalysisML direction: ${direction} (confidence: ${colorAnalysis.recommendation.confidence.toFixed(2)}) - ${colorAnalysis.recommendation.reason}`);
+          }
+        }
         
         let stopLoss: number;
         let targets: number[];
@@ -278,37 +290,45 @@ export class SmartMLRouter {
         if (direction === 'SELL') {
           // For SELL: stop loss should be ABOVE entry, targets should be BELOW entry
           if (stopLoss <= avgEntry) {
-            const buffer = avgEntry * 0.002; // 0.2% buffer
-            stopLoss = entryZone.max + buffer;
-            logger.warn(`⚠️ Adjusting SELL stop loss from ${mlResult.redStopZones[0]?.price} to ${stopLoss} (above entry)`);
+            // Use $900 risk calculation for SELL stop loss
+            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
+            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
+            stopLoss = avgEntry + pipDistanceFor900;
+            logger.warn(`⚠️ Adjusting SELL stop loss from ${mlResult.redStopZones[0]?.price} to ${stopLoss} ($900 risk with 0.45 lots)`);
           }
           
           // Ensure targets are below entry
           targets = targets.filter(t => t < avgEntry);
           if (targets.length === 0) {
-            const buffer = avgEntry * 0.002;
-            targets = [entryZone.min - buffer];
-            logger.warn(`⚠️ No valid SELL targets, creating target at ${targets[0]}`);
+            // Use $900 profit target calculation for SELL
+            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
+            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
+            targets = [avgEntry - pipDistanceFor900];
+            logger.warn(`⚠️ No valid SELL targets, creating target at ${targets[0]} ($900 profit with 0.45 lots)`);
           }
         } else {
           // For BUY: stop loss should be BELOW entry, targets should be ABOVE entry  
           if (stopLoss >= avgEntry) {
-            const buffer = avgEntry * 0.002; // 0.2% buffer
-            stopLoss = entryZone.min - buffer;
-            logger.warn(`⚠️ Adjusting BUY stop loss to ${stopLoss} (below entry)`);
+            // Use $900 risk calculation for BUY stop loss
+            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
+            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
+            stopLoss = avgEntry - pipDistanceFor900;
+            logger.warn(`⚠️ Adjusting BUY stop loss to ${stopLoss} ($900 risk with 0.45 lots)`);
           }
           
           // Ensure targets are above entry
           targets = targets.filter(t => t > avgEntry);
           if (targets.length === 0) {
-            const buffer = avgEntry * 0.002;
-            targets = [entryZone.max + buffer];
-            logger.warn(`⚠️ No valid BUY targets, creating target at ${targets[0]}`);
+            // Use $900 profit target calculation for BUY
+            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
+            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
+            targets = [avgEntry + pipDistanceFor900];
+            logger.warn(`⚠️ No valid BUY targets, creating target at ${targets[0]} ($900 profit with 0.45 lots)`);
           }
         }
 
         return {
-          symbol: mlResult.symbol || this.extractSymbol(caption || text) || 'UNKNOWN',
+          symbol: mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN',
           action: mlResult.direction || 'BUY',
           entryZone,
           stopLoss,
@@ -330,35 +350,6 @@ export class SmartMLRouter {
   }
 
   /**
-   * Extract symbol from text
-   */
-  private static extractSymbol(text: string): string | null {
-    const symbolPatterns = [
-      /#([A-Z]{6}|[A-Z]{3}USD|NAS100|SPX500|US30)/i,
-      /\b(XAUUSD|XAGUSD|EURUSD|GBPUSD|EURCAD|NAS100|SPX500|US30)\b/i,
-      /\b(Gold|Silver|NASDAQ|S&P|Dow)\b/i
-    ];
-    
-    for (const pattern of symbolPatterns) {
-      const match = text.match(pattern);
-      if (match) {
-        let symbol = match[1].toUpperCase();
-        
-        // Normalize common symbol variations
-        if (symbol === 'GOLD') symbol = 'XAUUSD';
-        if (symbol === 'SILVER') symbol = 'XAGUSD';
-        if (symbol === 'NASDAQ') symbol = 'NAS100';
-        if (symbol === 'S&P') symbol = 'SPX500';
-        if (symbol === 'DOW') symbol = 'US30';
-        
-        return symbol;
-      }
-    }
-    
-    return null;
-  }
-
-  /**
    * Calculate stop loss (simplified)
    */
   private static calculateStopLoss(entryZone: { min: number; max: number }, direction: string): number {
@@ -369,21 +360,64 @@ export class SmartMLRouter {
   }
 
   /**
-   * Calculate targets (simplified)
+   * Calculate targets based on fixed $900 profit target with 0.45 lot size
    */
-  private static calculateTargets(entryZone: { min: number; max: number }, direction: string): number[] {
+  private static calculateTargets(entryZone: { min: number; max: number }, direction: string, symbol?: string): number[] {
     const avgEntry = (entryZone.min + entryZone.max) / 2;
+    
+    // Fixed $900 profit target with 0.45 lot size
+    const pipDistance = this.calculatePipDistanceFor900Dollars(symbol || 'UNKNOWN', 0.45);
     
     if (direction === 'BUY') {
       return [
-        avgEntry + (avgEntry * 0.01),
-        avgEntry + (avgEntry * 0.02)
+        avgEntry + pipDistance
       ];
     } else {
       return [
-        avgEntry - (avgEntry * 0.01),
-        avgEntry - (avgEntry * 0.02)
+        avgEntry - pipDistance
       ];
+    }
+  }
+
+  /**
+   * Calculate pip distance needed for $900 profit/loss with 0.45 lot size
+   */
+  private static calculatePipDistanceFor900Dollars(symbol: string, lotSize: number = 0.45): number {
+    // Standard pip values for major pairs (per 1.0 lot)
+    const pipValues: { [key: string]: number } = {
+      'EURUSD': 10,    // $10 per pip per lot
+      'GBPUSD': 10,    // $10 per pip per lot  
+      'USDCHF': 10,    // $10 per pip per lot
+      'USDJPY': 10,    // $10 per pip per lot (approximately)
+      'EURGBP': 10,    // $10 per pip per lot (cross pair)
+      'EURJPY': 10,    // $10 per pip per lot (cross pair)
+      'GBPJPY': 10,    // $10 per pip per lot (cross pair)
+      'EURAUD': 10,    // $10 per pip per lot (cross pair)
+      'GBPAUD': 10,    // $10 per pip per lot (cross pair)
+      'AUDUSD': 10,    // $10 per pip per lot
+      'NZDUSD': 10,    // $10 per pip per lot
+      'USDCAD': 10,    // $10 per pip per lot
+      'XAUUSD': 100,   // $100 per pip per lot (Gold)
+      'XAGUSD': 50,    // $50 per pip per lot (Silver)
+      'DEFAULT': 10    // Default for unknown symbols
+    };
+
+    const pipValue = pipValues[symbol] || pipValues['DEFAULT'];
+    const pipValueForLotSize = pipValue * lotSize;
+    
+    // Calculate pips needed for $900
+    const pipsNeeded = 900 / pipValueForLotSize;
+    
+    // Convert pips to price distance based on symbol type
+    if (symbol.includes('JPY')) {
+      // JPY pairs: 1 pip = 0.01
+      return pipsNeeded * 0.01;
+    } else if (symbol.startsWith('XAU') || symbol.startsWith('XAG')) {
+      // Metals: 1 pip = 0.1 for Gold, 0.01 for Silver  
+      return symbol.startsWith('XAU') ? pipsNeeded * 0.1 : pipsNeeded * 0.01;
+    } else {
+      // Major forex pairs: 1 pip = 0.0001
+      return pipsNeeded * 0.0001;
     }
   }
 
@@ -399,7 +433,7 @@ export class SmartMLRouter {
     if (!analysis.greyEntry) return null;
     
     // Extract symbol from caption or text
-    const symbol = this.extractSymbol(caption || text) || 'UNKNOWN';
+    const symbol = SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
     
     // Determine action from recommendation
     const action: TradeAction = analysis.recommendation.action || 'BUY';
@@ -410,26 +444,21 @@ export class SmartMLRouter {
       max: analysis.greyEntry.max
     };
     
-    // Calculate stop loss and targets
+    // Calculate stop loss and targets based on fixed $900 risk/reward
     const entryMid = (entryZone.min + entryZone.max) / 2;
-    const zoneSize = entryZone.max - entryZone.min;
-    const riskDistance = Math.max(zoneSize * 2, entryMid * 0.01);
+    
+    // Calculate pip distance for $900 with 0.45 lot size
+    const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
     
     let stopLoss: number;
     let targets: number[];
     
     if (action === 'BUY') {
-      stopLoss = entryZone.min - riskDistance;
-      targets = [
-        entryMid + (riskDistance * 1.5),
-        entryMid + (riskDistance * 3.0)
-      ];
+      stopLoss = entryMid - pipDistanceFor900;  // -$900 risk
+      targets = this.calculateTargets(entryZone, 'BUY', symbol);  // +$900 profit
     } else {
-      stopLoss = entryZone.max + riskDistance;
-      targets = [
-        entryMid - (riskDistance * 1.5),
-        entryMid - (riskDistance * 3.0)
-      ];
+      stopLoss = entryMid + pipDistanceFor900;  // -$900 risk  
+      targets = this.calculateTargets(entryZone, 'SELL', symbol); // +$900 profit
     }
     
     return {

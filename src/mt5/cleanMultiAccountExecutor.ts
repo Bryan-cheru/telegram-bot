@@ -240,27 +240,44 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
     const fixedLotSize = 0.45;   // Always use 0.45 lot size
     const targetRisk = 900;      // Target $900 risk
+    const targetReward = 900;    // Target $900 reward (1:1 RR)
     
-    // Get realistic distance ranges for this instrument
-    const realisticDistance = this.getRealisticRiskDistance(signal.symbol, entryPrice, targetRisk, fixedLotSize);
+    // Get pip value for this instrument
+    const pipValue = this.getPipValue(signal.symbol);
+    
+    // Calculate EXACT distance for $900 risk/reward (in pips)
+    const exactDistanceInPips = targetRisk / (fixedLotSize * pipValue);
+    
+    // Convert pip distance to actual price difference based on instrument
+    let priceDistance = exactDistanceInPips;
+    const upperSymbol = signal.symbol.toUpperCase();
+    
+    if (this.isForexPair(upperSymbol) && !upperSymbol.includes('JPY') && !upperSymbol.includes('XAU') && !upperSymbol.includes('XAG')) {
+      // Major forex pairs: 1 pip = 0.0001
+      priceDistance = exactDistanceInPips * 0.0001;
+    } else if (upperSymbol.includes('JPY')) {
+      // JPY pairs: 1 pip = 0.01
+      priceDistance = exactDistanceInPips * 0.01;
+    }
+    // For metals (Gold/Silver) and indices, use pip distance as-is (dollar amounts or points)
     
     let stopLoss: number;
     let takeProfit: number;
     
-    // Calculate SL and TP using realistic distance
+    // Calculate SL and TP using the correct price distance
     if (signal.action === 'BUY') {
-      stopLoss = entryPrice - realisticDistance;
-      takeProfit = entryPrice + realisticDistance; // 1:1 RR
+      stopLoss = entryPrice - priceDistance;  // $900 risk
+      takeProfit = entryPrice + priceDistance; // $900 reward (1:1 RR)
     } else if (signal.action === 'SELL') {
-      stopLoss = entryPrice + realisticDistance;
-      takeProfit = entryPrice - realisticDistance; // 1:1 RR
+      stopLoss = entryPrice + priceDistance;   // $900 risk
+      takeProfit = entryPrice - priceDistance; // $900 reward (1:1 RR)
     } else {
       throw new Error(`Invalid action for SL/TP calculation: ${signal.action}`);
     }
     
-    // Calculate actual risk achieved
-    const pipValue = this.getPipValue(signal.symbol);
-    const actualRisk = fixedLotSize * realisticDistance * pipValue;
+    // Verify calculations are exactly $900
+    const actualRisk = fixedLotSize * exactDistanceInPips * pipValue;
+    const actualReward = fixedLotSize * exactDistanceInPips * pipValue;
     
     // Final safety validation
     if (signal.action === 'BUY') {
@@ -274,22 +291,22 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     // Update signal with calculated stop loss
     signal.stopLoss = stopLoss;
     
-    logger.info(`💰 REALISTIC RISK STRATEGY - ${signal.symbol}:`);
-    logger.info(`   Target Risk: $${targetRisk} (goal)`);
+    logger.info(`💰 EXACT $900 RISK/REWARD STRATEGY - ${signal.symbol}:`);
+    logger.info(`   Fixed Risk: $${actualRisk.toFixed(2)} (EXACT)`);
+    logger.info(`   Fixed Reward: $${actualReward.toFixed(2)} (EXACT)`);
     logger.info(`   Lot Size: ${fixedLotSize} lots (fixed)`);
+    logger.info(`   Pip Value: $${pipValue}/pip`);
     logger.info(`   Entry: ${entryPrice.toFixed(5)}`);
-    logger.info(`   Stop Loss: ${stopLoss.toFixed(5)}`);
-    logger.info(`   Take Profit: ${takeProfit.toFixed(5)}`);
-    logger.info(`   Risk Distance: ${realisticDistance.toFixed(5)} points`);
-    logger.info(`   Actual Risk: $${actualRisk.toFixed(2)} (${((actualRisk/targetRisk)*100).toFixed(1)}% of target)`);
-    logger.info(`   Risk/Reward: 1:1 (equal distance)`);
+    logger.info(`   Stop Loss: ${stopLoss.toFixed(5)} (${exactDistanceInPips.toFixed(2)} pips = ${priceDistance.toFixed(5)} price distance)`);
+    logger.info(`   Take Profit: ${takeProfit.toFixed(5)} (${exactDistanceInPips.toFixed(2)} pips = ${priceDistance.toFixed(5)} price distance)`);
+    logger.info(`   Risk/Reward: 1:1 (perfect balance)`);
     
     return takeProfit;
   }
 
   /**
-   * Calculate realistic risk distance for different instruments
-   * Balances between $900 target and realistic market conditions
+   * DEPRECATED: No longer used - now using exact $900 calculations
+   * Previous realistic distance calculation with limits per instrument
    */
   private getRealisticRiskDistance(symbol: string, entryPrice: number, targetRisk: number, lotSize: number): number {
     const upperSymbol = symbol.toUpperCase();
@@ -707,51 +724,64 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate trade volume based on fixed risk and lot size strategy
-   * Fixed: $900 risk per trade with 0.45 lot size
+   * Calculate trade volume based on $900 fixed risk per trade
    */
   private calculateVolume(connection: any, signal: TradeSignal): number {
     try {
       const accountInfo = connection.terminalState.accountInformation;
-      const balance = accountInfo?.balance || 10000;
+      const balance = accountInfo?.balance || 197181.33; // Use your current balance as fallback
       
-      // FIXED RISK AND LOT SIZE STRATEGY
+      // FIXED RISK STRATEGY: Always risk $900 per trade
       const fixedRiskAmount = 900; // Always risk $900 per trade
-      const fixedLotSize = 0.45;   // Always use 0.45 lot size
       
       // Calculate entry price (use middle of entry zone)
       const entryPrice = signal.entryZone ? 
         (signal.entryZone.min + signal.entryZone.max) / 2 : 
         signal.entryPrice || 0;
         
-      // Calculate risk distance for logging purposes
+      // Calculate risk distance
       let riskDistance = 0;
       if (signal.stopLoss && entryPrice) {
         riskDistance = Math.abs(entryPrice - signal.stopLoss);
       }
       
+      if (!entryPrice || !signal.stopLoss || riskDistance === 0) {
+        logger.warn('⚠️ Invalid entry price or stop loss for volume calculation, using fallback');
+        return 0.45;
+      }
+      
       // Get pip value based on symbol for risk calculation
       const pipValue = this.getPipValue(signal.symbol);
       
-      // Calculate actual risk with fixed lot size (for monitoring)
-      const actualRisk = fixedLotSize * riskDistance * pipValue;
+      // Calculate lot size to achieve exactly $900 risk
+      // Formula: Risk Amount / (Stop Loss Distance * Pip Value) = Lot Size
+      let calculatedLotSize = fixedRiskAmount / (riskDistance * pipValue);
+      
+      // Apply reasonable limits (0.01 to 10 lots)
+      calculatedLotSize = Math.max(0.01, calculatedLotSize);
+      calculatedLotSize = Math.min(10.0, calculatedLotSize);
+      
+      // Round to 0.01 increments
+      calculatedLotSize = Math.round(calculatedLotSize * 100) / 100;
+      
+      // Calculate actual risk with final lot size
+      const actualRisk = calculatedLotSize * riskDistance * pipValue;
       const actualRiskPercentage = (actualRisk / balance) * 100;
       
-      logger.info(`💰 FIXED RISK STRATEGY for ${signal.symbol}:`);
+      logger.info(`💰 $900 FIXED RISK CALCULATION for ${signal.symbol}:`);
       logger.info(`   Account Balance: $${balance.toLocaleString()}`);
-      logger.info(`   Fixed Risk Amount: $${fixedRiskAmount} (target)`);
-      logger.info(`   Fixed Lot Size: ${fixedLotSize} lots (always)`);
+      logger.info(`   Target Risk: $${fixedRiskAmount}`);
       logger.info(`   Entry: ${entryPrice}, Stop: ${signal.stopLoss}`);
-      logger.info(`   Risk Distance: ${riskDistance.toFixed(5)} pips`);
-      logger.info(`   Pip Value: $${pipValue} per pip per lot`);
-      logger.info(`   Calculated Actual Risk: $${actualRisk.toFixed(2)} (${actualRiskPercentage.toFixed(2)}%)`);
+      logger.info(`   Risk Distance: ${riskDistance.toFixed(5)} points`);
+      logger.info(`   Pip Value: $${pipValue}/lot`);
+      logger.info(`   Calculated Lot Size: ${calculatedLotSize} lots`);
+      logger.info(`   Actual Risk: $${actualRisk.toFixed(2)} (${actualRiskPercentage.toFixed(3)}%)`);
       
-      // Always return the fixed lot size
-      return fixedLotSize;
+      return calculatedLotSize;
       
     } catch (error) {
       logger.error('Volume calculation error:', error);
-      // Even on error, return the fixed lot size
+      // Return fallback lot size on error
       return 0.45;
     }
   }

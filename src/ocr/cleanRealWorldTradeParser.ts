@@ -11,6 +11,7 @@
 import { TradeSignal, TradeAction, OrderType } from '../types';
 import { logger } from '../utils/logger';
 import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
+import { SymbolParser, ValidationService, FormatService } from '../shared';
 
 /**
  * CLEAN Real World Trade Parser
@@ -101,7 +102,7 @@ export class CleanRealWorldTradeParser {
     logger.info('📝 Using standard text parsing...');
 
     // Extract basic components
-    const symbol = this.extractSymbol(text);
+    const symbol = SymbolParser.extractSymbol(text);
     if (!symbol) {
       logger.error('❌ No symbol found in text');
       return null;
@@ -141,29 +142,6 @@ export class CleanRealWorldTradeParser {
 
     logger.info(`✅ Standard parsing complete: ${symbol} ${action} @ ${entryZone.min}-${entryZone.max}`);
     return signal;
-  }
-
-  /**
-   * Extract trading symbol using clean patterns
-   */
-  private static extractSymbol(text: string): string | null {
-    // Try hashtag patterns first (most reliable)
-    for (const pattern of this.SYMBOL_PATTERNS) {
-      const match = text.match(pattern);
-      if (match) {
-        return this.normalizeSymbol(match[1]);
-      }
-    }
-
-    // Try context-based extraction
-    if (text.toLowerCase().includes('gold') || text.toLowerCase().includes('xau')) {
-      return 'XAUUSD';
-    }
-    if (text.toLowerCase().includes('nas') || text.toLowerCase().includes('nasdaq')) {
-      return 'NAS100';
-    }
-
-    return null;
   }
 
   /**
@@ -451,114 +429,4 @@ export class CleanRealWorldTradeParser {
     return resultPatterns.some(pattern => pattern.test(text));
   }
 
-  /**
-   * Validate trade signal has all required fields
-   */
-  static validateTradeSignal(signal: TradeSignal | null): signal is TradeSignal {
-    if (!signal) {
-      logger.warn('❌ Validation failed: Signal is null');
-      return false;
-    }
-
-    logger.info('🔍 Validating trade signal:', {
-      symbol: signal.symbol,
-      action: signal.action,
-      entryZone: signal.entryZone,
-      stopLoss: signal.stopLoss,
-      targets: signal.targets
-    });
-
-    // Check required fields
-    if (!signal.symbol || !signal.action) {
-      logger.warn('❌ Validation failed: Missing symbol or action', {
-        symbol: signal.symbol,
-        action: signal.action
-      });
-      return false;
-    }
-    
-    if (!signal.entryZone || typeof signal.entryZone.min !== 'number' || typeof signal.entryZone.max !== 'number') {
-      logger.warn('❌ Validation failed: Invalid entry zone', {
-        entryZone: signal.entryZone,
-        minType: typeof signal.entryZone?.min,
-        maxType: typeof signal.entryZone?.max
-      });
-      return false;
-    }
-    
-    if (typeof signal.stopLoss !== 'number') {
-      logger.warn('❌ Validation failed: Invalid stop loss', {
-        stopLoss: signal.stopLoss,
-        type: typeof signal.stopLoss
-      });
-      return false;
-    }
-    
-    if (!Array.isArray(signal.targets) || signal.targets.length === 0) {
-      logger.warn('❌ Validation failed: Invalid targets', {
-        targets: signal.targets,
-        isArray: Array.isArray(signal.targets),
-        length: signal.targets?.length
-      });
-      return false;
-    }
-
-    // Check logical consistency
-    if (signal.entryZone.min >= signal.entryZone.max) {
-      logger.warn('❌ Validation failed: Entry zone min >= max', {
-        min: signal.entryZone.min,
-        max: signal.entryZone.max
-      });
-      return false;
-    }
-    
-    // Check stop loss makes sense relative to entry
-    const avgEntry = (signal.entryZone.min + signal.entryZone.max) / 2;
-    if (signal.action === 'BUY' && signal.stopLoss >= avgEntry) {
-      logger.warn('❌ Validation failed: BUY signal stop loss above entry', {
-        action: signal.action,
-        avgEntry: avgEntry,
-        stopLoss: signal.stopLoss
-      });
-      return false;
-    }
-    if (signal.action === 'SELL' && signal.stopLoss <= avgEntry) {
-      logger.warn('❌ Validation failed: SELL signal stop loss below entry', {
-        action: signal.action,
-        avgEntry: avgEntry,
-        stopLoss: signal.stopLoss
-      });
-      return false;
-    }
-
-    // Check targets make sense
-    for (const target of signal.targets) {
-      if (typeof target !== 'number') {
-        logger.warn('❌ Validation failed: Non-numeric target', {
-          target: target,
-          type: typeof target
-        });
-        return false;
-      }
-      if (signal.action === 'BUY' && target <= avgEntry) {
-        logger.warn('❌ Validation failed: BUY target below entry', {
-          action: signal.action,
-          avgEntry: avgEntry,
-          target: target
-        });
-        return false;
-      }
-      if (signal.action === 'SELL' && target >= avgEntry) {
-        logger.warn('❌ Validation failed: SELL target above entry', {
-          action: signal.action,
-          avgEntry: avgEntry,
-          target: target
-        });
-        return false;
-      }
-    }
-
-    logger.info('✅ Trade signal validation passed');
-    return true;
-  }
 }

@@ -110,8 +110,7 @@ export class EnvironmentConfigService {
       enableMetrics: process.env.ENABLE_METRICS === 'true',
       sentryDsn: process.env.SENTRY_DSN,
       
-      // Security
-      jwtSecret: process.env.JWT_SECRET,
+      // Security (JWT auth removed - trading-only system)
       encryptionKey: process.env.ENCRYPTION_KEY,
       
       // Rate Limiting
@@ -340,8 +339,7 @@ LOG_LEVEL=info
 ENABLE_METRICS=false
 SENTRY_DSN=your_sentry_dsn
 
-# Security (Optional)
-JWT_SECRET=your_jwt_secret_key
+# Security (Optional - JWT auth removed)
 ENCRYPTION_KEY=your_encryption_key
 
 # Rate Limiting

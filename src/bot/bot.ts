@@ -7,6 +7,7 @@ import { TradeSignal } from '../types';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 import { EnhancedMetaApiService } from '../services/EnhancedMetaApiService';
+import { ValidationService } from '../shared';
 
 export class TelegramBot {
   private bot: Telegraf;
@@ -54,11 +55,11 @@ export class TelegramBot {
       
       logger.info(`🎯 Using enhanced execution for ${signal.symbol} on account ${firstAccountId}`);
 
-      // Execute with enhanced features
+      // Execute with enhanced features using fixed lot size strategy
       const result = await this.enhancedService.executeEnhancedTrade({
         signal,
         accountId: firstAccountId,
-        riskPercent: 0.45, // 0.45% risk per trade with 1:1 RR
+        riskPercent: 0.45, // Fixed 0.45 lot size ($900 fixed risk per trade)
         maxSlippage: 3  // 3 pip max slippage
       });
 
@@ -92,11 +93,7 @@ export class TelegramBot {
     this.bot.help((ctx) => this.messageHandler.handleHelp(ctx));
     this.bot.command('status', (ctx) => this.messageHandler.handleStatus(ctx));
 
-    // Optional user management commands (new features)
-    this.bot.command('register', (ctx) => this.handleRegisterCommand(ctx));
-    this.bot.command('login', (ctx) => this.handleLoginCommand(ctx));
-    this.bot.command('profile', (ctx) => this.handleProfileCommand(ctx));
-    this.bot.command('addaccount', (ctx) => this.handleAddAccountCommand(ctx));
+    // Trading commands only - no user authentication needed
 
     // Photo handler
     // this.bot.on('photo', (ctx) => this.photoHandler.handlePhoto(ctx)); // Disabled complex handler
@@ -218,78 +215,7 @@ export class TelegramBot {
    * These are new features that don't affect existing functionality
    */
   
-  private async handleRegisterCommand(ctx: any): Promise<void> {
-    try {
-      await ctx.reply(`
-🔐 **User Registration**
 
-To register for multi-user features:
-1. Choose a username
-2. Provide your email
-3. Set a secure password
-
-*Format:* \`/register username email password\`
-*Example:* \`/register john_doe john@example.com mypassword123\`
-
-ℹ️ This is optional - your existing bot functionality continues to work normally.
-      `);
-    } catch (error) {
-      logger.error('Registration command error:', error);
-      await ctx.reply('❌ Registration feature temporarily unavailable.');
-    }
-  }
-
-  private async handleLoginCommand(ctx: any): Promise<void> {
-    try {
-      await ctx.reply(`
-🔑 **User Login**
-
-*Format:* \`/login username password\`
-*Example:* \`/login john_doe mypassword123\`
-
-ℹ️ Login is optional for accessing advanced multi-user features.
-      `);
-    } catch (error) {
-      logger.error('Login command error:', error);
-      await ctx.reply('❌ Login feature temporarily unavailable.');
-    }
-  }
-
-  private async handleProfileCommand(ctx: any): Promise<void> {
-    try {
-      await ctx.reply(`
-👤 **User Profile**
-
-Your profile will show:
-• Account information
-• Connected MetaAPI accounts
-• Risk settings
-• Trading statistics
-
-ℹ️ Feature available after registration and database connection.
-      `);
-    } catch (error) {
-      logger.error('Profile command error:', error);
-      await ctx.reply('❌ Profile feature temporarily unavailable.');
-    }
-  }
-
-  private async handleAddAccountCommand(ctx: any): Promise<void> {
-    try {
-      await ctx.reply(`
-💼 **Add Trading Account**
-
-Connect your MetaAPI account:
-*Format:* \`/addaccount account-id account-name\`
-*Example:* \`/addaccount f62fb5a3-6507-4864-a36d-5a849bf7d729 "My Live Account"\`
-
-ℹ️ This will enable personalized trading once multi-user features are active.
-      `);
-    } catch (error) {
-      logger.error('Add account command error:', error);
-      await ctx.reply('❌ Add account feature temporarily unavailable.');
-    }
-  }
 
   private async handleTextMessage(ctx: any): Promise<void> {
     try {
@@ -399,7 +325,7 @@ Connect your MetaAPI account:
       }
 
       // Validate trade signal  
-      if (!CleanRealWorldTradeParser.validateTradeSignal(tradeSignal)) {
+      if (!ValidationService.validateTradeSignal(tradeSignal)) {
         logger.warn('Invalid trade signal in text message:', tradeSignal);
         return;
       }
@@ -559,35 +485,38 @@ Connect your MetaAPI account:
       const entryMin = entryZone.price - entryBuffer;
       const entryMax = entryZone.price + entryBuffer;
 
-      // Set targets based on direction and detected zones
+      // Set targets based on $900 fixed profit/loss strategy
       let targets = [];
       let stopLoss;
+      
+      // Calculate pip distance for $900 with 0.45 lot size
+      const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(analysis.symbol, 0.45);
+      const entryMidPoint = (entryMin + entryMax) / 2;
 
       if (analysis.direction === 'BUY') {
-        // For BUY: targets above entry, stop below entry
+        // For BUY: Use detected zones if available, otherwise use $900 calculation
         if (analysis.greenTargetZones.length > 0) {
           targets = analysis.greenTargetZones.map((zone: any) => zone.price);
         } else {
-          // Default targets: 1:1, 1:2, 1:3 risk reward
-          const range = entryMax - entryMin;
-          targets = [entryMax + range, entryMax + range * 2, entryMax + range * 3];
+          // $900 profit target calculation
+          targets = [entryMidPoint + pipDistanceFor900];
         }
         
         stopLoss = analysis.redStopZones.length > 0 
           ? analysis.redStopZones[0].price 
-          : entryMin - (entryMax - entryMin); // Default stop
+          : entryMidPoint - pipDistanceFor900; // $900 risk calculation
       } else {
-        // For SELL: targets below entry, stop above entry  
+        // For SELL: Use detected zones if available, otherwise use $900 calculation  
         if (analysis.greenTargetZones.length > 0) {
           targets = analysis.greenTargetZones.map((zone: any) => zone.price);
         } else {
-          const range = entryMax - entryMin;
-          targets = [entryMin - range, entryMin - range * 2, entryMin - range * 3];
+          // $900 profit target calculation
+          targets = [entryMidPoint - pipDistanceFor900];
         }
         
         stopLoss = analysis.redStopZones.length > 0
           ? analysis.redStopZones[0].price
-          : entryMax + (entryMax - entryMin); // Default stop
+          : entryMidPoint + pipDistanceFor900; // $900 risk calculation
       }
 
       return {
@@ -677,6 +606,43 @@ Connect your MetaAPI account:
     } catch (error) {
       logger.error('Failed to start bot:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Calculate pip distance needed for $900 profit/loss with 0.45 lot size
+   */
+  private calculatePipDistanceFor900Dollars(symbol: string, lotSize: number): number {
+    // Standard pip values for major pairs (per 1.0 lot)
+    const pipValues: { [key: string]: number } = {
+      'EURUSD': 10,    // $10 per pip per lot
+      'GBPUSD': 10,    // $10 per pip per lot  
+      'USDCHF': 10,    // $10 per pip per lot
+      'USDJPY': 10,    // $10 per pip per lot (approximately)
+      'EURGBP': 10,    // $10 per pip per lot (cross pair)
+      'EURJPY': 10,    // $10 per pip per lot (cross pair)
+      'GBPJPY': 10,    // $10 per pip per lot (cross pair)
+      'XAUUSD': 100,   // $100 per pip per lot (Gold)
+      'XAGUSD': 50,    // $50 per pip per lot (Silver)
+      'DEFAULT': 10    // Default for unknown symbols
+    };
+
+    const pipValue = pipValues[symbol] || pipValues['DEFAULT'];
+    const pipValueForLotSize = pipValue * lotSize; // Pip value for 0.45 lots
+    
+    // Calculate pips needed for $900
+    const pipsNeeded = 900 / pipValueForLotSize;
+    
+    // Convert pips to price distance based on symbol type
+    if (symbol.includes('JPY')) {
+      // JPY pairs: 1 pip = 0.01
+      return pipsNeeded * 0.01;
+    } else if (symbol.startsWith('XAU') || symbol.startsWith('XAG')) {
+      // Metals: 1 pip = 0.1 for Gold, 0.01 for Silver  
+      return symbol.startsWith('XAU') ? pipsNeeded * 0.1 : pipsNeeded * 0.01;
+    } else {
+      // Major forex pairs: 1 pip = 0.0001
+      return pipsNeeded * 0.0001;
     }
   }
 

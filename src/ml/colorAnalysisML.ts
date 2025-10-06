@@ -75,32 +75,34 @@ export class ChartColorAnalysisML {
                       price <= priceRange.max);
 
     // 🔥 CRITICAL FIX: Simple sanity checks to prevent chart scale artifacts
-    // No need for complex market data - just reject obviously wrong values
+    // Dynamic validation without hardcoded ranges that need monthly updates
     prices = prices.filter(price => {
-      // JPY pairs: Never accept single digits or extremely low values
-      if (upperSymbol.includes('JPY')) {
-        if (price < 50) {
-          logger.warn(`❌ Rejected JPY price ${price} - too low (chart scale artifact)`);
-          return false;
-        }
-        if (price > 250) {
-          logger.warn(`❌ Rejected JPY price ${price} - too high`);
-          return false;
-        }
-      }
-      
-      // Gold: Never accept values under 1000
-      if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
-        if (price < 1000) {
-          logger.warn(`❌ Rejected Gold price ${price} - too low (chart scale artifact)`);
-          return false;
-        }
-      }
-      
-      // General: Never accept single digits for any symbol
-      if (price < 10) {
-        logger.warn(`❌ Rejected price ${price} - single digit (chart scale artifact)`);
+      // Basic sanity check: reject obviously invalid prices
+      if (price <= 0) {
+        logger.warn(`❌ Rejected invalid price ${price} - zero or negative`);
         return false;
+      }
+      
+      // JPY pairs: typically 2-3 digits (50-300 range)
+      if (upperSymbol.includes('JPY')) {
+        if (price < 50 || price > 300) {
+          logger.warn(`❌ Rejected JPY price ${price} - outside typical range`);
+          return false;
+        }
+      }
+      // Gold: typically 4 digits (1000-4000 range) 
+      else if (upperSymbol.includes('XAU') || upperSymbol.includes('GOLD')) {
+        if (price < 1000 || price > 4000) {
+          logger.warn(`❌ Rejected Gold price ${price} - outside typical range`);
+          return false;
+        }
+      }
+      // Forex pairs: typically 0.1-100 range (covers all major/minor pairs)
+      else {
+        if (price < 0.1 || price > 100) {
+          logger.warn(`❌ Rejected Forex price ${price} - outside typical range`);
+          return false;
+        }
       }
       
       return true;
@@ -563,15 +565,20 @@ export class ChartColorAnalysisML {
    * Get realistic price range for trading symbols
    */
   private static getSymbolPriceRange(symbol: string): { min: number; max: number } {
-    // Basic price ranges for common symbols - fallback implementation
-    const ranges: { [key: string]: { min: number; max: number } } = {
-      'XAUUSD': { min: 1800, max: 2200 },
-      'EURUSD': { min: 1.0, max: 1.2 },
-      'GBPUSD': { min: 1.2, max: 1.4 },
-      'USDJPY': { min: 100, max: 150 },
-    };
+    // Dynamic price ranges - no hardcoded limits that need monthly updates
+    // Just basic sanity checks to prevent obvious OCR errors
     
-    return ranges[symbol] || { min: 0.1, max: 10000 };
+    if (symbol.includes('JPY')) {
+      return { min: 50, max: 300 }; // JPY pairs are typically 100-200, but allow wide margin
+    }
+    
+    if (symbol.includes('XAU') || symbol.includes('GOLD')) {
+      return { min: 1000, max: 4000 }; // Gold can vary significantly
+    }
+    
+    // For all other forex pairs (EUR, GBP, AUD, etc.)
+    // Use very wide ranges that rarely need updating
+    return { min: 0.1, max: 100 }; // Covers all major and minor pairs
   }
 
   /**
