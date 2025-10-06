@@ -1504,11 +1504,17 @@ input:checked + .slider:before {
 @media (max-width: 768px) {
   /* Sidebar becomes slide-over on mobile */
   .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
     transform: translateX(-100%);
     width: 280px;
     box-shadow: var(--shadow-lg);
     background: var(--gray-800);
     border-right: none;
+    z-index: 100;
+    transition: transform 0.3s ease;
   }
   
   .sidebar.open {
@@ -1520,8 +1526,10 @@ input:checked + .slider:before {
     width: 100%;
   }
   
-  .menu-toggle {
-    display: flex;
+  /* Show mobile menu toggle on mobile screens */
+  .menu-toggle,
+  .mobile-menu-toggle {
+    display: flex !important;
     width: 44px;
     height: 44px;
     align-items: center;
@@ -1532,11 +1540,31 @@ input:checked + .slider:before {
     border-radius: var(--border-radius);
     cursor: pointer;
     transition: all 0.2s ease;
+    font-size: 18px;
   }
   
-  .menu-toggle:hover {
+  .menu-toggle:hover,
+  .mobile-menu-toggle:hover {
     background: var(--primary-hover);
     transform: scale(1.05);
+  }
+  
+  /* Mobile overlay for sidebar */
+  .mobile-nav-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+    backdrop-filter: blur(4px);
+  }
+  
+  .sidebar.open ~ .mobile-nav-overlay,
+  .mobile-nav-overlay.active {
+    display: block;
   }
   
   /* Header improvements for mobile */
@@ -1549,6 +1577,36 @@ input:checked + .slider:before {
   .header-left {
     flex: 1;
     min-width: 200px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+  }
+  
+  .header-right {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: flex-end;
+  }
+  
+  .header-stats {
+    display: flex;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+  }
+  
+  .stat-item {
+    min-width: 70px;
+    padding: var(--space-xs) var(--space-sm);
+  }
+  
+  .stat-label {
+    font-size: 10px;
+  }
+  
+  .stat-value {
+    font-size: var(--font-size-sm);
   }
   
   .header-right {
@@ -1563,6 +1621,38 @@ input:checked + .slider:before {
   
   .content {
     padding: var(--space-md);
+  }
+  
+  /* Improve form inputs for mobile */
+  .form-control {
+    font-size: 16px; /* Prevents zoom on iOS */
+    min-height: 44px;
+    padding: var(--space-md);
+  }
+  
+  .btn {
+    min-height: 44px;
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--font-size-base);
+  }
+  
+  /* Better table responsiveness */
+  .table-container,
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -var(--space-md);
+  }
+  
+  .table {
+    min-width: 600px;
+    font-size: var(--font-size-sm);
+  }
+  
+  .table th,
+  .table td {
+    padding: var(--space-sm);
+    white-space: nowrap;
   }
   
   /* Card improvements for mobile */
@@ -1629,6 +1719,14 @@ input:checked + .slider:before {
   /* Even more compact header */
   .header {
     padding: var(--space-sm) var(--space-md);
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+  }
+  
+  .header-left {
+    min-width: auto;
+    order: 1;
   }
   
   .header-left h1 {
@@ -1636,69 +1734,112 @@ input:checked + .slider:before {
     font-weight: 600;
   }
   
+  .header-right {
+    order: 2;
+    align-items: stretch;
+  }
+  
+  .header-stats {
+    justify-content: space-between;
+    margin-bottom: var(--space-md);
+  }
+  
+  .stat-item {
+    flex: 1;
+    min-width: auto;
+  }
+
   /* Smaller sidebar for very small screens */
   .sidebar {
     width: 100vw;
     max-width: 320px;
   }
-  
+
   /* Tighter content spacing */
   .content {
     padding: var(--space-sm);
   }
-  
+
   /* Compact stat cards */
   .stat-card {
     padding: var(--space-md);
     min-height: 70px;
+    flex-direction: column;
+    text-align: center;
+    gap: var(--space-sm);
   }
-  
+
   .stat-icon {
     width: 40px;
     height: 40px;
     font-size: 18px;
   }
   
+  .stat-content {
+    text-align: center;
+  }
+
   .stat-value {
     font-size: var(--font-size-lg);
   }
-  
+
   /* Better button spacing */
   .btn {
     padding: var(--space-md) var(--space-lg);
     font-size: var(--font-size-sm);
     min-height: 44px;
+    width: 100%;
   }
-  
+
   /* Improved form elements */
   .form-group {
     margin-bottom: var(--space-lg);
   }
-  
+
   .form-control {
     padding: var(--space-md);
-    font-size: var(--font-size-base);
+    font-size: 16px; /* Prevents zoom */
     border-radius: var(--border-radius);
     min-height: 44px;
-  }
-  
-  /* Better table responsiveness */
+  }  /* Better table responsiveness */
   .table-responsive {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     margin: 0 -var(--space-sm);
   }
-  
+
   .table {
     min-width: 600px;
     font-size: var(--font-size-sm);
   }
-  
+
   .table th,
   .table td {
     padding: var(--space-sm);
     white-space: nowrap;
   }
+  
+  /* Better modal behavior on small screens */
+  .modal-content {
+    width: 95%;
+    max-width: 400px;
+    margin: var(--space-md);
+  }
+  
+  /* Improve navigation on small screens */
+  .sidebar-menu .menu-item .menu-link {
+    padding: var(--space-lg) var(--space-md);
+    min-height: 50px;
+    font-size: var(--font-size-sm);
+  }
+  
+  /* Better notifications on mobile */
+  .notification {
+    left: var(--space-sm);
+    right: var(--space-sm);
+    width: auto;
+  }
+}
 }
 
 /* Extra small screens (360px and below) */

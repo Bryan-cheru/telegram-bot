@@ -51,11 +51,47 @@ class CleanTradingDashboard {
 
     // Mobile menu toggle
     const menuToggle = document.getElementById('menu-toggle');
-    if (menuToggle) {
-      menuToggle.addEventListener('click', () => {
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar) {
-          sidebar.classList.toggle('open');
+    const sidebar = document.getElementById('sidebar');
+    const mobileOverlay = document.getElementById('mobile-nav-overlay');
+    
+    if (menuToggle && sidebar) {
+      // Toggle sidebar and overlay
+      menuToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sidebar.classList.toggle('open');
+        if (mobileOverlay) {
+          mobileOverlay.classList.toggle('active');
+        }
+      });
+      
+      // Close sidebar when clicking overlay
+      if (mobileOverlay) {
+        mobileOverlay.addEventListener('click', () => {
+          sidebar.classList.remove('open');
+          mobileOverlay.classList.remove('active');
+        });
+      }
+      
+      // Close sidebar when clicking outside (on mobile)
+      document.addEventListener('click', (e) => {
+        if (window.innerWidth <= 768 && 
+            sidebar.classList.contains('open') &&
+            !sidebar.contains(e.target) && 
+            !menuToggle.contains(e.target)) {
+          sidebar.classList.remove('open');
+          if (mobileOverlay) {
+            mobileOverlay.classList.remove('active');
+          }
+        }
+      });
+      
+      // Close sidebar on window resize to desktop
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+          sidebar.classList.remove('open');
+          if (mobileOverlay) {
+            mobileOverlay.classList.remove('active');
+          }
         }
       });
     }
