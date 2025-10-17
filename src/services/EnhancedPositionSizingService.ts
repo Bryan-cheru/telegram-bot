@@ -97,11 +97,11 @@ export class EnhancedPositionSizingService {
       logger.info(`🎯 SIMPLE FIXED STRATEGY for ${symbol}:`);
       logger.info(`   Entry: ${entryPrice.toFixed(symbolSpec.digits)}, Stop: ${stopLoss.toFixed(symbolSpec.digits)}`);
       logger.info(`   Distance: ${stopLossDistance.toFixed(symbolSpec.digits)} (${stopLossDistancePips} pips)`);
-      logger.info(`   FIXED LOT SIZE: 0.45 lots (always)`);
+      logger.info(`   FIXED LOT SIZE: ${fixedLotSize} lots (always)`);
       logger.info(`   Target: +$900 TP / -$900 SL`);
 
       return {
-        lotSize: 0.45, // Always 0.45 lots
+        lotSize: fixedLotSize, // Use configured lot size
         riskAmount: 900, // Always target $900
         stopLossDistance,
         stopLossDistancePips,
@@ -114,10 +114,10 @@ export class EnhancedPositionSizingService {
       logger.error('Fixed lot size calculation error:', error);
       warnings.push(`Calculation error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       
-      // Always use 0.45 lots even on error
-      logger.warn(`🔄 Using 0.45 lots for ${symbol} (fallback)`);
-      
-      return this.getFixedLotCalculation(0.45, entryPrice, stopLoss, symbol, 900, warnings);
+      // Always use configured lot size even on error
+      logger.warn(`🔄 Using ${config.trading.fixedLotSize} lots for ${symbol} (fallback)`);
+
+      return this.getFixedLotCalculation(config.trading.fixedLotSize, entryPrice, stopLoss, symbol, 900, warnings);
     }
   }
 
@@ -234,14 +234,14 @@ export class EnhancedPositionSizingService {
     warnings: string[]
   ): PositionSizeCalculation {
     
-    // SIMPLE: Always use 0.45 lots regardless of what was passed
-    const actualLotSize = 0.45;
+    // SIMPLE: Use configured lot size from environment
+    const actualLotSize = config.trading.fixedLotSize;
     
     // Calculate basic stop loss distance
     const stopLossDistance = Math.abs(entryPrice - stopLoss);
     const stopLossDistancePips = this.calculatePips(symbol, stopLossDistance);
     
-    warnings.push(`Using fixed 0.45 lot size with $900 target risk/reward`);
+    warnings.push(`Using fixed ${actualLotSize} lot size with $900 target risk/reward`);
     
     logger.info(`🎯 SIMPLE FALLBACK for ${symbol}:`);
     logger.info(`   Entry: ${entryPrice}, Stop: ${stopLoss}`);
