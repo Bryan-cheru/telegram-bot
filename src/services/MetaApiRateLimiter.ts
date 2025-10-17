@@ -77,11 +77,11 @@ export class MetaApiRateLimiter {
 
   constructor(accountMultiplier: number = 1) {
     this.config = {
-      totalCreditsPerSecond: 1000 * accountMultiplier,
-      totalCreditsPerMinute: 6000 * accountMultiplier,
-      totalCreditsPerHour: 18000 * accountMultiplier,
-      serverCreditsPerSecond: 2000,
-      accountCreditsPerTenSeconds: 5000
+      totalCreditsPerSecond: 1200 * accountMultiplier, // Increased from 1000
+      totalCreditsPerMinute: 7500 * accountMultiplier, // Increased from 6000
+      totalCreditsPerHour: 22000 * accountMultiplier, // Increased from 18000
+      serverCreditsPerSecond: 2500, // Increased from 2000
+      accountCreditsPerTenSeconds: 6000 // Increased from 5000
     };
 
     this.globalState = {

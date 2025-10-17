@@ -41,7 +41,7 @@ export class MetaApiConnectionPool {
     this.rateLimiter = new MetaApiRateLimiter();
     this.maxConnections = maxConnections;
     this.connectionTimeout = connectionTimeout; // 30 minutes default
-    this.healthCheckInterval = 5 * 60 * 1000; // 5 minutes
+    this.healthCheckInterval = 2 * 60 * 1000; // Reduced to 2 minutes for faster detection
     this.cleanupInterval = null;
     this.healthCheckTimer = null;
 

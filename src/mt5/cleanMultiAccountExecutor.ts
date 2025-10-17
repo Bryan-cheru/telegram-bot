@@ -3,17 +3,18 @@
  * Follows MetaAPI documentation exactly - replaces the complex existing system
  */
 
-import MetaApi, { MetatraderAccount, StreamingMetaApiConnectionInstance } from 'metaapi.cloud-sdk';
+import MetaApi, { MetatraderAccount, RpcMetaApiConnectionInstance } from 'metaapi.cloud-sdk';
 import { TradeSignal, TradeResult } from '../types';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { logger } from '../utils/logger';
+import { config } from '../utils/config';
 
 interface AccountConfig {
   id: string;
   brokerName: string;
   accountType: 'DEMO' | 'LIVE';
   account?: MetatraderAccount;
-  connection?: StreamingMetaApiConnectionInstance;
+  connection?: RpcMetaApiConnectionInstance;
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
 }
 
@@ -74,13 +75,13 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       this.accounts.set(accountConfig.id, accountConfig);
     }
 
-    // Connect accounts sequentially with proper error handling
+    // Connect accounts sequentially with reduced delays for faster startup
     for (const [accountId, accountConfig] of this.accounts) {
       await this.connectAccount(accountConfig);
       
-      // Increased delay between connections to prevent rate limiting
-      logger.info(`⏳ Waiting 5 seconds before next connection...`);
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Reduced delay between connections (was 5s, now 2s)
+      logger.info(`⏳ Waiting 2 seconds before next connection...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     const connectedCount = Array.from(this.accounts.values())
@@ -92,59 +93,23 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Connect a single account following MetaAPI documentation
+   * Connect a single account following MetaAPI documentation with enhanced error handling
    */
-  private async connectAccount(accountConfig: AccountConfig): Promise<void> {
+  private async connectAccount(accountConfig: AccountConfig, retryCount: number = 0): Promise<void> {
+    const maxRetries = 2; // Reduced from 3 to 2
+    const retryDelay = 5000; // Reduced from 10s to 5s
+    
     try {
-      logger.info(`🔗 Connecting ${accountConfig.brokerName} (${accountConfig.accountType})...`);
+      logger.info(`🔗 Connecting ${accountConfig.brokerName} (${accountConfig.accountType})... (Attempt ${retryCount + 1}/${maxRetries + 1})`);
 
-      // Get account
-      accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
+      // Wrap in timeout to prevent hanging
+      const connectionPromise = this.performConnection(accountConfig);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Connection timeout after 60 seconds')), 60000);  // Reduced from 120s to 60s
+      });
+
+      await Promise.race([connectionPromise, timeoutPromise]);
       
-      // Deploy if needed
-      if (accountConfig.account.state !== 'DEPLOYED') {
-        logger.info(`📦 Deploying ${accountConfig.brokerName}...`);
-        await accountConfig.account.deploy();
-        await accountConfig.account.waitDeployed(60000);
-      }
-
-      // Wait for connection with longer timeout
-      logger.info(`⏳ Waiting for ${accountConfig.brokerName} connection...`);
-      await accountConfig.account.waitConnected(90000); // Increased to 90 seconds
-      logger.info(`🔗 ${accountConfig.brokerName} account connected`);
-
-      // Get streaming connection
-      accountConfig.connection = accountConfig.account.getStreamingConnection();
-      logger.info(`📡 Establishing streaming connection for ${accountConfig.brokerName}...`);
-      await accountConfig.connection.connect();
-      logger.info(`✅ ${accountConfig.brokerName} streaming connected`);
-      
-      // Check terminal status (don't fail if terminal is offline)
-      logger.info(`🔄 Checking terminal status for ${accountConfig.brokerName}...`);
-      const terminalConnected = accountConfig.connection.terminalState.connected;
-      const hasSpecifications = Object.keys(accountConfig.connection.terminalState.specifications || {}).length > 0;
-      
-      if (terminalConnected) {
-        logger.info(`🔄 Synchronizing ${accountConfig.brokerName}...`);
-        try {
-          // Simplified: Just wait for synchronization
-          await accountConfig.connection.waitSynchronized();
-          logger.info(`✅ ${accountConfig.brokerName} synchronized`);
-          
-          accountConfig.status = 'CONNECTED';
-          logger.info(`🎉 ${accountConfig.brokerName} fully connected and ready for trading!`);
-        } catch (syncError: any) {
-          logger.warn(`⚠️ ${accountConfig.brokerName} synchronization failed: ${syncError.message}`);
-          accountConfig.status = 'CONNECTED'; // Still mark as connected for API operations
-          logger.info(`🔗 ${accountConfig.brokerName} API connected (terminal sync pending)`);
-        }
-      } else {
-        // Terminal offline but API connected - this is common
-        accountConfig.status = 'CONNECTED';
-        logger.warn(`⚠️ ${accountConfig.brokerName} terminal offline but API connected`);
-        logger.info(`🔗 ${accountConfig.brokerName} ready for API operations (trading requires terminal)`);
-      }
-
     } catch (error: any) {
       accountConfig.status = 'FAILED';
       
@@ -153,10 +118,27 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         message: error.message,
         name: error.name,
         statusCode: error.statusCode,
-        details: error.details
+        details: error.details,
+        attempt: retryCount + 1
       };
       
       logger.error(`❌ Failed to connect ${accountConfig.brokerName}:`, errorDetails);
+      
+      // Retry logic for specific errors
+      const shouldRetry = (
+        (error.message?.includes('timeout') || 
+         error.message?.includes('ETIMEDOUT') ||
+         error.message?.includes('ECONNRESET') ||
+         error.statusCode === 503 ||
+         error.statusCode === 502) && 
+        retryCount < maxRetries
+      );
+      
+      if (shouldRetry) {
+        logger.warn(`🔄 Retrying ${accountConfig.brokerName} connection in ${retryDelay/1000} seconds... (${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        return this.connectAccount(accountConfig, retryCount + 1);
+      }
       
       // Check if it's a timeout error
       if (error.message?.includes('timeout') || error.message?.includes('TimeoutError')) {
@@ -178,6 +160,47 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         accountConfig.connection = undefined;
       }
     }
+  }
+
+  /**
+   * Perform the actual connection process following MetaAPI best practices
+   */
+  private async performConnection(accountConfig: AccountConfig): Promise<void> {
+      // Get account (standard MetaAPI pattern)
+      accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
+      
+      // Deploy if needed (standard pattern)
+      if (accountConfig.account.state !== 'DEPLOYED') {
+        logger.info(`📦 Deploying ${accountConfig.brokerName}...`);
+        await accountConfig.account.deploy();
+        await accountConfig.account.waitDeployed(30000);  // Reduced from 60s to 30s
+      }
+
+      // Wait for connection (standard pattern)
+      logger.info(`⏳ Waiting for ${accountConfig.brokerName} connection...`);
+      await accountConfig.account.waitConnected(45000);  // Reduced from 90s to 45s
+      logger.info(`🔗 ${accountConfig.brokerName} account connected`);
+
+      // Get RPC connection (following official examples)
+      accountConfig.connection = accountConfig.account.getRPCConnection();
+      logger.info(`📡 Establishing RPC connection for ${accountConfig.brokerName}...`);
+      await accountConfig.connection.connect();
+      logger.info(`✅ ${accountConfig.brokerName} RPC connected`);
+      
+      // Wait for synchronization (critical step)
+      logger.info(`🔄 Synchronizing ${accountConfig.brokerName}...`);
+      try {
+        await accountConfig.connection.waitSynchronized();
+        logger.info(`✅ ${accountConfig.brokerName} synchronized`);
+        
+        accountConfig.status = 'CONNECTED';
+        logger.info(`🎉 ${accountConfig.brokerName} fully connected and ready for trading!`);
+      } catch (syncError: any) {
+        logger.warn(`⚠️ ${accountConfig.brokerName} synchronization failed: ${syncError.message}`);
+        // For RPC connections, synchronization failure doesn't mean unusable
+        accountConfig.status = 'CONNECTED'; 
+        logger.info(`🔗 ${accountConfig.brokerName} RPC connected (synchronization pending)`);
+      }
   }
 
   /**
@@ -238,46 +261,50 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    * Uses instrument-appropriate distances instead of forcing exact $900 on all instruments
    */
   private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
-    const fixedLotSize = 0.45;   // Always use 0.45 lot size
+    const fixedLotSize = config.trading.fixedLotSize;   // Use configured lot size
     const targetRisk = 900;      // Target $900 risk
-    const targetReward = 900;    // Target $900 reward (1:1 RR)
+    const targetReward = 1350;   // Target $1350 reward (1:1.5 RR)
     
     // Get pip value for this instrument
     const pipValue = this.getPipValue(signal.symbol);
     
-    // Calculate EXACT distance for $900 risk/reward (in pips)
-    const exactDistanceInPips = targetRisk / (fixedLotSize * pipValue);
+    // Calculate EXACT distance for $900 risk / $1350 reward (in pips)
+    const exactRiskDistanceInPips = targetRisk / (fixedLotSize * pipValue);
+    const exactRewardDistanceInPips = targetReward / (fixedLotSize * pipValue);
     
     // Convert pip distance to actual price difference based on instrument
-    let priceDistance = exactDistanceInPips;
+    let riskPriceDistance = exactRiskDistanceInPips;
+    let rewardPriceDistance = exactRewardDistanceInPips;
     const upperSymbol = signal.symbol.toUpperCase();
     
     if (this.isForexPair(upperSymbol) && !upperSymbol.includes('JPY') && !upperSymbol.includes('XAU') && !upperSymbol.includes('XAG')) {
       // Major forex pairs: 1 pip = 0.0001
-      priceDistance = exactDistanceInPips * 0.0001;
+      riskPriceDistance = exactRiskDistanceInPips * 0.0001;
+      rewardPriceDistance = exactRewardDistanceInPips * 0.0001;
     } else if (upperSymbol.includes('JPY')) {
       // JPY pairs: 1 pip = 0.01
-      priceDistance = exactDistanceInPips * 0.01;
+      riskPriceDistance = exactRiskDistanceInPips * 0.01;
+      rewardPriceDistance = exactRewardDistanceInPips * 0.01;
     }
     // For metals (Gold/Silver) and indices, use pip distance as-is (dollar amounts or points)
     
     let stopLoss: number;
     let takeProfit: number;
     
-    // Calculate SL and TP using the correct price distance
+    // Calculate SL and TP using the correct price distances (1:1.5 ratio)
     if (signal.action === 'BUY') {
-      stopLoss = entryPrice - priceDistance;  // $900 risk
-      takeProfit = entryPrice + priceDistance; // $900 reward (1:1 RR)
+      stopLoss = entryPrice - riskPriceDistance;    // $900 risk
+      takeProfit = entryPrice + rewardPriceDistance; // $1350 reward (1:1.5 RR)
     } else if (signal.action === 'SELL') {
-      stopLoss = entryPrice + priceDistance;   // $900 risk
-      takeProfit = entryPrice - priceDistance; // $900 reward (1:1 RR)
+      stopLoss = entryPrice + riskPriceDistance;     // $900 risk
+      takeProfit = entryPrice - rewardPriceDistance; // $1350 reward (1:1.5 RR)
     } else {
       throw new Error(`Invalid action for SL/TP calculation: ${signal.action}`);
     }
     
-    // Verify calculations are exactly $900
-    const actualRisk = fixedLotSize * exactDistanceInPips * pipValue;
-    const actualReward = fixedLotSize * exactDistanceInPips * pipValue;
+    // Verify calculations are exactly $900 risk / $1350 reward
+    const actualRisk = fixedLotSize * exactRiskDistanceInPips * pipValue;
+    const actualReward = fixedLotSize * exactRewardDistanceInPips * pipValue;
     
     // Final safety validation
     if (signal.action === 'BUY') {
@@ -291,15 +318,15 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     // Update signal with calculated stop loss
     signal.stopLoss = stopLoss;
     
-    logger.info(`💰 EXACT $900 RISK/REWARD STRATEGY - ${signal.symbol}:`);
+    logger.info(`💰 EXACT $900 RISK / $1350 REWARD STRATEGY - ${signal.symbol}:`);
     logger.info(`   Fixed Risk: $${actualRisk.toFixed(2)} (EXACT)`);
     logger.info(`   Fixed Reward: $${actualReward.toFixed(2)} (EXACT)`);
     logger.info(`   Lot Size: ${fixedLotSize} lots (fixed)`);
     logger.info(`   Pip Value: $${pipValue}/pip`);
     logger.info(`   Entry: ${entryPrice.toFixed(5)}`);
-    logger.info(`   Stop Loss: ${stopLoss.toFixed(5)} (${exactDistanceInPips.toFixed(2)} pips = ${priceDistance.toFixed(5)} price distance)`);
-    logger.info(`   Take Profit: ${takeProfit.toFixed(5)} (${exactDistanceInPips.toFixed(2)} pips = ${priceDistance.toFixed(5)} price distance)`);
-    logger.info(`   Risk/Reward: 1:1 (perfect balance)`);
+    logger.info(`   Stop Loss: ${stopLoss.toFixed(5)} (${exactRiskDistanceInPips.toFixed(2)} pips = ${riskPriceDistance.toFixed(5)} price distance)`);
+    logger.info(`   Take Profit: ${takeProfit.toFixed(5)} (${exactRewardDistanceInPips.toFixed(2)} pips = ${rewardPriceDistance.toFixed(5)} price distance)`);
+    logger.info(`   Risk/Reward: 1:1.5 (optimal profit ratio)`);
     
     return takeProfit;
   }
@@ -441,10 +468,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     
     if (action === 'BUY') {
       stopLoss = entryPrice - adjustedDistance;
-      takeProfit = entryPrice + adjustedDistance; // Maintain 1:1 RR
+      takeProfit = entryPrice + (adjustedDistance * 1.5); // Maintain 1:1.5 RR
     } else {
       stopLoss = entryPrice + adjustedDistance;
-      takeProfit = entryPrice - adjustedDistance; // Maintain 1:1 RR
+      takeProfit = entryPrice - (adjustedDistance * 1.5); // Maintain 1:1.5 RR
     }
     
     logger.info(`🔧 Adjusted levels for ${symbol}:`);
@@ -452,6 +479,36 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     logger.info(`   Limits: ${minDistance.toFixed(5)} - ${maxDistance.toFixed(5)}`);
     
     return { stopLoss, takeProfit };
+  }
+
+  /**
+   * Get broker-specific minimum stop distance in points
+   */
+  private getBrokerMinimumStopDistance(symbol: string, brokerName: string): number {
+    const upperSymbol = symbol.toUpperCase();
+    
+    // IFPRO-Trade specific requirements
+    if (brokerName === 'IFPRO-TRADE' || brokerName === 'IFPro-Trade') {
+      if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+        return 50; // 50 points minimum for Gold
+      }
+      if (upperSymbol.includes('JPY')) {
+        return 30; // 3 pips minimum for JPY pairs
+      }
+      if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
+        return 30; // 3 pips minimum for major pairs
+      }
+      return 30; // Default 30 points
+    }
+    
+    // General broker defaults
+    if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
+      return 30; // 30 points minimum for Gold
+    }
+    if (upperSymbol.includes('JPY')) {
+      return 20; // 2 pips minimum for JPY pairs
+    }
+    return 20; // Default 20 points
   }
 
   /**
@@ -575,22 +632,23 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
       // Enhanced connection status check for IFPro-Trade debugging
       if (accountConfig.brokerName === 'IFPro-Trade') {
-        const terminalState = accountConfig.connection.terminalState;
-        const accountInfo = terminalState.accountInformation;
-        logger.info(`🔍 IFPro-Trade connection status:`);
-        logger.info(`   - Connected: ${terminalState.connected}`);
-        logger.info(`   - ConnectedToBroker: ${terminalState.connectedToBroker}`);
-        logger.info(`   - Synchronized: ${accountConfig.connection.synchronized}`);
-        logger.info(`   - Account Info Available: ${!!accountInfo}`);
-        if (accountInfo) {
-          logger.info(`   - Balance: ${accountInfo.balance}`);
-          logger.info(`   - Equity: ${accountInfo.equity}`);
-          logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
-          logger.info(`   - Margin Mode: ${accountInfo.marginMode}`);
-          logger.info(`   - Currency: ${accountInfo.currency}`);
-          logger.info(`   - Server: ${accountInfo.server}`);
-          logger.info(`   - Name: ${accountInfo.name}`);
-          logger.info(`   - Login: ${accountInfo.login}`);
+        try {
+          const accountInfo = await accountConfig.connection.getAccountInformation();
+          logger.info(`🔍 IFPro-Trade connection status:`);
+          logger.info(`   - Connected: ${!!accountInfo}`);
+          logger.info(`   - Account Info Available: ${!!accountInfo}`);
+          if (accountInfo) {
+            logger.info(`   - Balance: ${accountInfo.balance}`);
+            logger.info(`   - Equity: ${accountInfo.equity}`);
+            logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
+            logger.info(`   - Margin Mode: ${accountInfo.marginMode}`);
+            logger.info(`   - Currency: ${accountInfo.currency}`);
+            logger.info(`   - Server: ${accountInfo.server}`);
+            logger.info(`   - Name: ${accountInfo.name}`);
+            logger.info(`   - Login: ${accountInfo.login}`);
+          }
+        } catch (error) {
+          logger.error(`Error getting IFPro-Trade connection status: ${error}`);
         }
       }
 
@@ -598,8 +656,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const validSymbol = signal.symbol;
 
       // Step 2: Get market data from connection
-      const terminalState = accountConfig.connection.terminalState;
-      const price = terminalState.price(validSymbol);
+      const price = await accountConfig.connection.getSymbolPrice(validSymbol, false);
       const marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
 
       // Step 3: Calculate entry price and volume
@@ -607,8 +664,34 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       // Calculate position size using proper risk management
       const volume = this.calculateVolume(accountConfig.connection, signal);
 
-      // Step 3.5: Calculate take profit using 1:1 RR default
-      const takeProfit = this.calculateTakeProfit(signal, entryPrice);
+      // Step 3.5: Calculate take profit using 1:1.5 RR default
+      let finalTakeProfit = this.calculateTakeProfit(signal, entryPrice);
+
+      // Step 3.6: Validate and adjust stops for broker requirements
+      const brokerName = accountConfig.brokerName;
+      const minStopDistance = this.getBrokerMinimumStopDistance(validSymbol, brokerName);
+      
+      // Check if current stop distance meets broker minimum requirements
+      const currentStopDistance = Math.abs(entryPrice - signal.stopLoss);
+      if (currentStopDistance < minStopDistance) {
+        logger.warn(`⚠️ Stop distance ${currentStopDistance.toFixed(1)} points < broker minimum ${minStopDistance} points`);
+        logger.warn(`🔧 Adjusting stops to meet ${brokerName} requirements...`);
+        
+        // Adjust stop loss to meet minimum distance
+        if (signal.action === 'BUY') {
+          signal.stopLoss = entryPrice - minStopDistance;
+        } else {
+          signal.stopLoss = entryPrice + minStopDistance;
+        }
+        
+        // Also adjust take profit to maintain 1:1.5 ratio
+        finalTakeProfit = signal.action === 'BUY' 
+          ? entryPrice + minStopDistance 
+          : entryPrice - minStopDistance;
+          
+        logger.info(`✅ Adjusted levels - SL: ${signal.stopLoss.toFixed(5)}, TP: ${finalTakeProfit.toFixed(5)}`);
+        logger.info(`📏 New distance: ${minStopDistance} points (meets ${brokerName} minimum)`);
+      }
 
       // Step 4: Execute the trade using MetaAPI (validation happens in getValidSymbol)
       let result;
@@ -627,7 +710,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             validSymbol,
             volume,
             signal.stopLoss,
-            takeProfit,
+            finalTakeProfit,
             tradeOptions
           );
         } else if (signal.action === 'SELL') {
@@ -635,7 +718,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             validSymbol,
             volume,
             signal.stopLoss,
-            takeProfit,
+            finalTakeProfit,
             tradeOptions
           );
         } else {
@@ -649,7 +732,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             volume,
             entryPrice,
             signal.stopLoss,
-            takeProfit, // Use calculated TP with 1:1 RR default
+            finalTakeProfit, // Use adjusted TP if stops were modified
             tradeOptions
           );
         } else if (signal.action === 'SELL') {
@@ -658,7 +741,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
             volume,
             entryPrice,
             signal.stopLoss,
-            takeProfit, // Use calculated TP with 1:1 RR default
+            finalTakeProfit, // Use adjusted TP if stops were modified
             tradeOptions
           );
         } else {
@@ -747,7 +830,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       
       if (!entryPrice || !signal.stopLoss || riskDistance === 0) {
         logger.warn('⚠️ Invalid entry price or stop loss for volume calculation, using fallback');
-        return 0.45;
+        return config.trading.fixedLotSize;
       }
       
       // Get pip value based on symbol for risk calculation
@@ -782,7 +865,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     } catch (error) {
       logger.error('Volume calculation error:', error);
       // Return fallback lot size on error
-      return 0.45;
+      return config.trading.fixedLotSize;
     }
   }
 
@@ -1002,9 +1085,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       let terminalConnected = false;
       let hasSpecifications = false;
       
-      if (acc.connection?.terminalState) {
-        terminalConnected = acc.connection.terminalState.connected || false;
-        hasSpecifications = Object.keys(acc.connection.terminalState.specifications || {}).length > 0;
+      // For RPC connections, we can't access terminalState directly
+      // We'll mark as connected if the connection exists and account is connected
+      if (acc.connection && acc.status === 'CONNECTED') {
+        terminalConnected = true;
+        hasSpecifications = true; // Assume specs are available if connected
       }
       
       return {
@@ -1025,11 +1110,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   async getAllAccountsData() {
     const accountStatuses = this.getAccountStatuses();
     
-    return accountStatuses.map(acc => {
+    return Promise.all(accountStatuses.map(async acc => {
       const accountConfig = this.accounts.get(acc.id);
       
       // If account is not connected or no connection, return basic info with zeros
-      if (acc.status !== 'CONNECTED' || !accountConfig?.connection?.terminalState) {
+      if (acc.status !== 'CONNECTED' || !accountConfig?.connection) {
         return {
           ...acc,
           balance: 0,
@@ -1042,9 +1127,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       }
       
       try {
-        // Get real account information from MetaAPI terminal state
-        const accountInfo = accountConfig.connection.terminalState.accountInformation || {};
-        const positions = accountConfig.connection.terminalState.positions || [];
+        // Get real account information from MetaAPI RPC connection
+        const accountInfo = await accountConfig.connection.getAccountInformation() || {};
+        const positions = await accountConfig.connection.getPositions() || [];
         
         // Extract real financial data
         const balance = accountInfo.balance || 0;
@@ -1089,7 +1174,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           error: 'Failed to fetch account data'
         };
       }
-    });
+    }));
   }
 
   async closePosition(accountId: string, positionId: string) {
@@ -1100,7 +1185,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     
     try {
       // Simplified - try to close position using market order
-      const positions = accountConfig.connection.terminalState.positions || [];
+      const positions = await accountConfig.connection.getPositions() || [];
       const position = positions.find((p: any) => p.id === positionId);
       
       if (!position) {

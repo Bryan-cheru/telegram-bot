@@ -9,7 +9,7 @@ import tradingAPIRouter from './noDbTradingAPI';
 import { generalRateLimit, tradingRateLimit } from '../middleware/rateLimit';
 import { InputValidator, ValidationRules } from '../middleware/validation';
 import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
-import { UserAccountManagementService } from '../services/UserAccountManagementService';
+// import { UserAccountManagementService } from '../services/UserAccountManagementService'; // REMOVED - No database needed
 
 const app = express();
 
@@ -543,6 +543,91 @@ app.get('/api/config', (req, res) => {
     logLevel: config.logging.level,
     currentAccountId: process.env.METAAPI_ACCOUNT_ID
   });
+});
+
+// ========== RISK MANAGEMENT ENDPOINTS ==========
+
+// Get current risk configuration
+app.get('/api/risk-config', async (req, res) => {
+  try {
+    // Get current account balance if possible
+    let currentBalance = 0;
+    if (multiAccountExecutor && await multiAccountExecutor.isConnected()) {
+      try {
+        const accountData = await multiAccountExecutor.getAllAccountsData();
+        currentBalance = accountData?.[0]?.balance || 0;
+      } catch (error) {
+        console.warn('Could not fetch live balance for risk config:', error);
+      }
+    }
+
+    const riskPercentage = parseFloat(process.env.RISK_PERCENTAGE || '0.33');
+    const riskRewardRatio = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+    const fixedRiskAmount = process.env.RISK_AMOUNT_USD ? parseFloat(process.env.RISK_AMOUNT_USD) : null;
+    
+    // Calculate effective risk amount
+    const effectiveRiskAmount = fixedRiskAmount || (currentBalance * (riskPercentage / 100));
+    
+    res.json({
+      success: true,
+      config: {
+        riskPercentage: riskPercentage,
+        riskRewardRatio: riskRewardRatio,
+        fixedRiskAmount: fixedRiskAmount,
+        effectiveRiskAmount: effectiveRiskAmount,
+        currentBalance: currentBalance,
+        riskMode: fixedRiskAmount ? 'fixed' : 'percentage'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get risk configuration: ' + error
+    });
+  }
+});
+
+// Update risk configuration (runtime only - doesn't persist to .env)
+app.post('/api/risk-config', (req, res) => {
+  try {
+    const { riskPercentage, riskRewardRatio, fixedRiskAmount } = req.body;
+    
+    // Update environment variables (runtime only)
+    if (riskPercentage !== undefined) {
+      process.env.RISK_PERCENTAGE = riskPercentage.toString();
+    }
+    if (riskRewardRatio !== undefined) {
+      process.env.RISK_REWARD_RATIO = riskRewardRatio.toString();
+    }
+    if (fixedRiskAmount !== undefined) {
+      if (fixedRiskAmount === null) {
+        delete process.env.RISK_AMOUNT_USD;
+      } else {
+        process.env.RISK_AMOUNT_USD = fixedRiskAmount.toString();
+      }
+    }
+
+    addLog({
+      level: 'info',
+      message: `🎯 Risk configuration updated via dashboard: ${JSON.stringify({ riskPercentage, riskRewardRatio, fixedRiskAmount })}`
+    });
+
+    res.json({
+      success: true,
+      message: 'Risk configuration updated (runtime only - restart to restore .env defaults)',
+      config: {
+        riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '0.33'),
+        riskRewardRatio: parseFloat(process.env.RISK_REWARD_RATIO || '1.5'),
+        fixedRiskAmount: process.env.RISK_AMOUNT_USD ? parseFloat(process.env.RISK_AMOUNT_USD) : null,
+        riskMode: process.env.RISK_AMOUNT_USD ? 'fixed' : 'percentage'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update risk configuration: ' + error
+    });
+  }
 });
 
 // ========== NEW MT5 TRADING DASHBOARD ENDPOINTS ==========
@@ -1739,27 +1824,26 @@ app.post('/api/config/account', (req, res) => {
   }
 });
 
-// ========== USER METAAPI ACCOUNT MANAGEMENT ==========
-const userAccountService = new UserAccountManagementService();
+// ========== SIMPLIFIED USER ACCOUNT MANAGEMENT (NO DATABASE) ==========
+// All account management is now handled through environment variables
+// No database required - simplified for production use
 
-// Initialize the service
-setTimeout(async () => {
-  try {
-    await userAccountService.initialize();
-    console.log('✅ User Account Management Service initialized');
-  } catch (error) {
-    console.error('❌ Failed to initialize User Account Management Service:', error);
-  }
-}, 2000);
-
-// Get user's MetaAPI accounts - Return empty for now (no-DB mode)
+// Get user's MetaAPI accounts - Return configured accounts
 app.get('/api/user/accounts', async (req, res) => {
   try {
-    // For no-DB mode, return empty accounts list
-    // The actual trading accounts are managed by the bot itself
+    // Return the currently configured accounts from environment
+    const configuredAccounts = process.env.METAAPI_ACCOUNTS ? 
+      process.env.METAAPI_ACCOUNTS.split(',').map((id, index) => ({
+        id: id.trim(),
+        alias: `Account ${index + 1}`,
+        status: 'active',
+        source: 'environment'
+      })) : [];
+
     res.json({
       success: true,
-      data: []
+      data: configuredAccounts,
+      message: 'Using environment-configured accounts (no database required)'
     });
   } catch (error: any) {
     res.status(500).json({
@@ -1769,190 +1853,36 @@ app.get('/api/user/accounts', async (req, res) => {
   }
 });
 
-// Add a new MetaAPI account for user - Enhanced with MetaAPI validation
+// Add account endpoint - simplified (just informational)
 app.post('/api/user/accounts', async (req, res) => {
   try {
-    const { metaApiAccountId, accountAlias, metaApiToken } = req.body;
-    
-    if (!metaApiAccountId) {
-      return res.status(400).json({
-        success: false,
-        error: 'MetaAPI account ID is required'
-      });
-    }
-
-    // Validate the account ID format (should be a UUID)
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidPattern.test(metaApiAccountId)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid MetaAPI account ID format. Must be a valid UUID.'
-      });
-    }
-
-    // Validate MetaAPI token if provided, or use environment token
-    const tokenToUse = metaApiToken || process.env.METAAPI_TOKEN;
-    
-    if (!tokenToUse) {
-      return res.status(400).json({
-        success: false,
-        error: 'MetaAPI token is required. Please provide your MetaAPI token.'
-      });
-    }
-
-    // Actually validate the account with MetaAPI
-    try {
-      addLog({
-        level: 'info',
-        message: `🔍 Validating MetaAPI account: ${metaApiAccountId}`
-      });
-      
-      const MetaApi = (await import('metaapi.cloud-sdk')).default;
-      const metaApi = new MetaApi(tokenToUse);
-      
-      // Try to get the account to validate it exists and is accessible
-      const account = await metaApi.metatraderAccountApi.getAccount(metaApiAccountId);
-      
-      if (!account) {
-        return res.status(404).json({
-          success: false,
-          error: 'MetaAPI account not found. Please check your account ID and token.'
-        });
-      }
-
-      // Get account info (using available properties)
-      const accountInfo = {
-        accountId: account.id,
-        name: account.name,
-        login: account.login,
-        server: account.server,
-        type: account.type,
-        state: account.state,
-        connectionStatus: account.connectionStatus
-      };
-
-      addLog({
-        level: 'info',
-        message: `✅ Account validated: ${account.name} (${account.server})`
-      });
-
-      res.status(201).json({
-        success: true,
-        data: {
-          accountId: metaApiAccountId,
-          accountAlias: accountAlias || account.name || 'My Trading Account',
-          isActive: true,
-          status: 'validated',
-          accountInfo: accountInfo
-        },
-        message: `Account "${account.name}" validated successfully with MetaAPI.`
-      });
-
-    } catch (metaApiError: any) {
-      addLog({
-        level: 'error',
-        message: `❌ MetaAPI validation failed: ${metaApiError.message}`
-      });
-      
-      return res.status(400).json({
-        success: false,
-        error: `MetaAPI validation failed: ${metaApiError.message}. Please check your account ID and token.`
-      });
-    }
-
-  } catch (error: any) {
-    addLog({
-      level: 'error',
-      message: `❌ Account addition error: ${error.message}`
+    res.status(400).json({
+      success: false,
+      error: 'Account management through API disabled. Please configure accounts in environment variables (METAAPI_ACCOUNTS).',
+      hint: 'Set METAAPI_ACCOUNTS=account1,account2,account3 in your .env file'
     });
+  } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: 'Failed to add user account: ' + error.message
+      error: 'Operation failed: ' + error.message
     });
   }
 });
-
-// Remove user's MetaAPI account
-app.delete('/api/user/accounts/:accountId',
-  InputValidator.validate([
-    { field: 'userId', type: 'string', required: true, min: 1 },
-    { field: 'accountId', type: 'uuid', required: true }
-  ]),
-  async (req, res) => {
-    try {
-      const { accountId } = req.params;
-      const { userId } = req.query;
-      
-      const result = await userAccountService.removeUserAccount(userId as string, accountId);
-      
-      if (result.success) {
-        res.json(result);
-      } else {
-        res.status(400).json(result);
-      }
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to remove user account: ' + error.message
-      });
-    }
+// Delete account endpoint - simplified (just informational)
+app.delete('/api/user/accounts/:accountId', async (req, res) => {
+  try {
+    res.status(400).json({
+      success: false,
+      error: 'Account management through API disabled. Please configure accounts in environment variables (METAAPI_ACCOUNTS).',
+      hint: 'Set METAAPI_ACCOUNTS=account1,account2,account3 in your .env file'
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: 'Operation failed: ' + error.message
+    });
   }
-);
-
-// Update account status (activate/deactivate)
-app.patch('/api/user/accounts/:accountId/status',
-  InputValidator.validate([
-    { field: 'userId', type: 'string', required: true, min: 1 },
-    { field: 'accountId', type: 'uuid', required: true },
-    { field: 'isActive', type: 'boolean', required: true }
-  ]),
-  async (req, res) => {
-    try {
-      const { accountId } = req.params;
-      const { userId, isActive } = req.body;
-      
-      const result = await userAccountService.updateAccountStatus(userId, accountId, isActive);
-      
-      if (result.success) {
-        res.json(result);
-      } else {
-        res.status(400).json(result);
-      }
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to update account status: ' + error.message
-      });
-    }
-  }
-);
-
-// Test account connection
-app.post('/api/user/accounts/:accountId/test',
-  InputValidator.validate([
-    { field: 'userId', type: 'string', required: true, min: 1 },
-    { field: 'accountId', type: 'uuid', required: true }
-  ]),
-  async (req, res) => {
-    try {
-      const { accountId } = req.params;
-      const { userId } = req.body;
-      
-      const result = await userAccountService.testAccountConnection(userId, accountId);
-      
-      if (result.success) {
-        res.json(result);
-      } else {
-        res.status(400).json(result);
-      }
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to test account connection: ' + error.message
-      });
-    }
-  }
-);
+});
 
 app.delete('/api/logs', (req, res) => {
   // Clear the dashboard logs array

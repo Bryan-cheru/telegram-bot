@@ -27,9 +27,10 @@ export class CleanRealWorldTradeParser {
     /#(CHFJPY|CADCHF|AUDCHF|NZDCHF|CADJPY|AUDJPY|NZDJPY|AUDCAD|AUDNZD|CADNZD)(?:\.x)?/i,
     /#(US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|DOW|NASDAQ)(?:\.x)?/i,
     /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
+    /#(BTCUSD|ETHUSD|BITCOIN|ETHEREUM)(?:\.x)?/i,
     /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
     // Word boundaries without hashtag (with optional .x suffix)
-    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225)(?:\.x)?\b/i
+    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|BTCUSD|ETHUSD|BITCOIN)(?:\.x)?\b/i
   ];
 
   private static readonly ACTION_PATTERNS = {
@@ -54,10 +55,15 @@ export class CleanRealWorldTradeParser {
   };
 
   private static readonly ZONE_PATTERNS = [
-    // Range patterns: "2526 - 2521", "2526 – 2521", "2526-2521"
-    /(\d{4,5}(?:\.\d{1,2})?)\s*[-–—]\s*(\d{4,5}(?:\.\d{1,2})?)/g,
-    // Parenthetical ranges: "(2526 – 2521)"
-    /\((\d{4,5}(?:\.\d{1,2})?)\s*[-–—]\s*(\d{4,5}(?:\.\d{1,2})?)\)/g
+    // 4-6 digit patterns first (for gold prices like 4147-4137)
+    /(\d{4,6}(?:\.\d{1,2})?)\s*[-–—]\s*(\d{4,6}(?:\.\d{1,2})?)/g,
+    /\((\d{4,6}(?:\.\d{1,2})?)\s*[-–—]\s*(\d{4,6}(?:\.\d{1,2})?)\)/g,
+    // Comma-separated patterns: "2,526 - 2,521" or "(126,000 - 124,000)"
+    /(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)\s*[-–—]\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)/g,
+    /\((\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)\s*[-–—]\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)\)/g,
+    // Simple 1-3 digit patterns last (for small ranges like 1.25-1.24)
+    /(\d{1,3}(?:\.\d{1,5})?)\s*[-–—]\s*(\d{1,3}(?:\.\d{1,5})?)/g,
+    /\((\d{1,3}(?:\.\d{1,5})?)\s*[-–—]\s*(\d{1,3}(?:\.\d{1,5})?)\)/g
   ];
 
   /**
@@ -108,16 +114,43 @@ export class CleanRealWorldTradeParser {
       return null;
     }
 
-    const action = this.detectAction(text);
+    let action = this.detectAction(text);
     if (!action) {
-      logger.error('❌ No trading action detected');
-      return null;
+      logger.warn('❌ No explicit trading action detected');
+      
+      // 🚀 FALLBACK: For chart images, try to infer action from context
+      action = this.inferActionFromChart(text, symbol);
+      if (!action) {
+        logger.error('❌ No trading action detected and inference failed');
+        return null;
+      }
+      logger.info(`🎯 Inferred action from chart: ${action}`);
     }
 
     // Extract entry zone
     const entryZone = this.extractEntryZone(text);
     if (!entryZone) {
-      logger.error('❌ No entry zone found');
+      logger.warn('❌ No explicit entry zone found');
+      
+      // 🚀 FALLBACK: For chart images, try to create entry zone from detected prices
+      const fallbackZone = this.createFallbackEntryZone(text, symbol, action);
+      if (fallbackZone) {
+        logger.info(`🎯 Created fallback entry zone: ${fallbackZone.min}-${fallbackZone.max}`);
+        const signal: TradeSignal = {
+          symbol,
+          action,
+          entryZone: fallbackZone,
+          stopLoss: 0,
+          targets: [],
+          orderType: 'MARKET',
+          reason: 'Chart analysis with fallback entry zone',
+          plan: 'Fallback entry zone from chart prices',
+          confidence: 0.65
+        };
+        return signal;
+      }
+      
+      logger.error('❌ No entry zone found and fallback failed');
       return null;
     }
 
@@ -188,10 +221,14 @@ export class CleanRealWorldTradeParser {
     for (const pattern of this.ZONE_PATTERNS) {
       const matches = Array.from(text.matchAll(pattern));
       for (const match of matches) {
-        const price1 = parseFloat(match[1]);
-        const price2 = parseFloat(match[2]);
+        // Remove commas before parsing
+        const price1Str = match[1].replace(/,/g, '');
+        const price2Str = match[2].replace(/,/g, '');
+        const price1 = parseFloat(price1Str);
+        const price2 = parseFloat(price2Str);
         
         if (!isNaN(price1) && !isNaN(price2)) {
+          logger.info(`🎯 Found entry zone: ${price1} - ${price2}`);
           return {
             min: Math.min(price1, price2),
             max: Math.max(price1, price2)
@@ -204,6 +241,7 @@ export class CleanRealWorldTradeParser {
     const singlePrice = this.extractSinglePrice(text);
     if (singlePrice) {
       const zoneSize = singlePrice * 0.002; // 0.2% zone
+      logger.info(`🎯 Created zone from single price ${singlePrice}: ${singlePrice - zoneSize} - ${singlePrice + zoneSize}`);
       return {
         min: singlePrice - zoneSize,
         max: singlePrice + zoneSize
@@ -217,16 +255,31 @@ export class CleanRealWorldTradeParser {
    * Extract single price from text
    */
   private static extractSinglePrice(text: string): number | null {
-    // Look for 4-5 digit numbers with optional decimals
-    const priceMatches = text.match(/\b(\d{4,5}(?:\.\d{1,2})?)\b/g);
-    
-    if (priceMatches && priceMatches.length > 0) {
-      const prices = priceMatches
-        .map(p => parseFloat(p))
-        .filter(p => !isNaN(p) && p > 1000);
-      
-      if (prices.length > 0) {
-        return prices[0]; // Return first valid price
+    // Enhanced patterns for various price formats including BTCUSD
+    const pricePatterns = [
+      // Comma-separated numbers: 126,000.00, 124,547.30
+      /\b(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)\b/g,
+      // Large numbers without commas: 126000.00, 124547.30  
+      /\b(\d{5,6}(?:\.\d{1,2})?)\b/g,
+      // Standard 4-5 digit numbers: 2650.50, 35400
+      /\b(\d{4,5}(?:\.\d{1,2})?)\b/g
+    ];
+
+    for (const pattern of pricePatterns) {
+      const matches = Array.from(text.matchAll(pattern));
+      if (matches.length > 0) {
+        const prices = matches
+          .map(match => {
+            // Remove commas before parsing
+            const cleanPrice = match[1].replace(/,/g, '');
+            return parseFloat(cleanPrice);
+          })
+          .filter(p => !isNaN(p) && p > 1000); // Must be > 1000 to be a valid price
+        
+        if (prices.length > 0) {
+          logger.info(`💰 Found single price: ${prices[0]} (from pattern: ${pattern})`);
+          return prices[0]; // Return first valid price
+        }
       }
     }
 
@@ -234,7 +287,7 @@ export class CleanRealWorldTradeParser {
   }
 
   /**
-   * Calculate stop loss and targets using MetaAPI standards
+   * Calculate stop loss and targets using simple fixed $900 risk/reward
    */
   private static calculateTradingLevels(
     entryZone: { min: number; max: number }, 
@@ -243,38 +296,36 @@ export class CleanRealWorldTradeParser {
   ): { stopLoss: number; targets: number[] } {
     const entryMid = (entryZone.min + entryZone.max) / 2;
     
-    // Get risk percentage from environment (default 0.45%)
-    const riskPercent = parseFloat(process.env.RISK_PERCENTAGE || '0.45');
+    // FIXED STRATEGY: Always target +$900 profit and -$900 loss with 0.45 lots
+    // Calculate what price distance gives us $900 with 0.45 lots
     
-    // Calculate risk-based stop loss distance
-    // For XAUUSD: Use $25-30 as standard risk distance (good for 0.45% risk on $10k account)
-    // For forex pairs: Use percentage-based approach
-    let riskDistance: number;
+    let dollarDistance: number;
     
     if (symbol === 'XAUUSD' || symbol === 'GOLD') {
-      // For Gold: $25-30 represents good risk for 0.45% on standard account
-      riskDistance = 25;
+      // For Gold: $1 move = $0.45 with 0.45 lots
+      // So $900 / $0.45 = 2000 points = $20.00 price move
+      dollarDistance = 20.00; // $20 move for $900 risk/reward
     } else if (symbol.includes('JPY')) {
-      // For JPY pairs: 50-100 pips
-      riskDistance = entryMid * 0.005; // 0.5%
+      // For JPY pairs: 1 yen move ≈ $4.50 with 0.45 lots
+      // So $900 / $4.50 = 200 points = 2.00 yen move
+      dollarDistance = 2.00; // 2 yen move for $900 risk/reward
     } else {
-      // For major pairs: 20-50 pips equivalent
-      riskDistance = entryMid * 0.003; // 0.3%
+      // For major pairs: 100 pips ≈ $45 with 0.45 lots
+      // So $900 / $45 = 2000 pips = 0.20 price move
+      dollarDistance = 0.0200; // 200 pips for $900 risk/reward
     }
     
     let stopLoss: number;
     let targets: number[];
 
     if (action === 'BUY') {
-      // Stop loss below entry zone
-      stopLoss = entryZone.min - riskDistance;
-      // 1:1 Risk-Reward ratio target
-      targets = [entryMid + riskDistance]; // 1R target (1:1 RR)
+      // Stop loss $900 below entry, target $900 above entry
+      stopLoss = entryMid - dollarDistance;
+      targets = [entryMid + dollarDistance];
     } else {
-      // Stop loss above entry zone  
-      stopLoss = entryZone.max + riskDistance;
-      // 1:1 Risk-Reward ratio target
-      targets = [entryMid - riskDistance]; // 1R target (1:1 RR)
+      // Stop loss $900 above entry, target $900 below entry  
+      stopLoss = entryMid + dollarDistance;
+      targets = [entryMid - dollarDistance];
     }
 
     // Round to appropriate decimal places
@@ -282,14 +333,13 @@ export class CleanRealWorldTradeParser {
     stopLoss = parseFloat(stopLoss.toFixed(decimals));
     targets = targets.map(t => parseFloat(t.toFixed(decimals)));
 
-    logger.info(`🎯 Calculated risk-based levels for ${symbol}:`, {
+    logger.info(`🎯 Fixed $900 risk/reward levels for ${symbol}:`, {
       entryZone: `${entryZone.min}-${entryZone.max}`,
       entryMid: entryMid,
       stopLoss: stopLoss,
       target: targets[0],
-      riskDistance: riskDistance,
-      riskPercent: `${riskPercent}%`,
-      riskReward: '1:1'
+      dollarDistance: dollarDistance,
+      strategy: 'Fixed $900 risk/reward with 0.45 lots'
     });
 
     return { stopLoss, targets };
@@ -427,6 +477,124 @@ export class CleanRealWorldTradeParser {
     ];
     
     return resultPatterns.some(pattern => pattern.test(text));
+  }
+
+  /**
+   * Create fallback entry zone from detected prices when no explicit zone is found
+   * Used for chart images where price levels are visible but no explicit entry zone
+   */
+  private static createFallbackEntryZone(text: string, symbol: string, action: string): { min: number; max: number } | null {
+    logger.info('🔄 Attempting to create fallback entry zone from detected prices...');
+    
+    // Extract all valid prices from the text
+    const allPrices = this.extractAllPrices(text);
+    if (allPrices.length === 0) {
+      logger.warn('❌ No prices found for fallback entry zone');
+      return null;
+    }
+
+    logger.info(`🔍 Found ${allPrices.length} prices: [${allPrices.join(', ')}]`);
+
+    // For BTCUSD, use chart-based logic
+    if (symbol.includes('BTC')) {
+      // Sort prices to find current market level
+      const sortedPrices = allPrices.sort((a, b) => b - a); // Descending order
+      
+      // Use the middle price as entry (likely current market price)
+      const entryPrice = sortedPrices[Math.floor(sortedPrices.length / 2)];
+      const zoneSize = entryPrice * 0.0015; // 0.15% zone for BTCUSD
+      
+      const zone = {
+        min: entryPrice - zoneSize,
+        max: entryPrice + zoneSize
+      };
+      
+      logger.info(`🎯 BTCUSD fallback zone: ${zone.min.toFixed(0)} - ${zone.max.toFixed(0)} (center: ${entryPrice})`);
+      return zone;
+    }
+
+    // For other symbols, use general logic
+    const avgPrice = allPrices.reduce((sum, price) => sum + price, 0) / allPrices.length;
+    const zoneSize = avgPrice * 0.001; // 0.1% zone
+    
+    const zone = {
+      min: avgPrice - zoneSize,
+      max: avgPrice + zoneSize
+    };
+    
+    logger.info(`🎯 ${symbol} fallback zone: ${zone.min.toFixed(2)} - ${zone.max.toFixed(2)} (avg: ${avgPrice})`);
+    return zone;
+  }
+
+  /**
+   * Extract all valid prices from text for fallback analysis
+   */
+  private static extractAllPrices(text: string): number[] {
+    const pricePatterns = [
+      // Comma-separated: 126,000.00, 124,547.30
+      /\b(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)\b/g,
+      // Large numbers: 126000, 124547.30
+      /\b(\d{5,6}(?:\.\d{1,2})?)\b/g,
+      // Standard: 2650.50, 35400
+      /\b(\d{4,5}(?:\.\d{1,2})?)\b/g
+    ];
+
+    const allPrices: number[] = [];
+    
+    for (const pattern of pricePatterns) {
+      const matches = Array.from(text.matchAll(pattern));
+      for (const match of matches) {
+        const cleanPrice = match[1].replace(/,/g, '');
+        const price = parseFloat(cleanPrice);
+        
+        // Filter out invalid prices and duplicates
+        if (!isNaN(price) && price > 1000 && !allPrices.includes(price)) {
+          allPrices.push(price);
+        }
+      }
+    }
+
+    return allPrices.sort((a, b) => a - b); // Return sorted prices
+  }
+
+  /**
+   * Infer trading action from chart context when not explicitly stated
+   */
+  private static inferActionFromChart(text: string, symbol: string): TradeAction | null {
+    logger.info('🔄 Attempting to infer action from chart context...');
+    
+    // For BTCUSD and crypto, often the chart shows resistance/support levels
+    if (symbol.includes('BTC')) {
+      // Look for resistance level patterns (typically at high prices = SELL opportunity)
+      const prices = this.extractAllPrices(text);
+      if (prices.length >= 2) {
+        const maxPrice = Math.max(...prices);
+        const minPrice = Math.min(...prices);
+        const currentPrice = prices[Math.floor(prices.length / 2)];
+        
+        // If current price is near the high, likely a SELL setup
+        if (currentPrice > (maxPrice * 0.95)) {
+          logger.info('🎯 Current price near highs - inferring SELL');
+          return 'SELL';
+        }
+        
+        // If current price is near the low, likely a BUY setup
+        if (currentPrice < (minPrice * 1.05)) {
+          logger.info('🎯 Current price near lows - inferring BUY');
+          return 'BUY';
+        }
+      }
+    }
+    
+    // Default fallback - return SELL for high-value instruments like BTCUSD (often at resistance)
+    if (symbol.includes('BTC') || symbol.includes('XAU')) {
+      logger.info('🎯 High-value instrument - defaulting to SELL (resistance likely)');
+      return 'SELL';
+    }
+    
+    // For forex, default to BUY
+    logger.info('🎯 Forex instrument - defaulting to BUY');
+    return 'BUY';
   }
 
 }

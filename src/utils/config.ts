@@ -29,8 +29,11 @@ export const config = {
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
   allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
   trading: {
+    fixedLotSize: parseFloat(process.env.FIXED_LOT_SIZE || '0.45'), // Fixed lot size for all trades
+    cryptoLotSize: parseFloat(process.env.CRYPTO_LOT_SIZE || '0.05'), // Smaller lot size for crypto (high margin)
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '0.1'),
     riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '1.3'),
+    fixedRiskAmount: parseFloat(process.env.FIXED_RISK_AMOUNT || '900'), // Fixed $900 risk per trade
     enforceOneToOneRR: process.env.ENFORCE_1_1_RR !== 'false', // Default to true unless explicitly disabled
     defaultOrderType: process.env.DEFAULT_ORDER_TYPE || 'MARKET', // MARKET, LIMIT, or AUTO
     useSmartOrderType: process.env.USE_SMART_ORDER_TYPE !== 'false', // Auto-detect best order type

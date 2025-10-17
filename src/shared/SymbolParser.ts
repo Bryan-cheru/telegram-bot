@@ -7,6 +7,7 @@ export class SymbolParser {
   private static readonly SYMBOL_PATTERNS = [
     // Hashtag patterns - highest priority (with optional .x suffix for InstantFunding)
     /#(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?/i,
+    /#(BTCUSD|BITCOIN|ETHUSD|ETHEREUM|BTC|ETH)(?:\.x)?/i,  // Crypto support
     /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)(?:\.x)?/i,
     /#(EURCHF|EURGBP|EURJPY|EURAUD|EURCAD|EURNZD|GBPCHF|GBPJPY|GBPAUD|GBPCAD|GBPNZD)(?:\.x)?/i,
     /#(CHFJPY|CADCHF|AUDCHF|NZDCHF|CADJPY|AUDJPY|NZDJPY|AUDCAD|AUDNZD|CADNZD)(?:\.x)?/i,
@@ -14,13 +15,19 @@ export class SymbolParser {
     /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
     /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
     // Word boundaries without hashtag (with optional .x suffix)
-    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225)(?:\.x)?\b/i
+    /\b(XAUUSD|GOLD|BTCUSD|BITCOIN|ETHUSD|ETHEREUM|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225)(?:\.x)?\b/i
   ];
 
   private static readonly SYMBOL_NORMALIZATION_MAP: Record<string, string> = {
     // Metals
     'GOLD': 'XAUUSD',
     'SILVER': 'XAGUSD',
+    
+    // Crypto
+    'BITCOIN': 'BTCUSD',
+    'BTC': 'BTCUSD',
+    'ETHEREUM': 'ETHUSD',
+    'ETH': 'ETHUSD',
     
     // Indices  
     'NASDAQ': 'NAS100',

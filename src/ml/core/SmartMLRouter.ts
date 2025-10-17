@@ -327,12 +327,21 @@ export class SmartMLRouter {
           }
         }
 
+        // Format all prices for the detected instrument (especially important for JPY pairs)
+        const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
+        const formattedEntryZone = {
+          min: this.formatPriceForInstrument(entryZone.min, symbol),
+          max: this.formatPriceForInstrument(entryZone.max, symbol)
+        };
+        const formattedStopLoss = this.formatPriceForInstrument(stopLoss, symbol);
+        const formattedTargets = targets.map(target => this.formatPriceForInstrument(target, symbol));
+
         return {
-          symbol: mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN',
+          symbol,
           action: mlResult.direction || 'BUY',
-          entryZone,
-          stopLoss,
-          targets,
+          entryZone: formattedEntryZone,
+          stopLoss: formattedStopLoss,
+          targets: formattedTargets,
           orderType: 'LIMIT',
           reason: `Full Visual ML Analysis (${(mlResult.confidence * 100).toFixed(1)}% confidence)`,
           plan: `Advanced computer vision analysis with ML-detected zones`,
@@ -490,5 +499,37 @@ export class SmartMLRouter {
       fullVisualUsage: 5, // 5% of signals
       averageProcessingTime: 150 // milliseconds
     };
+  }
+
+  /**
+   * Format price with proper decimal precision based on instrument type
+   */
+  private static formatPriceForInstrument(price: number, symbol: string): number {
+    const upperSymbol = symbol.toUpperCase();
+    
+    // JPY pairs use 3 decimal places
+    if (upperSymbol.includes('JPY')) {
+      return Number(price.toFixed(3));
+    }
+    
+    // Major forex pairs use 5 decimal places
+    if (this.isForexPair(upperSymbol)) {
+      return Number(price.toFixed(5));
+    }
+    
+    // Metals use 2 decimal places
+    if (['XAUUSD', 'GOLD', 'XAGUSD', 'SILVER'].includes(upperSymbol)) {
+      return Number(price.toFixed(2));
+    }
+    
+    // Default to 5 decimal places for precision
+    return Number(price.toFixed(5));
+  }
+
+  /**
+   * Check if symbol is a forex pair
+   */
+  private static isForexPair(symbol: string): boolean {
+    return symbol.length === 6 && /^[A-Z]{6}$/.test(symbol);
   }
 }

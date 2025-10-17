@@ -125,7 +125,10 @@ export class EnhancedMetaApiService {
       logger.info(`✅ GATE 3 PASSED: Risk validation successful`);
 
       // 📊 ENHANCED POSITION SIZE CALCULATION
-      logger.info(`📊 Calculating position size with $900 fixed risk`);
+      logger.info(`📊 Calculating position size with dynamic risk configuration`);
+
+      // Enhanced position sizing with risk management
+      const enhancedLotSize = await this.calculatePositionSize(connection, convertedSignal, 0.33);
       const entryPrice = convertedSignal.entryPrice || (convertedSignal.entryZone ? (convertedSignal.entryZone.min + convertedSignal.entryZone.max) / 2 : 0);
       
       if (!entryPrice || !convertedSignal.stopLoss) {
@@ -156,7 +159,7 @@ export class EnhancedMetaApiService {
 
       // 🔍 VALIDATION GATE 4: Final Trade Parameters
       logger.info(`🔍 VALIDATION GATE 4: Final Trade Parameters Validation`);
-      const takeProfit = this.calculate1To1TakeProfit(convertedSignal);
+      const takeProfit = this.calculate1To1Point5TakeProfit(convertedSignal);
       
       if (!convertedSignal.stopLoss || !takeProfit) {
         logger.error(`❌ GATE 4 FAILED: Missing stop loss or take profit`, {
@@ -292,7 +295,7 @@ export class EnhancedMetaApiService {
   }
 
   /**
-   * Calculate optimal position size based on $900 fixed risk per trade
+   * Calculate optimal position size based on dynamic risk configuration
    */
   private async calculatePositionSize(
     connection: any, 
@@ -301,8 +304,19 @@ export class EnhancedMetaApiService {
   ): Promise<number> {
     
     try {
-      // FIXED RISK: Always risk $900 per trade
-      const FIXED_RISK_AMOUNT = 900; // $900 per trade
+      // DYNAMIC RISK: Get real account balance from MetaAPI
+      const liveAccountInfo = await connection.getAccountInformation();
+      const currentBalance = liveAccountInfo?.balance || 300000; // fallback to 300k if unavailable
+      
+      // Calculate risk amount: either fixed USD or percentage of balance
+      const riskAmountUSD = process.env.RISK_AMOUNT_USD ? 
+        parseFloat(process.env.RISK_AMOUNT_USD) : 
+        currentBalance * (parseFloat(process.env.RISK_PERCENTAGE || '0.33') / 100);
+      
+      logger.info(`💰 Dynamic Risk Configuration:`);
+      logger.info(`   Live Account Balance: $${currentBalance.toLocaleString()}`);
+      logger.info(`   Risk Amount: $${riskAmountUSD.toFixed(2)}`);
+      logger.info(`   Risk Percentage: ${((riskAmountUSD / currentBalance) * 100).toFixed(2)}%`);
       
       // Get account information
       const accountInfo = connection.terminalState.accountInformation;
@@ -336,9 +350,9 @@ export class EnhancedMetaApiService {
         pipValue = 10; // Standard forex pairs: $10 per pip for 1 lot
       }
       
-      // Calculate lot size to risk exactly $900
+      // Calculate lot size to risk exactly the configured amount
       // Formula: Risk Amount / (Stop Loss Distance * Pip Value) = Lot Size
-      let calculatedLotSize = FIXED_RISK_AMOUNT / (stopLossDistance * pipValue);
+      let calculatedLotSize = riskAmountUSD / (stopLossDistance * pipValue);
       
       // Apply broker limits
       calculatedLotSize = Math.max(minVolume, calculatedLotSize);
@@ -347,12 +361,12 @@ export class EnhancedMetaApiService {
       // Round to valid lot size (0.01 increments)
       calculatedLotSize = Math.round(calculatedLotSize * 100) / 100;
       
-      logger.info(`💰 $900 Risk-Based Position Sizing for ${signal.symbol}:`);
+      logger.info(`💰 Dynamic Risk-Based Position Sizing for ${signal.symbol}:`);
       logger.info(`   Entry Price: ${entryPrice}`);
       logger.info(`   Stop Loss: ${stopLoss}`);
       logger.info(`   SL Distance: ${stopLossDistance.toFixed(5)}`);
       logger.info(`   Pip Value: $${pipValue}/lot`);
-      logger.info(`   Target Risk: $${FIXED_RISK_AMOUNT}`);
+      logger.info(`   Target Risk: $${riskAmountUSD.toFixed(2)}`);
       logger.info(`   Calculated Lot Size: ${calculatedLotSize}`);
       
       const actualRisk = calculatedLotSize * stopLossDistance * pipValue;
@@ -447,7 +461,7 @@ export class EnhancedMetaApiService {
   /**
    * Calculate 1:1 risk-reward take profit
    */
-  private calculate1To1TakeProfit(signal: TradeSignal): number {
+  private calculate1To1Point5TakeProfit(signal: TradeSignal): number {
     // Use entryPrice if available, otherwise use middle of entryZone
     let entryPrice = signal.entryPrice;
     if (!entryPrice && signal.entryZone) {
@@ -457,19 +471,26 @@ export class EnhancedMetaApiService {
     const stopLoss = signal.stopLoss;
     
     if (!entryPrice || !stopLoss || stopLoss === 0) {
-      logger.warn('Missing entry price or stop loss for 1:1 calculation');
+      logger.warn('Missing entry price or stop loss for 1:1.5 calculation');
       // Return first target if available, otherwise use entry price
       return signal.targets?.[0] || entryPrice || 0;
     }
     
     const stopLossDistance = Math.abs(entryPrice - stopLoss);
+    const riskRewardRatio = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+    const takeProfitDistance = stopLossDistance * riskRewardRatio; // Configurable risk/reward ratio
     
-    // For BUY: TP = Entry + SL Distance
-    // For SELL: TP = Entry - SL Distance
+    logger.info(`🎯 Risk/Reward Configuration:`);
+    logger.info(`   Stop Loss Distance: ${stopLossDistance.toFixed(5)}`);
+    logger.info(`   Risk/Reward Ratio: 1:${riskRewardRatio}`);
+    logger.info(`   Take Profit Distance: ${takeProfitDistance.toFixed(5)}`);
+    
+    // For BUY: TP = Entry + (SL Distance * Ratio)
+    // For SELL: TP = Entry - (SL Distance * Ratio)
     if (signal.action.toLowerCase() === 'buy') {
-      return entryPrice + stopLossDistance;
+      return entryPrice + takeProfitDistance;
     } else {
-      return entryPrice - stopLossDistance;
+      return entryPrice - takeProfitDistance;
     }
   }
 
@@ -488,7 +509,7 @@ export class EnhancedMetaApiService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Calculate 1:1 risk-reward take profit
-        const takeProfit = this.calculate1To1TakeProfit(signal);
+        const takeProfit = this.calculate1To1Point5TakeProfit(signal);
         
         // Log the trade parameters before execution
         logger.info(`🎯 Trade parameters for MetaAPI (Attempt ${attempt}):`, {

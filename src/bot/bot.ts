@@ -544,11 +544,12 @@ export class TelegramBot {
       let tradeExecutorReady = false;
       
       try {
-        // Add overall timeout for initialization
+        // Reduced timeout for faster startup - 30 seconds max
+        logger.info('⏱️ MetaAPI initialization timeout: 30 seconds');
         await Promise.race([
           this.tradeExecutor.initialize(),
           new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Initialization timeout')), 240000) // 4 minutes max
+            setTimeout(() => reject(new Error('MetaAPI initialization timeout (30s) - continuing with limited functionality')), 30000) // 30 seconds max
           )
         ]);
         
@@ -558,13 +559,14 @@ export class TelegramBot {
           logger.info('✅ Multi-Account MetaAPI Trade executor initialized and connected successfully');
           tradeExecutorReady = true;
         } else {
-          logger.warn('❌ Trade executor initialized but not fully connected - OCR mode available');
+          logger.warn('❌ Trade executor initialized but not fully connected - signal parsing available');
           tradeExecutorReady = false;
         }
         
-      } catch (error) {
-        logger.warn('⚠️ Multi-Account Trade executor initialization timeout or failed:', error);
-        logger.info('📊 Bot will continue in OCR-only mode');
+      } catch (error: any) {
+        logger.warn('⚠️ Multi-Account Trade executor initialization failed or timeout after 30s:', error?.message || String(error));
+        logger.info('📊 Bot will continue with limited functionality (signal parsing only)');
+        logger.info('💡 Check MetaAPI token, account configuration, and internet connection');
         tradeExecutorReady = false;
       }
       

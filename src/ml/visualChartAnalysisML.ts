@@ -47,20 +47,20 @@ export class VisualChartAnalysisML {
       const metadata = await sharp(imageBuffer).metadata();
       logger.info(`📊 Chart dimensions: ${metadata.width}x${metadata.height}`);
 
-      // Step 2: Detect the price scale region (usually right side of chart)
-      const priceScale = await this.detectPriceScaleRegion(imageBuffer, metadata);
-      
-      // Step 3: Extract OCR text for fallback price reading
+      // Step 2: Extract OCR text early for symbol detection
       const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
+      const symbol = this.extractSymbolFromOCR(ocrResult.text);
+
+      // Step 3: Detect the price scale region (pass symbol for better price extraction)
+      const priceScale = await this.detectPriceScaleRegion(imageBuffer, metadata, symbol);
       
       // Step 4: Detect highlighted color zones
       const colorZones = await this.detectColorHighlights(imageBuffer, priceScale);
       
-      // Step 5: Map color zones to price levels
-      const mappedZones = await this.mapColorZonesToPrices(colorZones, priceScale, ocrResult.text);
+      // Step 5: Map color zones to price levels (pass symbol for better price extraction)
+      const mappedZones = await this.mapColorZonesToPrices(colorZones, priceScale, ocrResult.text, symbol);
       
-      // Step 6: Extract symbol and direction
-      const symbol = this.extractSymbolFromOCR(ocrResult.text);
+      // Step 6: Extract direction
       const direction = this.detectTradeDirection(ocrResult.text, mappedZones);
       
       const result: VisualAnalysisResult = {
@@ -83,10 +83,10 @@ export class VisualChartAnalysisML {
       try {
         logger.info('🔄 Attempting OCR-only fallback analysis...');
         const ocrResult = await this.textExtractor.extractTextFromImage(imageBuffer);
-        const extractedPrices = this.extractPricesFromText(ocrResult.text);
+        const symbol = this.extractSymbolFromOCR(ocrResult.text);
+        const extractedPrices = this.extractPricesFromText(ocrResult.text, symbol);
         
         if (extractedPrices.length >= 2) {
-          const symbol = this.extractSymbolFromOCR(ocrResult.text);
           const minPrice = Math.min(...extractedPrices);
           const maxPrice = Math.max(...extractedPrices);
           
@@ -126,7 +126,7 @@ export class VisualChartAnalysisML {
   /**
    * Detect the price scale region (usually right side of chart)
    */
-  private async detectPriceScaleRegion(imageBuffer: Buffer, metadata: any): Promise<{
+  private async detectPriceScaleRegion(imageBuffer: Buffer, metadata: any, symbol?: string): Promise<{
     minPrice: number;
     maxPrice: number;
     pixelsPerPip: number;
@@ -175,12 +175,12 @@ export class VisualChartAnalysisML {
       await worker.terminate();
       
       logger.info(`📖 Scale OCR confidence: ${(ocrResult.data.confidence || 0).toFixed(1)}%`);
-      prices = this.extractPricesFromText(ocrResult.data.text);
+      prices = this.extractPricesFromText(ocrResult.data.text, symbol);
       
     } catch (ocrError) {
       logger.error('OCR failed, falling back to default price extraction:', ocrError);
       const fallbackResult = await this.textExtractor.extractTextFromImage(scaleImage);
-      prices = this.extractPricesFromText(fallbackResult.text);
+      prices = this.extractPricesFromText(fallbackResult.text, symbol);
     }
     
     if (prices.length < 2) {
@@ -188,14 +188,47 @@ export class VisualChartAnalysisML {
       
       // Try to extract prices from the full image OCR as fallback
       const fullImageOCR = await this.textExtractor.extractTextFromImage(imageBuffer);
-      const fallbackPrices = this.extractPricesFromText(fullImageOCR.text);
+      const fallbackPrices = this.extractPricesFromText(fullImageOCR.text, symbol);
       
       if (fallbackPrices.length >= 2) {
-        const minPrice = Math.min(...fallbackPrices);
-        const maxPrice = Math.max(...fallbackPrices);
+        // Validate the price range is reasonable
+        const filteredPrices = this.validatePriceScale(fallbackPrices, fullImageOCR.text);
+        
+        if (filteredPrices.length >= 2) {
+          const minPrice = Math.min(...filteredPrices);
+          const maxPrice = Math.max(...filteredPrices);
+          const pixelsPerPip = scaleRegion.height / (maxPrice - minPrice);
+          
+          logger.info(`📈 Using validated fallback prices: ${minPrice} - ${maxPrice}`);
+          return {
+            minPrice,
+            maxPrice,
+            pixelsPerPip,
+            scaleRegion
+          };
+        }
+      }
+      
+      logger.error('❌ Cannot determine price scale - insufficient price data from both scale OCR and full image OCR');
+      throw new Error('Price scale detection failed - no valid prices found in image');
+    }
+
+    // Validate the extracted prices form a reasonable scale
+    const validatedPrices = this.validatePriceScale(prices, '');
+    if (validatedPrices.length < 2) {
+      logger.warn('⚠️ Scale prices failed validation, trying fallback approach');
+      
+      // Try full image OCR as backup
+      const fullImageOCR = await this.textExtractor.extractTextFromImage(imageBuffer);
+      const fallbackPrices = this.extractPricesFromText(fullImageOCR.text, symbol);
+      const validatedFallback = this.validatePriceScale(fallbackPrices, fullImageOCR.text);
+      
+      if (validatedFallback.length >= 2) {
+        const minPrice = Math.min(...validatedFallback);
+        const maxPrice = Math.max(...validatedFallback);
         const pixelsPerPip = scaleRegion.height / (maxPrice - minPrice);
         
-        logger.info(`📈 Using fallback prices from full OCR: ${minPrice} - ${maxPrice}`);
+        logger.info(`📈 Using validated fallback prices: ${minPrice} - ${maxPrice}`);
         return {
           minPrice,
           maxPrice,
@@ -204,12 +237,11 @@ export class VisualChartAnalysisML {
         };
       }
       
-      logger.error('❌ Cannot determine price scale - insufficient price data from both scale OCR and full image OCR');
-      throw new Error('Price scale detection failed - no valid prices found in image');
+      throw new Error('Price scale validation failed - no reasonable price range found');
     }
 
-    const minPrice = Math.min(...prices);
-    const maxPrice = Math.max(...prices);
+    const minPrice = Math.min(...validatedPrices);
+    const maxPrice = Math.max(...validatedPrices);
     const pixelsPerPip = scaleRegion.height / (maxPrice - minPrice);
 
     logger.info(`📏 Price scale detected: ${minPrice} - ${maxPrice} (${pixelsPerPip.toFixed(2)} pixels/pip)`);
@@ -386,17 +418,18 @@ export class VisualChartAnalysisML {
   private async mapColorZonesToPrices(
     colorZones: ColorZone[], 
     priceScale: any, 
-    ocrText: string
+    ocrText: string,
+    symbol?: string
   ): Promise<ColorZone[]> {
     // If no color zones detected, try to extract from OCR text as fallback
     if (colorZones.length === 0) {
       logger.warn('⚠️  No color highlights detected, falling back to OCR text analysis');
-      return this.extractZonesFromOCRText(ocrText, priceScale);
+      return this.extractZonesFromOCRText(ocrText, priceScale, symbol);
     }
 
     // Validate and refine detected zones using OCR text
     const refinedZones = colorZones.map(zone => {
-      const ocrPrices = this.extractPricesFromText(ocrText);
+      const ocrPrices = this.extractPricesFromText(ocrText, symbol);
       const closestOCRPrice = this.findClosestPrice(zone.price, ocrPrices);
       
       if (closestOCRPrice && Math.abs(zone.price - closestOCRPrice) < zone.price * 0.05) {
@@ -417,11 +450,11 @@ export class VisualChartAnalysisML {
   /**
    * Fallback method: Extract zones from OCR text when visual detection fails
    */
-  private extractZonesFromOCRText(ocrText: string, priceScale: any): ColorZone[] {
+  private extractZonesFromOCRText(ocrText: string, priceScale: any, symbol?: string): ColorZone[] {
     logger.info('📝 Extracting zones from OCR text...');
     
     const zones: ColorZone[] = [];
-    const prices = this.extractPricesFromText(ocrText);
+    const prices = this.extractPricesFromText(ocrText, symbol);
     
     if (prices.length === 0) {
       logger.warn('❌ No prices found in OCR text');
@@ -461,15 +494,51 @@ export class VisualChartAnalysisML {
   /**
    * Extract numerical price values from text
    */
-  private extractPricesFromText(text: string): number[] {
+  private extractPricesFromText(text: string, symbol?: string): number[] {
     logger.info(`🔍 Extracting prices from text: "${text.substring(0, 200)}..."`);
     
-    // Enhanced price patterns for different instruments
-    const pricePatterns = [
-      /\b[1-9]\d{3,4}\.?\d{0,2}\b/g,  // XAUUSD format: 3521, 3526.50 (1000-99999)
-      /\b\d{1,3}\.\d{4,5}\b/g,        // EURUSD format: 1.08500
-      /\b\d{2,4}\.\d{2,3}\b/g         // General format: 134.50
-    ];
+    // Use provided symbol or try to detect from text
+    const detectedSymbol = symbol || this.extractSymbolFromOCR(text);
+    
+    if (!symbol && detectedSymbol === 'UNKNOWN') {
+      logger.warn(`⚠️ Could not detect instrument from price text: "${text.substring(0, 50)}..."`);
+    }
+    
+    const isJPYPair = /JPY|jpy/i.test(detectedSymbol || text);
+    const isGoldPair = /XAU|GOLD|gold/i.test(detectedSymbol || text);
+    const isMajorForex = /EUR|GBP|USD|AUD|CAD|NZD|CHF/i.test(detectedSymbol || text);
+    
+    logger.info(`💰 Detected instrument: ${detectedSymbol} (context: ${isJPYPair ? 'JPY' : isGoldPair ? 'Gold' : isMajorForex ? 'Forex' : 'Generic'})`);
+    
+    let pricePatterns: RegExp[];
+    
+    if (isJPYPair) {
+      // JPY pairs: 198.500, 197.500, 134.500 (typically 100-250 range)
+      pricePatterns = [
+        /\b1[0-9]{2}\.\d{1,3}\b/g,     // 100-199.xxx
+        /\b2[0-4][0-9]\.\d{1,3}\b/g,   // 200-249.xxx  
+        /\b[1-9][0-9]\.\d{1,3}\b/g     // 10-99.xxx (fallback)
+      ];
+    } else if (isGoldPair) {
+      // Gold: 2000-3000 range typically
+      pricePatterns = [
+        /\b[2-3][0-9]{3}\.\d{0,2}\b/g, // 2000-3999.xx
+        /\b[1-4][0-9]{3}\b/g           // 1000-4999 (no decimal)
+      ];
+    } else if (isMajorForex) {
+      // Major forex: 0.5000-2.0000 range
+      pricePatterns = [
+        /\b[01]\.\d{4,5}\b/g,          // 0.xxxxx, 1.xxxxx
+        /\b2\.[0-5]\d{3,4}\b/g         // 2.0xxxx to 2.5xxxx
+      ];
+    } else {
+      // Generic patterns (fallback)
+      pricePatterns = [
+        /\b[1-9]\d{2,3}\.\d{1,3}\b/g,  // 100-9999.xxx
+        /\b[01]\.\d{4,5}\b/g,          // Forex format
+        /\b[2-9][0-9]\.\d{1,3}\b/g     // Medium range
+      ];
+    }
 
     const prices: number[] = [];
     
@@ -481,11 +550,10 @@ export class VisualChartAnalysisML {
         let price = parseFloat(match);
         if (!isNaN(price) && price > 0) {
           
-          // INTELLIGENT PRICE RECONSTRUCTION based on context and other extracted prices
-          price = this.reconstructTruncatedPrice(price, prices, text);
-          
-          // Additional filtering based on instrument type
-          if (this.isValidPriceForInstrument(price)) {
+          // Apply instrument-specific validation BEFORE reconstruction
+          if (this.isValidPriceForInstrument(price, detectedSymbol)) {
+            // INTELLIGENT PRICE RECONSTRUCTION based on context and other extracted prices
+            price = this.reconstructTruncatedPrice(price, prices, text);
             prices.push(price);
           }
         }
@@ -502,20 +570,46 @@ export class VisualChartAnalysisML {
   /**
    * Validate if a price is reasonable for the detected instrument
    */
-  private isValidPriceForInstrument(price: number): boolean {
-    // For XAUUSD (Gold), typical range is 1500-5000
-    if (price >= 1500 && price <= 5000) return true;
+  private isValidPriceForInstrument(price: number, symbol?: string): boolean {
+    const symbolStr = (symbol || '').toUpperCase();
     
-    // For EURUSD, GBPUSD etc, typical range is 0.5-2.0
-    if (price >= 0.5 && price <= 2.0) return true;
+    // JPY pairs validation (USDJPY, EURJPY, GBPJPY, etc.)
+    if (symbolStr.includes('JPY') || /JPY|jpy/i.test(symbolStr)) {
+      // JPY pairs typically range from 80-250
+      if (price >= 80 && price <= 250) return true;
+      // Reject obvious OCR errors like single digits
+      if (price < 10) return false;
+    }
     
-    // For USDJPY, EURJPY etc, typical range is 50-200
-    if (price >= 50 && price <= 200) return true;
+    // Gold pairs (XAUUSD)
+    if (symbolStr.includes('XAU') || symbolStr.includes('GOLD') || /gold|xau/i.test(symbolStr)) {
+      // Gold typically ranges from 1500-5000
+      if (price >= 1500 && price <= 5000) return true;
+    }
     
-    // Reject obvious false positives
-    if (price < 0.1 || price > 10000) return false;
+    // Major forex pairs (EURUSD, GBPUSD, etc.)
+    if (/EUR|GBP|AUD|CAD|NZD|CHF/i.test(symbolStr) && !symbolStr.includes('JPY')) {
+      // Major forex typically ranges from 0.5-2.5
+      if (price >= 0.5 && price <= 2.5) return true;
+    }
     
-    return true;
+    // Silver (XAGUSD)
+    if (symbolStr.includes('XAG') || symbolStr.includes('SILVER')) {
+      // Silver typically ranges from 15-60
+      if (price >= 15 && price <= 60) return true;
+    }
+    
+    // Generic fallback validation
+    if (price >= 0.1 && price <= 10000) {
+      // Additional logic: if we don't know the symbol, be more conservative
+      if (!symbol) {
+        // Without symbol context, reject extreme values
+        if (price < 1 || price > 1000) return false;
+      }
+      return true;
+    }
+    
+    return false;
   }
 
   /**
@@ -525,13 +619,14 @@ export class VisualChartAnalysisML {
     const originalPrice = price;
     
     // Get symbol context
+    const detectedSymbol = this.extractSymbolFromOCR(text);
     const isGoldContext = /gold|xau|au/i.test(text);
     const isSilverContext = /silver|xag|ag/i.test(text);
     const isBitcoinContext = /bitcoin|btc/i.test(text);
     const isForexContext = /eur|gbp|usd|jpy|cad|aud|nzd|chf/i.test(text);
     
     // Find existing valid prices to determine the expected range
-    const validPrices = existingPrices.filter(p => this.isValidPriceForInstrument(p));
+    const validPrices = existingPrices.filter(p => this.isValidPriceForInstrument(p, detectedSymbol));
     
     if (validPrices.length > 0) {
       const avgPrice = validPrices.reduce((a, b) => a + b, 0) / validPrices.length;
@@ -574,7 +669,7 @@ export class VisualChartAnalysisML {
         for (let leadingDigit = 1; leadingDigit <= 4; leadingDigit++) {
           const reconstructed = leadingDigit * 1000 + price;
           if (Math.abs(reconstructed - avgPrice) <= priceRange * 2 && 
-              this.isValidPriceForInstrument(reconstructed)) {
+              this.isValidPriceForInstrument(reconstructed, detectedSymbol)) {
             logger.info(`🔧 Generic price reconstruction: ${originalPrice} → ${reconstructed} (leading digit: ${leadingDigit})`);
             return reconstructed;
           }
@@ -854,6 +949,64 @@ export class VisualChartAnalysisML {
     }
     
     return Math.min(1.0, confidence);
+  }
+
+  /**
+   * Validate that prices form a reasonable scale range
+   * Filters out obvious OCR errors and outliers
+   */
+  private validatePriceScale(prices: number[], text: string): number[] {
+    if (prices.length < 2) return prices;
+    
+    const detectedSymbol = this.extractSymbolFromOCR(text);
+    const isJPYPair = /JPY|jpy/i.test(detectedSymbol || text);
+    
+    // Sort prices to find the range
+    const sortedPrices = [...prices].sort((a, b) => a - b);
+    const minPrice = sortedPrices[0];
+    const maxPrice = sortedPrices[sortedPrices.length - 1];
+    const priceRange = maxPrice - minPrice;
+    
+    logger.info(`🔍 Validating price scale: ${minPrice} - ${maxPrice} (range: ${priceRange.toFixed(3)})`);
+    
+    // Instrument-specific validation
+    if (isJPYPair) {
+      // For JPY pairs, expect reasonable range (typically 80-250)
+      // Price range should be between 0.1 and 50 (e.g., 198.5 - 197.5 = 1.0)
+      if (priceRange > 50) {
+        logger.warn(`⚠️ JPY pair price range too large: ${priceRange}, filtering outliers`);
+        // Remove prices that create excessive range
+        const filtered = prices.filter(price => {
+          return price >= 80 && price <= 250;
+        });
+        
+        if (filtered.length >= 2) {
+          const newMin = Math.min(...filtered);
+          const newMax = Math.max(...filtered);
+          const newRange = newMax - newMin;
+          logger.info(`✅ JPY filtered range: ${newMin} - ${newMax} (${newRange.toFixed(3)})`);
+          return filtered;
+        }
+      }
+    }
+    
+    // Generic validation: remove extreme outliers
+    const median = sortedPrices[Math.floor(sortedPrices.length / 2)];
+    const validPrices = prices.filter(price => {
+      const deviationRatio = Math.abs(price - median) / median;
+      return deviationRatio < 2.0; // Remove prices that deviate more than 200% from median
+    });
+    
+    if (validPrices.length >= 2) {
+      const validMin = Math.min(...validPrices);
+      const validMax = Math.max(...validPrices);
+      logger.info(`✅ Validated price range: ${validMin} - ${validMax}`);
+      return validPrices;
+    }
+    
+    // If validation removes too many prices, return original
+    logger.warn('⚠️ Price validation removed too many prices, using original set');
+    return prices;
   }
 
 
