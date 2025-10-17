@@ -262,8 +262,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    */
   private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
     const fixedLotSize = config.trading.fixedLotSize;   // Use configured lot size
-    const targetRisk = 900;      // Target $900 risk
-    const targetReward = 1350;   // Target $1350 reward (1:1.5 RR)
+    const targetRisk = config.trading.fixedRiskAmount;      // Use configured risk amount
+    const riskRewardRatio = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+    const targetReward = targetRisk * riskRewardRatio;   // Calculate reward based on configured ratio
     
     // Get pip value for this instrument
     const pipValue = this.getPipValue(signal.symbol);
@@ -326,7 +327,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     logger.info(`   Entry: ${entryPrice.toFixed(5)}`);
     logger.info(`   Stop Loss: ${stopLoss.toFixed(5)} (${exactRiskDistanceInPips.toFixed(2)} pips = ${riskPriceDistance.toFixed(5)} price distance)`);
     logger.info(`   Take Profit: ${takeProfit.toFixed(5)} (${exactRewardDistanceInPips.toFixed(2)} pips = ${rewardPriceDistance.toFixed(5)} price distance)`);
-    logger.info(`   Risk/Reward: 1:1.5 (optimal profit ratio)`);
+    logger.info(`   Risk/Reward: 1:${riskRewardRatio} (configured ratio)`);
     
     return takeProfit;
   }

@@ -64,12 +64,13 @@ export class TelegramBot {
       });
 
       if (result.success) {
-        logger.info('✅ Enhanced trade execution successful with 1:1 RR:', {
+        const riskRewardRatio = process.env.RISK_REWARD_RATIO || '1.5';
+        logger.info(`✅ Enhanced trade execution successful with 1:${riskRewardRatio} RR:`, {
           ticket: result.ticket,
           positionSize: result.positionSize,
           riskAmount: result.riskAmount,
           executionPrice: result.executionPrice,
-          risk: '0.45%'
+          risk: `${config.trading.riskPercentage}%`
         });
       }
 

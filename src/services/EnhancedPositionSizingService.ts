@@ -57,10 +57,11 @@ export class EnhancedPositionSizingService {
     const warnings: string[] = [];
     
     try {
-      // SIMPLE FIXED STRATEGY: Use configured lot size for +$900/-$900 risk/reward
+      // SIMPLE FIXED STRATEGY: Use configured lot size and risk amount
       const fixedLotSize = config.trading.fixedLotSize;
+      const fixedRiskAmount = config.trading.fixedRiskAmount;
       
-      logger.info(`💰 FIXED STRATEGY: Using ${fixedLotSize} lots for ${symbol} (target: +$900 TP / -$900 SL)`);
+      logger.info(`💰 FIXED STRATEGY: Using ${fixedLotSize} lots for ${symbol} (target: +$${fixedRiskAmount} TP / -$${fixedRiskAmount} SL)`);
       
       // Get symbol specification for risk calculation only
       const symbolSpec = await this.getSymbolSpecification(connection, symbol);
@@ -98,11 +99,11 @@ export class EnhancedPositionSizingService {
       logger.info(`   Entry: ${entryPrice.toFixed(symbolSpec.digits)}, Stop: ${stopLoss.toFixed(symbolSpec.digits)}`);
       logger.info(`   Distance: ${stopLossDistance.toFixed(symbolSpec.digits)} (${stopLossDistancePips} pips)`);
       logger.info(`   FIXED LOT SIZE: ${fixedLotSize} lots (always)`);
-      logger.info(`   Target: +$900 TP / -$900 SL`);
+      logger.info(`   Target: +$${fixedRiskAmount} TP / -$${fixedRiskAmount} SL`);
 
       return {
         lotSize: fixedLotSize, // Use configured lot size
-        riskAmount: 900, // Always target $900
+        riskAmount: fixedRiskAmount, // Use configured risk amount
         stopLossDistance,
         stopLossDistancePips,
         tickValue: symbolSpec.tickValue,
@@ -117,7 +118,7 @@ export class EnhancedPositionSizingService {
       // Always use configured lot size even on error
       logger.warn(`🔄 Using ${config.trading.fixedLotSize} lots for ${symbol} (fallback)`);
 
-      return this.getFixedLotCalculation(config.trading.fixedLotSize, entryPrice, stopLoss, symbol, 900, warnings);
+      return this.getFixedLotCalculation(config.trading.fixedLotSize, entryPrice, stopLoss, symbol, config.trading.fixedRiskAmount, warnings);
     }
   }
 
@@ -241,17 +242,17 @@ export class EnhancedPositionSizingService {
     const stopLossDistance = Math.abs(entryPrice - stopLoss);
     const stopLossDistancePips = this.calculatePips(symbol, stopLossDistance);
     
-    warnings.push(`Using fixed ${actualLotSize} lot size with $900 target risk/reward`);
+    warnings.push(`Using fixed ${actualLotSize} lot size with $${riskAmount} target risk/reward`);
     
     logger.info(`🎯 SIMPLE FALLBACK for ${symbol}:`);
     logger.info(`   Entry: ${entryPrice}, Stop: ${stopLoss}`);
     logger.info(`   Distance: ${stopLossDistance} (${stopLossDistancePips} pips)`);
     logger.info(`   FIXED LOT SIZE: 0.45 lots (always)`);
-    logger.info(`   Target: +$900 TP / -$900 SL`);
+    logger.info(`   Target: +$${riskAmount} TP / -$${riskAmount} SL`);
     
     return {
       lotSize: actualLotSize,
-      riskAmount: 900, // Always target $900
+      riskAmount: riskAmount, // Use provided risk amount
       stopLossDistance,
       stopLossDistancePips,
       tickValue: 10, // Estimated
