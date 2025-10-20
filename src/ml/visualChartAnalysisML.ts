@@ -506,13 +506,23 @@ export class VisualChartAnalysisML {
     
     const isJPYPair = /JPY|jpy/i.test(detectedSymbol || text);
     const isGoldPair = /XAU|GOLD|gold/i.test(detectedSymbol || text);
+    const isBitcoinPair = /BTC|BITCOIN|bitcoin/i.test(detectedSymbol || text);
     const isMajorForex = /EUR|GBP|USD|AUD|CAD|NZD|CHF/i.test(detectedSymbol || text);
     
-    logger.info(`💰 Detected instrument: ${detectedSymbol} (context: ${isJPYPair ? 'JPY' : isGoldPair ? 'Gold' : isMajorForex ? 'Forex' : 'Generic'})`);
+    logger.info(`💰 Detected instrument: ${detectedSymbol} (context: ${isJPYPair ? 'JPY' : isGoldPair ? 'Gold' : isBitcoinPair ? 'Bitcoin' : isMajorForex ? 'Forex' : 'Generic'})`);
     
     let pricePatterns: RegExp[];
     
-    if (isJPYPair) {
+    if (isBitcoinPair) {
+      // Bitcoin: 80,000 - 150,000 range, handles various formats
+      // Use non-capturing groups or simpler patterns
+      pricePatterns = [
+        /\b[1-9]\d{2},?\d{3}\.\d{2}\b/g,           // 108,105.64 or 108105.64
+        /\b[1-9]\d{4,5}\.\d{2}\b/g,                // 108105.64 (no comma, alternate)
+        /\b[1-9]\d{2},?\d{3}\b/g,                  // 108,105 or 108105 (no decimal)
+        /\b[1-9]\d{4,5}\b/g                        // 108105 (plain number)
+      ];
+    } else if (isJPYPair) {
       // JPY pairs: 198.500, 197.500, 134.500 (typically 100-250 range)
       pricePatterns = [
         /\b1[0-9]{2}\.\d{1,3}\b/g,     // 100-199.xxx
@@ -547,7 +557,9 @@ export class VisualChartAnalysisML {
       logger.info(`Pattern ${index + 1}: Found ${matches.length} matches: [${matches.slice(0, 5).join(', ')}${matches.length > 5 ? '...' : ''}]`);
       
       matches.forEach(match => {
-        let price = parseFloat(match);
+        // Remove commas before parsing (for Bitcoin and other comma-formatted prices)
+        const cleanMatch = match.replace(/,/g, '');
+        let price = parseFloat(cleanMatch);
         if (!isNaN(price) && price > 0) {
           
           // Apply instrument-specific validation BEFORE reconstruction
@@ -572,6 +584,14 @@ export class VisualChartAnalysisML {
    */
   private isValidPriceForInstrument(price: number, symbol?: string): boolean {
     const symbolStr = (symbol || '').toUpperCase();
+    
+    // Bitcoin validation (BTCUSD, BITCOIN)
+    if (symbolStr.includes('BTC') || symbolStr.includes('BITCOIN') || /bitcoin|btc/i.test(symbolStr)) {
+      // Bitcoin typically ranges from 10,000 - 500,000
+      if (price >= 10000 && price <= 500000) return true;
+      // Reject obvious OCR errors
+      if (price < 1000) return false;
+    }
     
     // JPY pairs validation (USDJPY, EURJPY, GBPJPY, etc.)
     if (symbolStr.includes('JPY') || /JPY|jpy/i.test(symbolStr)) {
