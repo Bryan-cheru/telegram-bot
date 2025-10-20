@@ -155,7 +155,8 @@ export class VisualChartAnalysisML {
         kernel: sharp.kernel.lanczos3,
         fit: 'fill'
       })
-      .sharpen() // Enhance text clarity
+      .normalize() // Normalize contrast to make grey text more readable
+      .sharpen({ sigma: 2 }) // Enhanced sharpening for text clarity
       .png()
       .toBuffer();
 
@@ -165,9 +166,9 @@ export class VisualChartAnalysisML {
     try {
       const worker = await Tesseract.createWorker('eng');
       
-      // Configure for numbers only
+      // Configure for numbers only (including commas for Bitcoin prices like 108,105.64)
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789.',
+        tessedit_char_whitelist: '0123456789.,',
         tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
       });
       
