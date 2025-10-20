@@ -209,6 +209,11 @@ let multiAccountExecutor: CleanMultiAccountExecutor | null = null;
 let mt5AccountsData: any[] = [];
 let mt5LastUpdate = 0;
 
+// Logging throttle timestamps to reduce console spam
+let lastNoExecutorLog = 0;
+let lastDisconnectLog = 0;
+let lastSuccessfulUpdate = 0;
+
 // Import the shared executor instance
 export const setSharedExecutor = (executor: CleanMultiAccountExecutor) => {
   multiAccountExecutor = executor;
@@ -257,32 +262,37 @@ const initializeMT5 = async () => {
 // Update MT5 data periodically
 const updateMT5Data = async () => {
   if (!multiAccountExecutor) {
-    console.log('🔍 [Dashboard] No MT5 executor available');
+    // Reduced logging - only log once every 10 minutes
+    if (!lastNoExecutorLog || Date.now() - lastNoExecutorLog > 600000) {
+      console.log('🔍 [Dashboard] No MT5 executor available');
+      lastNoExecutorLog = Date.now();
+    }
     return;
   }
   
   try {
     const isConnected = await multiAccountExecutor.isConnected();
-    console.log(`🔍 [Dashboard] MT5 Connection Status: ${isConnected}`);
     
     if (!isConnected) {
-      console.log('🔍 [Dashboard] MT5 not connected, skipping data update');
+      // Only log connection issues, not every check
+      if (!lastDisconnectLog || Date.now() - lastDisconnectLog > 300000) {
+        console.log('⚠️ [Dashboard] MT5 not connected, skipping data update');
+        lastDisconnectLog = Date.now();
+      }
       return;
     }
     
-    console.log('🔍 [Dashboard] Fetching account data from MT5 executor...');
-    
     // Get all accounts data (includes balance, equity, positions, etc.)
     const accountsData = await multiAccountExecutor.getAllAccountsData();
-    console.log(`🔍 [Dashboard] Received ${accountsData.length} accounts data:`, 
-      accountsData.map(acc => ({ 
-        brokerName: acc.brokerName, 
-        status: acc.status, 
-        tradingReady: acc.tradingReady,
-        balance: acc.balance,
-        error: (acc as any).error || null
-      }))
-    );
+    
+    // Only log if data changed or every 5 minutes
+    const dataChanged = JSON.stringify(accountsData) !== JSON.stringify(mt5AccountsData);
+    const shouldLog = dataChanged || !lastSuccessfulUpdate || Date.now() - lastSuccessfulUpdate > 300000;
+    
+    if (shouldLog) {
+      console.log(`✅ [Dashboard] MT5 data updated: ${accountsData.length} accounts, Balance: $${accountsData[0]?.balance?.toFixed(2) || 0}`);
+      lastSuccessfulUpdate = Date.now();
+    }
     
     mt5AccountsData = accountsData.map((account: any) => ({
       ...account,
@@ -290,7 +300,6 @@ const updateMT5Data = async () => {
     }));
     
     mt5LastUpdate = Date.now();
-    console.log('✅ [Dashboard] MT5 account data updated successfully');
     
   } catch (error) {
     console.error('❌ [Dashboard] Error updating Multi-Account MT5 data:', error);
