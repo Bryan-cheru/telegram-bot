@@ -64,6 +64,12 @@ export class CleanMLIntegration {
       lowerText.includes(indicator)
     ).length;
     
+    // 🎯 BITCOIN-SPECIFIC: Always use ML for BTCUSD to detect grey-highlighted scale
+    if (lowerText.includes('bitcoin') || lowerText.includes('btc') || lowerText.includes('btcusd')) {
+      logger.debug('🔍 Bitcoin signal detected - routing to ML for grey entry detection');
+      return true;
+    }
+    
     // Use ML if multiple indicators present
     return indicatorCount >= 2;
   }

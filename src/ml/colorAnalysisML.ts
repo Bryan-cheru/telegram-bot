@@ -199,6 +199,34 @@ export class ChartColorAnalysisML {
   private static identifyGreyEntryZone(sortedPrices: number[], ocrText: string): { min: number; max: number; confidence: number } | null {
     if (sortedPrices.length < 1) return null;
 
+    // 🎯 BITCOIN-SPECIFIC: Detect grey-highlighted current price on scale (e.g., 108,105.64)
+    // This is a dynamic pattern that matches any 5-6 digit Bitcoin price with decimals
+    const btcGreyPricePattern = /\b([1-9]\d{2}[,.]?\d{3}[,.]?\d{2})\b/g;
+    const btcGreyMatches = [...ocrText.matchAll(btcGreyPricePattern)];
+    
+    if (btcGreyMatches.length > 0) {
+      // Find the grey-highlighted price that appears in our sorted prices
+      for (const match of btcGreyMatches) {
+        const greyPrice = parseFloat(match[1].replace(/,/g, ''));
+        
+        // Check if this price exists in our extracted prices or is very close to one
+        const closestPrice = sortedPrices.find(p => Math.abs(p - greyPrice) < 100);
+        
+        if (sortedPrices.includes(greyPrice) || closestPrice) {
+          const entryPrice = sortedPrices.includes(greyPrice) ? greyPrice : closestPrice!;
+          logger.info(`🎯 BTC grey-highlighted entry price detected: ${entryPrice}`);
+          
+          // For single grey-highlighted price, use a tight buffer
+          const buffer = entryPrice * 0.0005; // 0.05% buffer
+          return {
+            min: entryPrice - buffer,
+            max: entryPrice + buffer,
+            confidence: 0.98 // Very high confidence for exact grey highlight match
+          };
+        }
+      }
+    }
+
     // 🎯 ENHANCED: Single Grey Level Detection (for precise chart scale levels)
     // Look for specific price context that indicates a single entry level
     const singleEntryPattern = /(?:entry|level|grey|gray|zone).*?(\d{4,6}\.\d{2,5})/gi;
@@ -539,6 +567,9 @@ export class ChartColorAnalysisML {
     if (symbol.includes('XAUUSD') || symbol.includes('GOLD')) {
       return /\b([1-4]\d{3}\.?\d{0,3})\b/g; // Gold: 2450.50, 3475.040
     }
+    if (symbol.includes('BTC') || symbol.includes('BITCOIN')) {
+      return /\b([1-9]\d{2}[,.]?\d{3}[,.]?\d{0,2})\b/g; // Bitcoin: 108,105.64, 101439.42
+    }
     if (symbol.includes('USDCHF') || symbol.includes('CHF')) {
       return /\b(0\.[78]\d{3,5})\b/g; // USDCHF: 0.8654, 0.8665.94
     }
@@ -574,6 +605,10 @@ export class ChartColorAnalysisML {
     
     if (symbol.includes('XAU') || symbol.includes('GOLD')) {
       return { min: 1000, max: 4000 }; // Gold can vary significantly
+    }
+    
+    if (symbol.includes('BTC') || symbol.includes('BITCOIN')) {
+      return { min: 10000, max: 500000 }; // Bitcoin: wide range for volatility
     }
     
     // For all other forex pairs (EUR, GBP, AUD, etc.)
