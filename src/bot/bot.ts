@@ -8,6 +8,7 @@ import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 import { EnhancedMetaApiService } from '../services/EnhancedMetaApiService';
 import { ValidationService } from '../shared';
+import { ManualSignalParser } from '../services/ManualSignalParser';
 
 export class TelegramBot {
   private bot: Telegraf;
@@ -15,6 +16,7 @@ export class TelegramBot {
   // private photoHandler: ModernizedPhotoHandler; // Disabled complex handler
   private tradeExecutor: ITradeExecutor;
   private enhancedService: EnhancedMetaApiService;
+  private manualSignalParser: ManualSignalParser;
 
   constructor() {
     this.bot = new Telegraf(config.botToken);
@@ -31,6 +33,10 @@ export class TelegramBot {
     
     this.messageHandler = new MessageHandler();
     // this.photoHandler = new ModernizedPhotoHandler(this.tradeExecutor); // Disabled complex handler
+    
+    // Initialize manual signal parser with configuration
+    this.manualSignalParser = new ManualSignalParser();
+    logger.info('✅ Manual signal parser initialized');
     
     this.setupHandlers();
   }
@@ -270,9 +276,24 @@ export class TelegramBot {
       logger.info('📨 Processing text message for trading signal');
       logger.debug('Message text:', text);
 
-      // 🎯 Check if this is a manual trading command first
+      // 🎯 PRIORITY 1: Check for ultra-simple manual signal format: "XAGUSD BUY 50.9207"
+      const manualSignal = this.manualSignalParser.parseSignal(text);
+      if (manualSignal) {
+        logger.info('✅ Manual signal detected - requesting confirmation');
+        
+        // Generate confirmation message
+        const confirmationMsg = this.manualSignalParser.generateConfirmationMessage(manualSignal);
+        await ctx.reply(confirmationMsg);
+        
+        // TODO: Add confirmation handler (wait for user to reply ✅ CONFIRM or ❌ CANCEL)
+        // For now, just log that we would execute
+        logger.info(`📋 Manual signal ready for execution:`, manualSignal);
+        return;
+      }
+
+      // 🎯 PRIORITY 2: Check if this is a manual trading command (OLD FORMAT)
       if (MessageHandler.isManualTradingCommand(text)) {
-        logger.info('🎯 Manual trading command detected');
+        logger.info('🎯 Manual trading command detected (legacy format)');
         await this.messageHandler.handleManualCommand(ctx, text, this.tradeExecutor);
         return;
       }
