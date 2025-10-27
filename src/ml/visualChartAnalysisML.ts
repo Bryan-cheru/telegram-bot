@@ -124,6 +124,129 @@ export class VisualChartAnalysisML {
   }
 
   /**
+   * CRITICAL FOR SILVER: Extract grey-highlighted entry price region directly
+   * This method finds and extracts ONLY the grey-highlighted area, increases contrast,
+   * and runs targeted OCR to find 4-decimal prices like 50.9207
+   */
+  private async extractGreyHighlightedEntryPrice(
+    imageBuffer: Buffer,
+    scaleRegion: ChartRegion,
+    metadata: any
+  ): Promise<number[]> {
+    logger.info('🎯 EXTRACTING GREY-HIGHLIGHTED ENTRY PRICE REGION...');
+    
+    try {
+      // Get raw RGB data from the scale region
+      const { data, info } = await sharp(imageBuffer)
+        .extract({
+          left: scaleRegion.x,
+          top: scaleRegion.y,
+          width: scaleRegion.width,
+          height: scaleRegion.height
+        })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const { width, height, channels } = info;
+      const pixelData = Buffer.allocUnsafe(width * height * channels);
+
+      // Copy only pixels in grey ranges (Silver's tan/beige entry highlight)
+      const greyMask: boolean[] = new Array(width * height).fill(false);
+      
+      // Silver grey-highlight ranges (tan/beige on light background)
+      const greyRanges = [
+        // Tan/Beige (most common Silver entry highlight)
+        { r: [180, 220], g: [165, 205], b: [145, 185] },
+        // Light tan
+        { r: [200, 235], g: [185, 220], b: [165, 200] },
+        // Medium grey (alternative Silver themes)
+        { r: [140, 180], g: [140, 180], b: [140, 180] },
+        // Slightly darker grey
+        { r: [100, 160], g: [100, 160], b: [100, 160] }
+      ];
+
+      let greyPixelCount = 0;
+      for (let i = 0; i < data.length; i += channels) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const pixelIdx = i / channels;
+
+        // Check if this pixel is in any grey range
+        const isGrey = greyRanges.some(range =>
+          r >= range.r[0] && r <= range.r[1] &&
+          g >= range.g[0] && g <= range.g[1] &&
+          b >= range.b[0] && b <= range.b[1]
+        );
+
+        if (isGrey) {
+          greyMask[pixelIdx] = true;
+          greyPixelCount++;
+          // Copy pixel with extreme contrast boost for OCR
+          pixelData[i] = r < 128 ? 0 : 255; // Binarize
+          pixelData[i + 1] = g < 128 ? 0 : 255;
+          pixelData[i + 2] = b < 128 ? 0 : 255;
+        } else {
+          // Set non-grey pixels to white for OCR background
+          pixelData[i] = 255;
+          pixelData[i + 1] = 255;
+          pixelData[i + 2] = 255;
+        }
+      }
+
+      logger.info(`🔍 Found ${greyPixelCount} grey-highlighted pixels in region`);
+
+      if (greyPixelCount < 100) {
+        logger.warn('⚠️  Too few grey pixels detected, skipping grey extraction');
+        return [];
+      }
+
+      // Convert masked data to image and upscale
+      const greyHighlightImage = await sharp(pixelData, {
+        raw: { width, height, channels: 3 }
+      })
+        .resize(width * 4, height * 4, { // 4x upscale for better OCR
+          kernel: sharp.kernel.lanczos3,
+          fit: 'fill'
+        })
+        .greyscale()
+        .normalize()
+        .sharpen({ sigma: 3.0 }) // Extra sharp for text
+        .png()
+        .toBuffer();
+
+      // Run OCR on grey-highlighted region only
+      const worker = await Tesseract.createWorker('eng');
+      await worker.setParameters({
+        tessedit_char_whitelist: '0123456789.,-',
+        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
+      });
+
+      const ocrResult = await worker.recognize(greyHighlightImage);
+      await worker.terminate();
+
+      logger.info(`📝 Grey region OCR text: "${ocrResult.data.text.trim()}"`);
+
+      // Extract 4-decimal Silver prices from this region
+      const silverPattern = /\b([4-6][0-9]\.\d{4})\b/g;
+      const matches = ocrResult.data.text.match(silverPattern) || [];
+      const prices = matches.map(m => parseFloat(m));
+
+      if (prices.length > 0) {
+        logger.info(`✅ FOUND GREY-HIGHLIGHTED PRICES: [${prices.join(', ')}]`);
+        return prices;
+      }
+
+      logger.warn('⚠️  No 4-decimal prices found in grey region');
+      return [];
+
+    } catch (error) {
+      logger.warn('⚠️  Grey highlight extraction error:', error);
+      return [];
+    }
+  }
+
+  /**
    * Detect the price scale region (usually right side of chart)
    */
   private async detectPriceScaleRegion(imageBuffer: Buffer, metadata: any, symbol?: string): Promise<{
@@ -143,45 +266,140 @@ export class VisualChartAnalysisML {
 
     logger.info(`🔍 Extracting price scale region: ${scaleRegion.x},${scaleRegion.y} (${scaleRegion.width}x${scaleRegion.height})`);
 
-    // Extract just the price scale area for OCR analysis with upscaling
-    const scaleImage = await sharp(imageBuffer)
+    // CRITICAL: For Silver, try to extract 4-decimal prices from grey-highlighted regions FIRST
+    if (symbol?.includes('XAG') || symbol?.includes('SILVER') || /silver|xag/i.test(symbol || '')) {
+      logger.info('🎯 SILVER DETECTED: Attempting to extract 4-decimal entry price from highlighted region...');
+      
+      try {
+        const greyHighlightPrices = await this.extractGreyHighlightedEntryPrice(imageBuffer, scaleRegion, metadata);
+        if (greyHighlightPrices && greyHighlightPrices.length > 0) {
+          logger.info(`✅ FOUND 4-DECIMAL SILVER ENTRY: ${greyHighlightPrices[0]}`);
+          
+          // Create a synthetic scale with this price as the entry
+          const entryPrice = greyHighlightPrices[0];
+          const minPrice = entryPrice - 5;
+          const maxPrice = entryPrice + 5;
+          const pixelsPerPip = scaleRegion.height / (maxPrice - minPrice);
+          
+          return {
+            minPrice,
+            maxPrice,
+            pixelsPerPip,
+            scaleRegion
+          };
+        }
+      } catch (err) {
+        logger.warn('⚠️  Grey highlight extraction failed, continuing with standard OCR:', err);
+      }
+    }
+
+    // Extract and upscale the price scale region (base image for multi-threshold OCR)
+    const baseScaleImage = await sharp(imageBuffer)
       .extract({
         left: scaleRegion.x,
         top: scaleRegion.y,
         width: scaleRegion.width,
         height: scaleRegion.height
       })
-      .resize(scaleRegion.width * 3, scaleRegion.height * 3, { // 3x upscale for better OCR
+      .resize(scaleRegion.width * 5, scaleRegion.height * 5, { // 5x upscale
         kernel: sharp.kernel.lanczos3,
         fit: 'fill'
       })
-      .normalize() // Normalize contrast to make grey text more readable
-      .sharpen({ sigma: 2 }) // Enhanced sharpening for text clarity
-      .png()
       .toBuffer();
 
-    // Use OCR to read price values from scale with optimized settings
-    let prices: number[] = [];
+    // MULTI-THRESHOLD OCR STRATEGY: Run OCR 3 times with different thresholds
+    // This captures text on ANY background: white, dark, beige, tan, grey, etc.
+    logger.info('🔍 Running MULTI-THRESHOLD OCR to capture all price text...');
     
-    try {
-      const worker = await Tesseract.createWorker('eng');
-      
-      // Configure for numbers only (including commas for Bitcoin prices like 108,105.64)
-      await worker.setParameters({
-        tessedit_char_whitelist: '0123456789.,',
-        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
-      });
-      
-      const ocrResult = await worker.recognize(scaleImage);
-      await worker.terminate();
-      
-      logger.info(`📖 Scale OCR confidence: ${(ocrResult.data.confidence || 0).toFixed(1)}%`);
-      prices = this.extractPricesFromText(ocrResult.data.text, symbol);
-      
-    } catch (ocrError) {
-      logger.error('OCR failed, falling back to default price extraction:', ocrError);
-      const fallbackResult = await this.textExtractor.extractTextFromImage(scaleImage);
-      prices = this.extractPricesFromText(fallbackResult.text, symbol);
+    let allPrices: number[] = [];
+    const thresholds = [
+      { value: 60, desc: 'Very Low (for light tan/beige backgrounds)' },
+      { value: 100, desc: 'Medium (for grey backgrounds)' },
+      { value: 140, desc: 'High (for white text on dark backgrounds)' }
+    ];
+
+    for (const threshold of thresholds) {
+      try {
+        // Create threshold-specific processed image
+        const processedImage = await sharp(baseScaleImage)
+          .greyscale()
+          .normalise() // Force full contrast range
+          .linear(1.5, -(128 * 0.5)) // Boost contrast
+          .threshold(threshold.value)
+          .negate() // Black text on white background
+          .sharpen({ sigma: 2.0 })
+          .png()
+          .toBuffer();
+
+        // DEBUG: Save first threshold result
+        if (threshold.value === 60) {
+          try {
+            await sharp(processedImage).toFile('./debug_scale_ocr_threshold60.png');
+            logger.info('🔍 DEBUG: Saved threshold=60 processed image');
+          } catch (e) {
+            // Ignore debug errors
+          }
+        }
+
+        // Run OCR on this threshold version
+        const worker = await Tesseract.createWorker('eng');
+        await worker.setParameters({
+          tessedit_char_whitelist: '0123456789.,',
+          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
+        });
+        
+        const ocrResult = await worker.recognize(processedImage);
+        await worker.terminate();
+        
+        const thresholdPrices = this.extractPricesFromText(ocrResult.data.text, symbol);
+        
+        if (thresholdPrices.length > 0) {
+          logger.info(`✅ Threshold ${threshold.value} (${threshold.desc}): Found ${thresholdPrices.length} prices: [${thresholdPrices.join(', ')}]`);
+          allPrices = [...allPrices, ...thresholdPrices];
+        } else {
+          logger.info(`⚪ Threshold ${threshold.value} (${threshold.desc}): No prices found`);
+        }
+      } catch (thresholdError) {
+        logger.warn(`⚠️  Threshold ${threshold.value} OCR failed:`, thresholdError);
+      }
+    }
+
+    // Remove duplicates and sort
+    let prices = [...new Set(allPrices)].sort((a, b) => b - a);
+    logger.info(`📊 MULTI-THRESHOLD RESULT: Combined ${prices.length} unique prices: [${prices.join(', ')}]`);
+    
+    // Use OCR to read price values from scale with optimized settings
+    
+    if (prices.length === 0) {
+      logger.warn('⚠️  Multi-threshold OCR found no prices, trying fallback single-pass OCR...');
+      try {
+        const fallbackImage = await sharp(baseScaleImage)
+          .greyscale()
+          .normalize()
+          .threshold(120)
+          .negate()
+          .sharpen()
+          .toBuffer();
+        
+        const worker = await Tesseract.createWorker('eng');
+        await worker.setParameters({
+          tessedit_char_whitelist: '0123456789.,',
+          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
+        });
+        
+        const ocrResult = await worker.recognize(fallbackImage);
+        await worker.terminate();
+        
+        logger.info(`� Fallback OCR confidence: ${(ocrResult.data.confidence || 0).toFixed(1)}%`);
+        const fallbackPrices = this.extractPricesFromText(ocrResult.data.text, symbol);
+        
+        if (fallbackPrices.length > 0) {
+          logger.info(`✅ Fallback found ${fallbackPrices.length} prices`);
+          prices.push(...fallbackPrices);
+        }
+      } catch (fallbackError) {
+        logger.error('❌ Fallback OCR also failed:', fallbackError);
+      }
     }
     
     if (prices.length < 2) {
@@ -278,19 +496,35 @@ export class VisualChartAnalysisML {
 
     // ENHANCED color ranges for better detection across different chart themes
     const colorRanges = {
-      // PRIORITY 1: Grey highlighted price scale (entry zones) - MOST IMPORTANT
+      // PRIORITY 1: Beige/Tan highlights (Silver charts with light tan backgrounds - MOST IMPORTANT!)
+      beige: {
+        r: { min: 180, max: 210 },
+        g: { min: 165, max: 195 },
+        b: { min: 145, max: 175 }
+      },
+      tan: {
+        r: { min: 190, max: 220 },
+        g: { min: 175, max: 205 },
+        b: { min: 155, max: 185 }
+      },
+      lightTan: {
+        r: { min: 200, max: 230 },
+        g: { min: 185, max: 215 },
+        b: { min: 165, max: 195 }
+      },
+      // PRIORITY 2: Grey highlighted price scale (entry zones) - Common for Gold/Bitcoin
       primaryGrey: {
         r: { min: 120, max: 160 },
         g: { min: 120, max: 160 },
         b: { min: 120, max: 160 }
       },
-      // PRIORITY 2: Dark grey highlighted areas
+      // PRIORITY 3: Dark grey highlighted areas
       darkGrey: {
         r: { min: 80, max: 140 },
         g: { min: 80, max: 140 },
         b: { min: 80, max: 140 }
       },
-      // PRIORITY 3: Very dark highlighted scale areas
+      // PRIORITY 4: Very dark highlighted scale areas
       veryDarkGrey: {
         r: { min: 60, max: 110 },
         g: { min: 60, max: 110 },
@@ -455,7 +689,25 @@ export class VisualChartAnalysisML {
     logger.info('📝 Extracting zones from OCR text...');
     
     const zones: ColorZone[] = [];
-    const prices = this.extractPricesFromText(ocrText, symbol);
+    let prices = this.extractPricesFromText(ocrText, symbol);
+    
+    // CRITICAL FIX FOR SILVER: Extract the grey-highlighted entry price directly
+    if (symbol?.includes('XAG') || symbol?.includes('SILVER') || /silver|xag/i.test(ocrText)) {
+      logger.info('🎯 SILVER DETECTED: Attempting direct grey zone price extraction...');
+      
+      // Look for 4-decimal Silver prices like 50.9207, 51.8610, etc.
+      const silverPattern = /\b([4-6][0-9]\.\d{4})\b/g;
+      const silverMatches = ocrText.match(silverPattern) || [];
+      
+      if (silverMatches.length > 0) {
+        const silverPrices = silverMatches.map(m => parseFloat(m));
+        logger.info(`✅ SILVER ENTRY PRICES FOUND: [${silverPrices.join(', ')}]`);
+        prices = [...prices, ...silverPrices];
+        prices = [...new Set(prices)]; // Remove duplicates
+      } else {
+        logger.warn('⚠️ No 4-decimal Silver prices found, using regular extraction');
+      }
+    }
     
     if (prices.length === 0) {
       logger.warn('❌ No prices found in OCR text');
@@ -508,9 +760,10 @@ export class VisualChartAnalysisML {
     const isJPYPair = /JPY|jpy/i.test(detectedSymbol || text);
     const isGoldPair = /XAU|GOLD|gold/i.test(detectedSymbol || text);
     const isBitcoinPair = /BTC|BITCOIN|bitcoin/i.test(detectedSymbol || text);
+    const isSilverPair = /XAG|SILVER|silver/i.test(detectedSymbol || text);
     const isMajorForex = /EUR|GBP|USD|AUD|CAD|NZD|CHF/i.test(detectedSymbol || text);
     
-    logger.info(`💰 Detected instrument: ${detectedSymbol} (context: ${isJPYPair ? 'JPY' : isGoldPair ? 'Gold' : isBitcoinPair ? 'Bitcoin' : isMajorForex ? 'Forex' : 'Generic'})`);
+    logger.info(`💰 Detected instrument: ${detectedSymbol} (context: ${isJPYPair ? 'JPY' : isGoldPair ? 'Gold' : isBitcoinPair ? 'Bitcoin' : isSilverPair ? 'Silver' : isMajorForex ? 'Forex' : 'Generic'})`);
     
     let pricePatterns: RegExp[];
     
@@ -535,6 +788,13 @@ export class VisualChartAnalysisML {
       pricePatterns = [
         /\b[2-3][0-9]{3}\.\d{0,2}\b/g, // 2000-3999.xx
         /\b[1-4][0-9]{3}\b/g           // 1000-4999 (no decimal)
+      ];
+    } else if (isSilverPair) {
+      // Silver: 15-80 range typically (e.g., 50.9207, 51.8610)
+      pricePatterns = [
+        /\b[1-8][0-9]\.\d{4}\b/g,      // 10-89.xxxx (4 decimals like 50.9207)
+        /\b[4-6][0-9]\.\d{2,4}\b/g,    // 40-69.xx to 69.xxxx (Silver range)
+        /\b[1-8][0-9]\.\d{1,2}00\b/g   // 10-89.x000 (like 54.0000, 50.5000)
       ];
     } else if (isMajorForex) {
       // Major forex: 0.5000-2.0000 range
@@ -815,6 +1075,209 @@ export class VisualChartAnalysisML {
   }
 
   /**
+   * Extract prices from colored highlight regions using color masking
+   * This is the ROBUST solution for grey/beige/tan backgrounds that OCR misses
+   */
+  private async extractColoredHighlightPrices(
+    imageBuffer: Buffer,
+    scaleRegion: ChartRegion,
+    symbol?: string
+  ): Promise<number[]> {
+    try {
+      logger.info('🎨 COLOR EXTRACTION: Scanning for beige/tan/grey highlighted price regions...');
+      
+      // Extract scale region
+      const scaleBuffer = await sharp(imageBuffer)
+        .extract({
+          left: scaleRegion.x,
+          top: scaleRegion.y,
+          width: scaleRegion.width,
+          height: scaleRegion.height
+        })
+        .toBuffer();
+      
+      // Get raw pixel data
+      const { data, info } = await sharp(scaleBuffer)
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      
+      logger.info(`🔍 Analyzing ${info.width}x${info.height} pixels for colored highlights...`);
+      
+      // Scan for colored regions (beige/tan/grey backgrounds)
+      const coloredRegions: { y: number; height: number; avgColor: { r: number; g: number; b: number } }[] = [];
+      const rowColors: { [key: number]: { r: number; g: number; b: number; count: number } } = {};
+      
+      // Analyze each pixel to find colored rows
+      for (let y = 0; y < info.height; y++) {
+        let rSum = 0, gSum = 0, bSum = 0, coloredCount = 0;
+        
+        for (let x = 0; x < info.width; x++) {
+          const idx = (y * info.width + x) * info.channels;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          
+          // Detect beige/tan/grey colored pixels (NOT pure white/black/dark grey)
+          // Beige: R:180-220, G:170-210, B:150-190
+          // Grey highlight: R:100-180, G:180-230, B:200-240
+          const isBeigeTan = (
+            r >= 180 && r <= 220 &&
+            g >= 170 && g <= 210 &&
+            b >= 150 && b <= 190
+          );
+          
+          const isGreyHighlight = (
+            r >= 100 && r <= 180 &&
+            g >= 180 && g <= 230 &&
+            b >= 200 && b <= 240
+          );
+          
+          if (isBeigeTan || isGreyHighlight) {
+            rSum += r;
+            gSum += g;
+            bSum += b;
+            coloredCount++;
+          }
+        }
+        
+        // If >30% of row has colored pixels, mark it
+        if (coloredCount > info.width * 0.3) {
+          rowColors[y] = {
+            r: rSum / coloredCount,
+            g: gSum / coloredCount,
+            b: bSum / coloredCount,
+            count: coloredCount
+          };
+        }
+      }
+      
+      logger.info(`🎨 Found ${Object.keys(rowColors).length} rows with colored backgrounds`);
+      
+      // Group consecutive colored rows into regions
+      const coloredRows = Object.keys(rowColors).map(Number).sort((a, b) => a - b);
+      let currentRegion: { start: number; end: number } | null = null;
+      
+      for (let i = 0; i < coloredRows.length; i++) {
+        const y = coloredRows[i];
+        
+        if (!currentRegion) {
+          currentRegion = { start: y, end: y };
+        } else if (y <= currentRegion.end + 3) { // Allow 3px gaps
+          currentRegion.end = y;
+        } else {
+          // Save current region
+          if (currentRegion.end - currentRegion.start >= 8) { // At least 8px tall
+            const regionY = currentRegion.start;
+            const regionHeight = currentRegion.end - currentRegion.start + 1;
+            
+            // Calculate average color
+            let rAvg = 0, gAvg = 0, bAvg = 0, count = 0;
+            for (let row = currentRegion.start; row <= currentRegion.end; row++) {
+              if (rowColors[row]) {
+                rAvg += rowColors[row].r;
+                gAvg += rowColors[row].g;
+                bAvg += rowColors[row].b;
+                count++;
+              }
+            }
+            
+            coloredRegions.push({
+              y: regionY,
+              height: regionHeight,
+              avgColor: { r: rAvg / count, g: gAvg / count, b: bAvg / count }
+            });
+          }
+          
+          currentRegion = { start: y, end: y };
+        }
+      }
+      
+      // Handle last region
+      if (currentRegion && currentRegion.end - currentRegion.start >= 8) {
+        const regionY = currentRegion.start;
+        const regionHeight = currentRegion.end - currentRegion.start + 1;
+        
+        let rAvg = 0, gAvg = 0, bAvg = 0, count = 0;
+        for (let row = currentRegion.start; row <= currentRegion.end; row++) {
+          if (rowColors[row]) {
+            rAvg += rowColors[row].r;
+            gAvg += rowColors[row].g;
+            bAvg += rowColors[row].b;
+            count++;
+          }
+        }
+        
+        coloredRegions.push({
+          y: regionY,
+          height: regionHeight,
+          avgColor: { r: rAvg / count, g: gAvg / count, b: bAvg / count }
+        });
+      }
+      
+      logger.info(`📍 Found ${coloredRegions.length} colored highlight regions`);
+      
+      // Extract and OCR each colored region
+      const extractedPrices: number[] = [];
+      
+      for (let i = 0; i < coloredRegions.length; i++) {
+        const region = coloredRegions[i];
+        
+        try {
+          logger.info(`🔍 Region ${i + 1}: y=${region.y}, h=${region.height}, color=rgb(${Math.round(region.avgColor.r)},${Math.round(region.avgColor.g)},${Math.round(region.avgColor.b)})`);
+          
+          // Extract just this colored region with aggressive preprocessing
+          const regionBuffer = await sharp(scaleBuffer)
+            .extract({
+              left: 0,
+              top: region.y,
+              width: info.width,
+              height: region.height
+            })
+            .resize(info.width * 5, region.height * 5, { // 5x upscale
+              kernel: sharp.kernel.lanczos3,
+              fit: 'fill'
+            })
+            .greyscale()
+            .normalise() // Force full contrast
+            .linear(2.0, -(128 * 1.0)) // VERY aggressive contrast
+            .threshold(100) // Adaptive threshold
+            .negate()
+            .sharpen({ sigma: 2.5 })
+            .toBuffer();
+          
+          // OCR the region
+          const worker = await Tesseract.createWorker('eng');
+          await worker.setParameters({
+            tessedit_char_whitelist: '0123456789.,',
+            tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE
+          });
+          
+          const ocrResult = await worker.recognize(regionBuffer);
+          await worker.terminate();
+          
+          // Extract prices
+          const prices = this.extractPricesFromText(ocrResult.data.text, symbol);
+          if (prices.length > 0) {
+            logger.info(`✅ COLOR REGION ${i + 1}: "${ocrResult.data.text.trim()}" → ${prices[0]}`);
+            extractedPrices.push(...prices);
+          } else {
+            logger.warn(`⚠️  COLOR REGION ${i + 1}: No prices found in "${ocrResult.data.text.trim()}"`);
+          }
+        } catch (err) {
+          logger.warn(`⚠️  Failed to process colored region ${i + 1}:`, err);
+        }
+      }
+      
+      logger.info(`🎯 COLOR EXTRACTION COMPLETE: Found ${extractedPrices.length} prices: [${extractedPrices.join(', ')}]`);
+      return [...new Set(extractedPrices)];
+      
+    } catch (error) {
+      logger.error('❌ Color-based extraction failed:', error);
+      return [];
+    }
+  }
+
+  /**
    * Group nearby color zones to reduce noise
    */
   private groupNearbyZones(zones: ColorZone[], priceScale: any): ColorZone[] {
@@ -907,6 +1370,10 @@ export class VisualChartAnalysisML {
    */
   private mapToMainColorType(colorType: string): 'grey' | 'green' | 'red' {
     const colorMapping: { [key: string]: 'grey' | 'green' | 'red' } = {
+      // Beige/tan detection for Silver entry zones (CRITICAL!)
+      'beige': 'grey',
+      'tan': 'grey',
+      'lightTan': 'grey',
       // Enhanced grey detection for entry zones
       'grey': 'grey',
       'primaryGrey': 'grey',

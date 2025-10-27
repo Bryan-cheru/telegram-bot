@@ -233,28 +233,24 @@ export class SmartMLRouter {
       
       if (mlResult.confidence > 0.7 && mlResult.greyEntryZones.length > 0) {
         // Convert ML result to trading signal
-        const greyPrices = mlResult.greyEntryZones.map(z => z.price);
-        const minPrice = Math.min(...greyPrices);
-        const maxPrice = Math.max(...greyPrices);
+        // 🎯 FIX: Instead of averaging ALL grey zones, use the MOST PROMINENT one
+        // Sort grey zones by confidence and use the highest confidence zone as entry
+        const sortedGreyZones = [...mlResult.greyEntryZones].sort((a, b) => b.confidence - a.confidence);
+        const mostProminentZone = sortedGreyZones[0];
         
-        // 🚨 FIX: Handle single-zone scenario
-        let entryZone: { min: number; max: number };
+        logger.info(`🎯 Using most prominent grey zone: ${mostProminentZone.price.toFixed(5)} (confidence: ${mostProminentZone.confidence.toFixed(2)})`);
+        logger.info(`📊 Total grey zones detected: ${mlResult.greyEntryZones.length}, ignoring ${mlResult.greyEntryZones.length - 1} lower confidence zones`);
         
-        if (minPrice === maxPrice || greyPrices.length === 1) {
-          // Single zone detected - create a small range around the price
-          const zoneSize = minPrice * 0.001; // 0.1% zone around detected price
-          entryZone = {
-            min: minPrice - zoneSize,
-            max: minPrice + zoneSize
-          };
-          logger.info(`🔧 Single grey zone detected, creating entry range: ${entryZone.min.toFixed(5)} - ${entryZone.max.toFixed(5)}`);
-        } else {
-          // Multiple zones - use min/max range
-          entryZone = {
-            min: minPrice,
-            max: maxPrice
-          };
-        }
+        // Create a small range around the most prominent price (grey-highlighted current price)
+        const entryPrice = mostProminentZone.price;
+        const zoneSize = entryPrice * 0.001; // 0.1% zone around detected price
+        const entryZone = {
+          min: entryPrice - zoneSize,
+          max: entryPrice + zoneSize
+        };
+        
+        logger.info(`✅ Entry zone set to: ${entryZone.min.toFixed(5)} - ${entryZone.max.toFixed(5)} (centered on ${entryPrice.toFixed(5)})`);
+      
         
         // 🚨 FIX: Ensure stop loss and targets are properly positioned
         const avgEntry = (entryZone.min + entryZone.max) / 2;
