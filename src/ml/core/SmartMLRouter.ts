@@ -267,64 +267,58 @@ export class SmartMLRouter {
           }
         }
         
+        // Get symbol early for SL/TP calculations
+        const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
+        
         let stopLoss: number;
         let targets: number[];
         
         if (mlResult.redStopZones.length > 0) {
           stopLoss = mlResult.redStopZones[0].price;
         } else {
-          stopLoss = this.calculateStopLoss(entryZone, direction);
+          stopLoss = this.calculateStopLoss(entryZone, direction, symbol);
         }
         
         if (mlResult.greenTargetZones.length > 0) {
           targets = mlResult.greenTargetZones.map(z => z.price);
         } else {
-          targets = this.calculateTargets(entryZone, direction);
+          targets = this.calculateTargets(entryZone, direction, symbol);
         }
         
         // 🔧 VALIDATION: Ensure stop loss and targets make logical sense
         if (direction === 'SELL') {
           // For SELL: stop loss should be ABOVE entry, targets should be BELOW entry
           if (stopLoss <= avgEntry) {
-            // Use $900 risk calculation for SELL stop loss
-            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
-            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
-            stopLoss = avgEntry + pipDistanceFor900;
-            logger.warn(`⚠️ Adjusting SELL stop loss from ${mlResult.redStopZones[0]?.price} to ${stopLoss} ($900 risk with 0.45 lots)`);
+            // Recalculate using new method
+            stopLoss = this.calculateStopLoss(entryZone, direction, symbol);
+            logger.warn(`⚠️ Adjusting SELL stop loss to ${stopLoss} ($1000 risk with 0.65 lots)`);
           }
           
           // Ensure targets are below entry
           targets = targets.filter(t => t < avgEntry);
           if (targets.length === 0) {
-            // Use $900 profit target calculation for SELL
-            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
-            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
-            targets = [avgEntry - pipDistanceFor900];
-            logger.warn(`⚠️ No valid SELL targets, creating target at ${targets[0]} ($900 profit with 0.45 lots)`);
+            // Use new calculation method
+            targets = this.calculateTargets(entryZone, direction, symbol);
+            logger.warn(`⚠️ No valid SELL targets, creating target at ${targets[0]} ($1500 profit with 0.65 lots)`);
           }
         } else {
           // For BUY: stop loss should be BELOW entry, targets should be ABOVE entry  
           if (stopLoss >= avgEntry) {
-            // Use $900 risk calculation for BUY stop loss
-            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
-            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
-            stopLoss = avgEntry - pipDistanceFor900;
-            logger.warn(`⚠️ Adjusting BUY stop loss to ${stopLoss} ($900 risk with 0.45 lots)`);
+            // Recalculate using new method
+            stopLoss = this.calculateStopLoss(entryZone, direction, symbol);
+            logger.warn(`⚠️ Adjusting BUY stop loss to ${stopLoss} ($1000 risk with 0.65 lots)`);
           }
           
           // Ensure targets are above entry
           targets = targets.filter(t => t > avgEntry);
           if (targets.length === 0) {
-            // Use $900 profit target calculation for BUY
-            const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
-            const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
-            targets = [avgEntry + pipDistanceFor900];
-            logger.warn(`⚠️ No valid BUY targets, creating target at ${targets[0]} ($900 profit with 0.45 lots)`);
+            // Use new calculation method
+            targets = this.calculateTargets(entryZone, direction, symbol);
+            logger.warn(`⚠️ No valid BUY targets, creating target at ${targets[0]} ($1500 profit with 0.65 lots)`);
           }
         }
 
         // Format all prices for the detected instrument (especially important for JPY pairs)
-        const symbol = mlResult.symbol || SymbolParser.extractSymbol(caption || text) || 'UNKNOWN';
         const formattedEntryZone = {
           min: this.formatPriceForInstrument(entryZone.min, symbol),
           max: this.formatPriceForInstrument(entryZone.max, symbol)
@@ -355,32 +349,96 @@ export class SmartMLRouter {
   }
 
   /**
-   * Calculate stop loss (simplified)
+   * Calculate stop loss based on fixed risk amount ($1000) and lot size (0.65)
    */
-  private static calculateStopLoss(entryZone: { min: number; max: number }, direction: string): number {
+  private static calculateStopLoss(entryZone: { min: number; max: number }, direction: string, symbol?: string): number {
     const avgEntry = (entryZone.min + entryZone.max) / 2;
-    const buffer = Math.abs(entryZone.max - entryZone.min) || avgEntry * 0.01;
     
-    return direction === 'BUY' ? entryZone.min - buffer : entryZone.max + buffer;
+    // Get configuration from environment
+    const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.65');
+    const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '1000');
+    
+    // Calculate pip value per lot for different instruments
+    let pipValue: number;
+    let pipSize: number;
+    
+    const symbolUpper = (symbol || '').toUpperCase();
+    
+    if (symbolUpper.includes('XAU')) {
+      // Gold: $1 per point per lot, pip size = 0.01
+      pipValue = 1.0;
+      pipSize = 0.01;
+    } else if (symbolUpper.includes('XAG')) {
+      // Silver: $0.50 per point per lot, pip size = 0.01
+      pipValue = 0.5;
+      pipSize = 0.01;
+    } else if (symbolUpper.includes('JPY')) {
+      // JPY pairs: $10 per pip per lot, pip size = 0.01
+      pipValue = 10.0;
+      pipSize = 0.01;
+    } else {
+      // Forex majors: $10 per pip per lot, pip size = 0.0001
+      pipValue = 10.0;
+      pipSize = 0.0001;
+    }
+    
+    // Calculate pip distance needed for fixed risk amount
+    // Formula: Risk $ = Pip Value × Lots × Distance (in pips)
+    // Rearranged: Distance (pips) = Risk $ / (Pip Value × Lots)
+    const stopDistanceInPips = fixedRiskAmount / (pipValue * fixedLotSize);
+    
+    // Convert pip distance to actual price distance
+    const stopDistance = stopDistanceInPips * pipSize;
+    
+    logger.info(`📏 Calculated SL distance for ${symbol}: ${stopDistance.toFixed(5)} (${stopDistanceInPips.toFixed(2)} pips) for $${fixedRiskAmount} risk with ${fixedLotSize} lots`);
+    
+    return direction === 'BUY' ? avgEntry - stopDistance : avgEntry + stopDistance;
   }
 
   /**
-   * Calculate targets based on fixed $900 profit target with 0.45 lot size
+   * Calculate targets based on fixed $1500 profit target with configured lot size
    */
   private static calculateTargets(entryZone: { min: number; max: number }, direction: string, symbol?: string): number[] {
     const avgEntry = (entryZone.min + entryZone.max) / 2;
     
-    // Fixed $900 profit target with 0.45 lot size
-    const pipDistance = this.calculatePipDistanceFor900Dollars(symbol || 'UNKNOWN', 0.45);
+    // Get configuration from environment
+    const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.65');
+    const fixedRewardAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '1000') * parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+    
+    // Calculate pip value per lot for different instruments
+    let pipValue: number;
+    let pipSize: number;
+    
+    const symbolUpper = (symbol || '').toUpperCase();
+    
+    if (symbolUpper.includes('XAU')) {
+      // Gold: $1 per point per lot, pip size = 0.01
+      pipValue = 1.0;
+      pipSize = 0.01;
+    } else if (symbolUpper.includes('XAG')) {
+      // Silver: $0.50 per point per lot, pip size = 0.01
+      pipValue = 0.5;
+      pipSize = 0.01;
+    } else if (symbolUpper.includes('JPY')) {
+      // JPY pairs: $10 per pip per lot, pip size = 0.01
+      pipValue = 10.0;
+      pipSize = 0.01;
+    } else {
+      // Forex majors: $10 per pip per lot, pip size = 0.0001
+      pipValue = 10.0;
+      pipSize = 0.0001;
+    }
+    
+    // Calculate pip distance needed for fixed reward amount
+    const targetDistanceInPips = fixedRewardAmount / (pipValue * fixedLotSize);
+    const targetDistance = targetDistanceInPips * pipSize;
+    
+    logger.info(`📏 Calculated TP distance for ${symbol}: ${targetDistance.toFixed(5)} (${targetDistanceInPips.toFixed(2)} pips) for $${fixedRewardAmount} reward with ${fixedLotSize} lots`);
     
     if (direction === 'BUY') {
-      return [
-        avgEntry + pipDistance
-      ];
+      return [avgEntry + targetDistance];
     } else {
-      return [
-        avgEntry - pipDistance
-      ];
+      return [avgEntry - targetDistance];
     }
   }
 
