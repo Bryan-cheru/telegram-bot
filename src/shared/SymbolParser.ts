@@ -5,6 +5,10 @@
 
 export class SymbolParser {
   private static readonly SYMBOL_PATTERNS = [
+    // Dollar-prefixed channel style: $EURUSD, $XAUUSD, $V100, $BTCUSD
+    /\$?\s*(V\d{1,3})(?![A-Za-z0-9])/i,
+    /\$?\s*(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?(?![A-Za-z0-9])/i,
+    /\$?\s*(BTCUSD|BITCOIN|ETHUSD|ETHEREUM|BTC|ETH)(?:\.x)?(?![A-Za-z0-9])/i,
     // Hashtag patterns - highest priority (with optional .x suffix for InstantFunding)
     /#(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?/i,
     /#(BTCUSD|BITCOIN|ETHUSD|ETHEREUM|BTC|ETH)(?:\.x)?/i,  // Crypto support
@@ -15,6 +19,7 @@ export class SymbolParser {
     /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
     /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
     // Word boundaries without hashtag (with optional .x suffix)
+    /\b(V\d{1,3})\b/i,
     /\b(XAUUSD|GOLD|BTCUSD|BITCOIN|ETHUSD|ETHEREUM|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225)(?:\.x)?\b/i
   ];
 
@@ -62,6 +67,11 @@ export class SymbolParser {
     'US30', 'NAS100', 'SPX500', 'UK100', 'GER30', 'FRA40', 'JPN225', 'NASDAQ'
   ];
 
+  /** Volatility / synthetic tickers (e.g. Deriv V75, V100) */
+  private static isSyntheticVolatility(symbol: string): boolean {
+    return /^V\d{1,3}$/i.test(symbol.trim());
+  }
+
   /**
    * Extract symbol from text using unified patterns
    */
@@ -92,8 +102,9 @@ export class SymbolParser {
     // Basic normalization - remove common variations and standardize
     let normalized = symbol
       .toUpperCase()
+      .replace(/^\$+/, '')         // Strip leading $ from $EURUSD style
       .replace(/\.X$/, '')         // Remove InstantFunding .x suffix
-      .replace(/[^A-Z0-9]/g, '')   // Remove special characters
+      .replace(/[^A-Z0-9]/g, '')   // Remove special characters (USD from $EURUSD already handled)
       .trim();
     
     // Apply mapping if found
@@ -106,6 +117,10 @@ export class SymbolParser {
   public static categorizeSymbol(symbol: string): 'forex' | 'metals' | 'indices' | 'crypto' | 'commodities' | 'unknown' {
     const sym = symbol.toUpperCase();
     
+    if (this.isSyntheticVolatility(sym)) {
+      return 'indices';
+    }
+
     // Forex pairs (6 characters, no dots)
     if (this.FOREX_PAIRS.includes(sym) || sym.match(/^[A-Z]{6}$/)) {
       return 'forex';
@@ -161,6 +176,7 @@ export class SymbolParser {
    */
   public static isValidSymbol(symbol: string): boolean {
     const normalized = this.normalizeSymbol(symbol);
+    if (this.isSyntheticVolatility(normalized)) return true;
     const category = this.categorizeSymbol(normalized);
     return category !== 'unknown';
   }

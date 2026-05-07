@@ -131,9 +131,21 @@ export class CleanRealWorldTradeParser {
       if (!action) return null;
     }
 
+    // SL/TP first — used for entry inference when channel posts "Buy/Sell Now" with no numeric entry (e.g. V100).
+    const explicitStopEarly = this.extractStopLoss(text);
+    const explicitTpsEarly = this.extractTargets(text);
+
     // Extract entry price/zone (supports: "Sell Now 4566.80", "Sell Limit 4644.10", ranges)
     const extractedEntry = this.extractEntry(text);
-    const entryZone = extractedEntry?.entryZone || this.extractEntryZone(text);
+    let entryZone = extractedEntry?.entryZone || this.extractEntryZone(text);
+    if (!entryZone && explicitStopEarly != null && explicitTpsEarly.length > 0) {
+      const inferred = this.inferEntryZoneFromSlTp(action, explicitStopEarly, explicitTpsEarly);
+      if (inferred) {
+        entryZone = inferred;
+        logger.info(`🎯 Inferred entry zone from SL/TP geometry: ${inferred.min}–${inferred.max}`);
+      }
+    }
+
     if (!entryZone) {
       logger.warn('❌ No explicit entry zone found');
       
@@ -164,8 +176,8 @@ export class CleanRealWorldTradeParser {
 
     // Extract explicit SL/TP if provided (preferred). Otherwise compute from fixed-$ risk.
     const entryMid = (entryZone.min + entryZone.max) / 2;
-    const explicitStop = this.extractStopLoss(text);
-    const explicitTps = this.extractTargets(text);
+    const explicitStop = explicitStopEarly;
+    const explicitTps = explicitTpsEarly;
 
     const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
     const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
@@ -233,9 +245,35 @@ export class CleanRealWorldTradeParser {
     return { entryZone: { min: entry - zoneSize, max: entry + zoneSize }, orderType };
   }
 
+  /**
+   * When the post gives SL + TP(s) but no entry (common on synthetic indices), estimate entry as midpoint
+   * between SL and the nearest TP in the profit direction.
+   */
+  private static inferEntryZoneFromSlTp(
+    action: TradeAction,
+    sl: number,
+    tps: number[]
+  ): { min: number; max: number } | null {
+    if (!isFinite(sl) || tps.length === 0) return null;
+    const minTp = Math.min(...tps);
+    const maxTp = Math.max(...tps);
+    if (action === 'BUY') {
+      if (!(sl < minTp)) return null;
+      const mid = (sl + minTp) / 2;
+      const zoneSize = Math.max(mid * 0.002, 0.25);
+      return { min: mid - zoneSize, max: mid + zoneSize };
+    }
+    if (!(sl > maxTp)) return null;
+    const mid = (sl + maxTp) / 2;
+    const zoneSize = Math.max(mid * 0.002, 0.0002);
+    return { min: mid - zoneSize, max: mid + zoneSize };
+  }
+
   private static extractStopLoss(text: string): number | null {
-    const m = text.match(/\bSL\b\s*[:\-]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,5})?)/i) ||
-              text.match(/\bstop\s*loss\b\s*[:\-]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,5})?)/i);
+    const cap = '((?:\\d{1,3}(?:,\\d{3})+|\\d{1,8})(?:\\.\\d{1,5})?)';
+    const m =
+      text.match(new RegExp(`\\bSL\\b\\s*[:-]?\\s*${cap}`, 'i')) ||
+      text.match(new RegExp(`\\bstop\\s*loss\\b\\s*[:-]?\\s*${cap}`, 'i'));
     if (!m) return null;
     const v = parseFloat(m[1].replace(/,/g, ''));
     return isFinite(v) ? v : null;
@@ -243,7 +281,8 @@ export class CleanRealWorldTradeParser {
 
   private static extractTargets(text: string): number[] {
     const targets: number[] = [];
-    const re = /\bTP\d*\b\s*[:\-]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,5})?)/gi;
+    const cap = '((?:\\d{1,3}(?:,\\d{3})+|\\d{1,8})(?:\\.\\d{1,5})?)';
+    const re = new RegExp(`\\bTP\\d*\\b\\s*[:-]?\\s*${cap}`, 'gi');
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
       const v = parseFloat(m[1].replace(/,/g, ''));

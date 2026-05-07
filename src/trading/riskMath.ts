@@ -40,11 +40,17 @@ export function getPipValuePerLot(symbol: string): number {
   return 1;
 }
 
+function isSyntheticVolIndex(symbol: string): boolean {
+  return /^V\d{1,3}$/i.test(symbol.trim());
+}
+
 export function formatPriceForInstrument(price: number, symbol: string): number {
   const s = symbol.toUpperCase();
   if (s.includes('JPY')) return Number(price.toFixed(3));
   if (isForexPair(s)) return Number(price.toFixed(5));
   if (['XAUUSD', 'GOLD', 'XAGUSD', 'SILVER'].includes(s)) return Number(price.toFixed(2));
+  if (isSyntheticVolIndex(s)) return Number(price.toFixed(2));
+  if (s.includes('BTC') || s.includes('ETH')) return Number(price.toFixed(2));
   return Number(price.toFixed(5));
 }
 
