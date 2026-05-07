@@ -4,6 +4,7 @@ import { ChartColorAnalysisML } from '../colorAnalysisML';
 import { VisualChartAnalysisML } from '../visualChartAnalysisML';
 import { PriceExtractorML } from './PriceExtractorML';
 import { SymbolParser, ValidationService, FormatService } from '../../shared';
+import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../../trading/riskMath';
 
 /**
  * Smart ML Router - Intelligently routes signals to appropriate analysis
@@ -320,15 +321,16 @@ export class SmartMLRouter {
 
         // Format all prices for the detected instrument (especially important for JPY pairs)
         const formattedEntryZone = {
-          min: this.formatPriceForInstrument(entryZone.min, symbol),
-          max: this.formatPriceForInstrument(entryZone.max, symbol)
+          min: formatPriceForInstrument(entryZone.min, symbol),
+          max: formatPriceForInstrument(entryZone.max, symbol)
         };
-        const formattedStopLoss = this.formatPriceForInstrument(stopLoss, symbol);
-        const formattedTargets = targets.map(target => this.formatPriceForInstrument(target, symbol));
+        const formattedStopLoss = formatPriceForInstrument(stopLoss, symbol);
+        const formattedTargets = targets.map(target => formatPriceForInstrument(target, symbol));
 
         return {
           symbol,
-          action: mlResult.direction || 'BUY',
+          // Use the validated/corrected direction, not the raw ML output
+          action: direction,
           entryZone: formattedEntryZone,
           stopLoss: formattedStopLoss,
           targets: formattedTargets,
@@ -507,22 +509,17 @@ export class SmartMLRouter {
       max: analysis.greyEntry.max
     };
     
-    // Calculate stop loss and targets based on fixed $900 risk/reward
     const entryMid = (entryZone.min + entryZone.max) / 2;
-    
-    // Calculate pip distance for $900 with 0.45 lot size
-    const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(symbol, 0.45);
-    
-    let stopLoss: number;
-    let targets: number[];
-    
-    if (action === 'BUY') {
-      stopLoss = entryMid - pipDistanceFor900;  // -$900 risk
-      targets = this.calculateTargets(entryZone, 'BUY', symbol);  // +$900 profit
-    } else {
-      stopLoss = entryMid + pipDistanceFor900;  // -$900 risk  
-      targets = this.calculateTargets(entryZone, 'SELL', symbol); // +$900 profit
-    }
+    const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+    const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+    const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+
+    const { stopLoss, targets } = calculateFixedDollarStopsAndTargets({
+      symbol,
+      entryPrice: entryMid,
+      direction: action,
+      config: { lotSize: fixedLotSize, riskAmount: fixedRiskAmount, riskRewardRatio: rr }
+    });
     
     return {
       symbol,
@@ -555,35 +552,5 @@ export class SmartMLRouter {
     };
   }
 
-  /**
-   * Format price with proper decimal precision based on instrument type
-   */
-  private static formatPriceForInstrument(price: number, symbol: string): number {
-    const upperSymbol = symbol.toUpperCase();
-    
-    // JPY pairs use 3 decimal places
-    if (upperSymbol.includes('JPY')) {
-      return Number(price.toFixed(3));
-    }
-    
-    // Major forex pairs use 5 decimal places
-    if (this.isForexPair(upperSymbol)) {
-      return Number(price.toFixed(5));
-    }
-    
-    // Metals use 2 decimal places
-    if (['XAUUSD', 'GOLD', 'XAGUSD', 'SILVER'].includes(upperSymbol)) {
-      return Number(price.toFixed(2));
-    }
-    
-    // Default to 5 decimal places for precision
-    return Number(price.toFixed(5));
-  }
 
-  /**
-   * Check if symbol is a forex pair
-   */
-  private static isForexPair(symbol: string): boolean {
-    return symbol.length === 6 && /^[A-Z]{6}$/.test(symbol);
-  }
 }

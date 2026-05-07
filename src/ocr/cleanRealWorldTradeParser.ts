@@ -12,6 +12,7 @@ import { TradeSignal, TradeAction, OrderType } from '../types';
 import { logger } from '../utils/logger';
 import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
 import { SymbolParser, ValidationService, FormatService } from '../shared';
+import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
 
 /**
  * CLEAN Real World Trade Parser
@@ -77,23 +78,27 @@ export class CleanRealWorldTradeParser {
     const cleanCaption = caption ? this.normalizeText(caption) : undefined;
     const fullText = cleanCaption ? `${cleanText}\n${cleanCaption}` : cleanText;
 
-    // Skip if this is a result message
-    if (this.isResultMessage(fullText)) {
-      logger.info('⏭️ Skipping result message (not a trading signal)');
+    // Skip if this is not an entry signal (results/updates/promos/closures)
+    if (this.isNonEntryMessage(fullText)) {
+      logger.info('⏭️ Skipping non-entry message');
       return null;
     }
 
     try {
-      // Try ML-enhanced parsing first
-      const mlResult = await CleanMLIntegration.parseWithML(cleanText, cleanCaption, hasChartImage, imageBuffer);
-      if (mlResult) {
-        logger.info('✅ ML parsing successful');
-        return mlResult;
+      // Prefer deterministic parsing first for channel-style signals.
+      const standard = await this.parseStandardSignal(fullText, hasChartImage);
+      if (standard) return standard;
+
+      // If we have an image (Telegram photo or TradingView OG preview), allow ML as fallback.
+      if (hasChartImage && imageBuffer) {
+        const mlResult = await CleanMLIntegration.parseWithML(cleanText, cleanCaption, hasChartImage, imageBuffer);
+        if (mlResult) {
+          logger.info('✅ ML parsing successful');
+          return mlResult;
+        }
       }
 
-      // Fall back to standard parsing
-      logger.info('🔄 ML parsing inconclusive, trying standard parsing...');
-      return await this.parseStandardSignal(fullText);
+      return null;
 
     } catch (error) {
       logger.error('❌ Parsing failed:', error);
@@ -104,7 +109,7 @@ export class CleanRealWorldTradeParser {
   /**
    * Standard text-based parsing (fallback method)
    */
-  private static async parseStandardSignal(text: string): Promise<TradeSignal | null> {
+  private static async parseStandardSignal(text: string, hasChartImage?: boolean): Promise<TradeSignal | null> {
     logger.info('📝 Using standard text parsing...');
 
     // Extract basic components
@@ -116,19 +121,19 @@ export class CleanRealWorldTradeParser {
 
     let action = this.detectAction(text);
     if (!action) {
-      logger.warn('❌ No explicit trading action detected');
-      
-      // 🚀 FALLBACK: For chart images, try to infer action from context
-      action = this.inferActionFromChart(text, symbol);
-      if (!action) {
-        logger.error('❌ No trading action detected and inference failed');
+      // If this is just "$XAUUSD:" + TradingView link, do NOT trade.
+      // We only infer action when there's strong textual intent OR explicit pricing.
+      if (!hasChartImage || !this.hasStrongSignalIntent(text)) {
+        logger.warn('❌ No explicit trading action detected (ignoring non-explicit post)');
         return null;
       }
-      logger.info(`🎯 Inferred action from chart: ${action}`);
+      action = this.inferActionFromChart(text, symbol);
+      if (!action) return null;
     }
 
-    // Extract entry zone
-    const entryZone = this.extractEntryZone(text);
+    // Extract entry price/zone (supports: "Sell Now 4566.80", "Sell Limit 4644.10", ranges)
+    const extractedEntry = this.extractEntry(text);
+    const entryZone = extractedEntry?.entryZone || this.extractEntryZone(text);
     if (!entryZone) {
       logger.warn('❌ No explicit entry zone found');
       
@@ -154,11 +159,26 @@ export class CleanRealWorldTradeParser {
       return null;
     }
 
-    // Calculate trading levels using MetaAPI-compliant logic
-    const { stopLoss, targets } = this.calculateTradingLevels(entryZone, action, symbol);
+    // Determine order type (channel uses explicit Now/Limit)
+    const orderType = extractedEntry?.orderType || this.determineOrderType(text, action);
 
-    // Determine order type
-    const orderType = this.determineOrderType(text, action);
+    // Extract explicit SL/TP if provided (preferred). Otherwise compute from fixed-$ risk.
+    const entryMid = (entryZone.min + entryZone.max) / 2;
+    const explicitStop = this.extractStopLoss(text);
+    const explicitTps = this.extractTargets(text);
+
+    const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+    const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+    const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+    const computed = calculateFixedDollarStopsAndTargets({
+      symbol,
+      entryPrice: entryMid,
+      direction: action,
+      config: { lotSize: fixedLotSize, riskAmount: fixedRiskAmount, riskRewardRatio: rr }
+    });
+
+    const stopLoss = formatPriceForInstrument(explicitStop ?? computed.stopLoss, symbol);
+    const targets = (explicitTps.length ? explicitTps : computed.targets).map(t => formatPriceForInstrument(t, symbol));
 
     const signal: TradeSignal = {
       symbol,
@@ -175,6 +195,61 @@ export class CleanRealWorldTradeParser {
 
     logger.info(`✅ Standard parsing complete: ${symbol} ${action} @ ${entryZone.min}-${entryZone.max}`);
     return signal;
+  }
+
+  private static hasStrongSignalIntent(text: string): boolean {
+    const t = text.toLowerCase();
+    return (
+      /\b(buy|sell)\b/.test(t) ||
+      /\b(limit|now|entry|tp|sl|stop)\b/.test(t)
+    );
+  }
+
+  /**
+   * Channel-specific: parse "SELL NOW 4566.80", "SELL LIMIT 4644.10", "@ 1.2345"
+   * Returns an entry zone and an order type when possible.
+   */
+  private static extractEntry(text: string): { entryZone: { min: number; max: number }; orderType: OrderType } | null {
+    const t = text.replace(/,/g, ' ');
+
+    const m =
+      t.match(/\b(buy|sell)\s+(now|limit)\s+(\d{1,6}(?:\.\d{1,5})?)\b/i) ||
+      t.match(/\b(buy|sell)\s+(\d{1,6}(?:\.\d{1,5})?)\b/i) ||
+      t.match(/@\s*(\d{1,6}(?:\.\d{1,5})?)\b/i);
+
+    if (!m) return null;
+
+    const priceStr = m[m.length - 1];
+    const entry = parseFloat(priceStr);
+    if (!isFinite(entry) || entry <= 0) return null;
+
+    // Small zone around single entry price (0.2% default, but avoid absurdly wide zones for small prices)
+    const zoneSize = Math.max(entry * 0.002, 0.0002);
+    const orderType: OrderType =
+      /\blimit\b/i.test(m[0]) ? 'LIMIT' :
+      /\bnow\b/i.test(m[0]) ? 'MARKET' :
+      'MARKET';
+
+    return { entryZone: { min: entry - zoneSize, max: entry + zoneSize }, orderType };
+  }
+
+  private static extractStopLoss(text: string): number | null {
+    const m = text.match(/\bSL\b\s*[:\-]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,5})?)/i) ||
+              text.match(/\bstop\s*loss\b\s*[:\-]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,5})?)/i);
+    if (!m) return null;
+    const v = parseFloat(m[1].replace(/,/g, ''));
+    return isFinite(v) ? v : null;
+  }
+
+  private static extractTargets(text: string): number[] {
+    const targets: number[] = [];
+    const re = /\bTP\d*\b\s*[:\-]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,5})?)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const v = parseFloat(m[1].replace(/,/g, ''));
+      if (isFinite(v)) targets.push(v);
+    }
+    return targets;
   }
 
   /**
@@ -477,6 +552,33 @@ export class CleanRealWorldTradeParser {
     ];
     
     return resultPatterns.some(pattern => pattern.test(text));
+  }
+
+  /**
+   * Filters out messages that should never be treated as *new entry* signals.
+   * This matches your channel examples: results, "activated", "going well", "use this broker", "I'll close here", etc.
+   */
+  private static isNonEntryMessage(text: string): boolean {
+    const t = text.toLowerCase();
+
+    // Results / progress updates
+    if (this.isResultMessage(text)) return true;
+    if (/\b(activated|running|going well|after result)\b/i.test(text)) return true;
+    if (/\b(got stopped|stopped out|stop(ped)?\b)\b/i.test(text)) return true;
+
+    // Explicit closures (not new entries)
+    if (/\b(close|closed)\b/i.test(text) && !/\b(close\s*all|close\s*#\d+)\b/i.test(text)) return true;
+
+    // Promotions / broker links
+    if (/\b(deposit|broker|track\.|deriv|open 24\/7|profit split|discordpremiumsignal)\b/i.test(text)) return true;
+
+    // Generic commentary with no actionable fields
+    const hasAction = /\b(buy|sell)\b/i.test(text);
+    const hasSlTp = /\b(sl|tp|stop loss|target)\b/i.test(text);
+    const hasEntryPrice = /\b(buy|sell)\s+(now|limit)\s+\d/i.test(text) || /@\s*\d/.test(text);
+    if (!hasAction && !hasSlTp && !hasEntryPrice) return true;
+
+    return false;
   }
 
   /**

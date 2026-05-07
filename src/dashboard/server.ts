@@ -9,6 +9,7 @@ import tradingAPIRouter from './noDbTradingAPI';
 import { generalRateLimit, tradingRateLimit } from '../middleware/rateLimit';
 import { InputValidator, ValidationRules } from '../middleware/validation';
 import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
+import { requireApiKey } from '../middleware/apiKeyAuth';
 // import { UserAccountManagementService } from '../services/UserAccountManagementService'; // REMOVED - No database needed
 
 const app = express();
@@ -40,6 +41,9 @@ app.use('/api', (req, res, next) => {
 // Rate limiting for different endpoints
 app.use('/api/trading', tradingRateLimit.middleware());
 app.use('/api', generalRateLimit.middleware());
+
+// Authentication for all API endpoints (configurable via DASHBOARD_API_KEY)
+app.use('/api', requireApiKey());
 
 // Store for real-time data
 import { randomUUID } from 'crypto';

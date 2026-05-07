@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { EnhancedMetaApiService } from '../services/EnhancedMetaApiService';
 import { ValidationService } from '../shared';
 import { ManualSignalParser } from '../services/ManualSignalParser';
+import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
 
 export class TelegramBot {
   private bot: Telegraf;
@@ -337,6 +338,43 @@ export class TelegramBot {
           logger.warn('⚠️ Failed to download chart image:', error);
         }
       }
+
+      // 🔗 TradingView link preview support: if there is a TradingView link but no Telegram image,
+      // attempt to fetch the OG preview image for visual analysis.
+      if (!hasChartImage) {
+        const tvMatch = text.match(/https?:\/\/(?:www\.)?tradingview\.com\/x\/[A-Za-z0-9]+\/?/);
+        if (tvMatch) {
+          const tvUrl = tvMatch[0];
+          logger.info(`🔗 TradingView link detected, attempting preview fetch: ${tvUrl}`);
+          try {
+            const htmlResp = await fetch(tvUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; TelegramTradingBot/1.0)'
+              }
+            });
+            const html = await htmlResp.text();
+            const ogImage =
+              html.match(/property=["']og:image["']\s+content=["']([^"']+)["']/i)?.[1] ||
+              html.match(/content=["']([^"']+)["']\s+property=["']og:image["']/i)?.[1];
+            if (ogImage) {
+              const imgResp = await fetch(ogImage, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TelegramTradingBot/1.0)' }
+              });
+              if (imgResp.ok) {
+                imageBuffer = Buffer.from(await imgResp.arrayBuffer());
+                hasChartImage = true;
+                logger.info(`✅ TradingView preview image fetched: ${imageBuffer.length} bytes`);
+              } else {
+                logger.warn(`⚠️ TradingView preview fetch failed (status ${imgResp.status})`);
+              }
+            } else {
+              logger.warn('⚠️ TradingView page had no og:image');
+            }
+          } catch (error) {
+            logger.warn('⚠️ TradingView preview fetch failed:', error);
+          }
+        }
+      }
       
       // Parse with enhanced capabilities
       const tradeSignal = await CleanRealWorldTradeParser.parseTradeSignal(text, undefined, hasChartImage, imageBuffer);
@@ -507,39 +545,35 @@ export class TelegramBot {
       const entryMin = entryZone.price - entryBuffer;
       const entryMax = entryZone.price + entryBuffer;
 
-      // Set targets based on $900 fixed profit/loss strategy
-      let targets = [];
-      let stopLoss;
-      
-      // Calculate pip distance for $900 with 0.45 lot size
-      const pipDistanceFor900 = this.calculatePipDistanceFor900Dollars(analysis.symbol, 0.45);
+      // Set targets based on fixed-$ risk model (fallback when zones missing)
       const entryMidPoint = (entryMin + entryMax) / 2;
+      const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+      const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+      const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
 
-      if (analysis.direction === 'BUY') {
-        // For BUY: Use detected zones if available, otherwise use $900 calculation
-        if (analysis.greenTargetZones.length > 0) {
-          targets = analysis.greenTargetZones.map((zone: any) => zone.price);
-        } else {
-          // $900 profit target calculation
-          targets = [entryMidPoint + pipDistanceFor900];
-        }
-        
-        stopLoss = analysis.redStopZones.length > 0 
-          ? analysis.redStopZones[0].price 
-          : entryMidPoint - pipDistanceFor900; // $900 risk calculation
-      } else {
-        // For SELL: Use detected zones if available, otherwise use $900 calculation  
-        if (analysis.greenTargetZones.length > 0) {
-          targets = analysis.greenTargetZones.map((zone: any) => zone.price);
-        } else {
-          // $900 profit target calculation
-          targets = [entryMidPoint - pipDistanceFor900];
-        }
-        
-        stopLoss = analysis.redStopZones.length > 0
-          ? analysis.redStopZones[0].price
-          : entryMidPoint + pipDistanceFor900; // $900 risk calculation
+      let targets: number[] = [];
+      let stopLoss: number;
+
+      if (analysis.greenTargetZones.length > 0) {
+        targets = analysis.greenTargetZones.map((zone: any) => zone.price);
       }
+
+      if (analysis.redStopZones.length > 0) {
+        stopLoss = analysis.redStopZones[0].price;
+      } else {
+        const computed = calculateFixedDollarStopsAndTargets({
+          symbol: analysis.symbol,
+          entryPrice: entryMidPoint,
+          direction: analysis.direction,
+          config: { lotSize: fixedLotSize, riskAmount: fixedRiskAmount, riskRewardRatio: rr }
+        });
+        stopLoss = computed.stopLoss;
+        if (targets.length === 0) targets = computed.targets;
+      }
+
+      // Normalize formatting for instrument precision
+      stopLoss = formatPriceForInstrument(stopLoss, analysis.symbol);
+      targets = targets.map((t: number) => formatPriceForInstrument(t, analysis.symbol));
 
       return {
         symbol: analysis.symbol,
@@ -633,42 +667,7 @@ export class TelegramBot {
     }
   }
 
-  /**
-   * Calculate pip distance needed for $900 profit/loss with 0.45 lot size
-   */
-  private calculatePipDistanceFor900Dollars(symbol: string, lotSize: number): number {
-    // Standard pip values for major pairs (per 1.0 lot)
-    const pipValues: { [key: string]: number } = {
-      'EURUSD': 10,    // $10 per pip per lot
-      'GBPUSD': 10,    // $10 per pip per lot  
-      'USDCHF': 10,    // $10 per pip per lot
-      'USDJPY': 10,    // $10 per pip per lot (approximately)
-      'EURGBP': 10,    // $10 per pip per lot (cross pair)
-      'EURJPY': 10,    // $10 per pip per lot (cross pair)
-      'GBPJPY': 10,    // $10 per pip per lot (cross pair)
-      'XAUUSD': 100,   // $100 per pip per lot (Gold)
-      'XAGUSD': 50,    // $50 per pip per lot (Silver)
-      'DEFAULT': 10    // Default for unknown symbols
-    };
 
-    const pipValue = pipValues[symbol] || pipValues['DEFAULT'];
-    const pipValueForLotSize = pipValue * lotSize; // Pip value for 0.45 lots
-    
-    // Calculate pips needed for $900
-    const pipsNeeded = 900 / pipValueForLotSize;
-    
-    // Convert pips to price distance based on symbol type
-    if (symbol.includes('JPY')) {
-      // JPY pairs: 1 pip = 0.01
-      return pipsNeeded * 0.01;
-    } else if (symbol.startsWith('XAU') || symbol.startsWith('XAG')) {
-      // Metals: 1 pip = 0.1 for Gold, 0.01 for Silver  
-      return symbol.startsWith('XAU') ? pipsNeeded * 0.1 : pipsNeeded * 0.01;
-    } else {
-      // Major forex pairs: 1 pip = 0.0001
-      return pipsNeeded * 0.0001;
-    }
-  }
 
   async stop(): Promise<void> {
     try {
