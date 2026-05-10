@@ -614,7 +614,7 @@
                             <h3><i class="fas fa-key"></i> Dashboard API access</h3>
                         </div>
                         <div class="card-body">
-                            <p class="form-hint" style="color: var(--gray-400); font-size: 0.875rem; margin-bottom: 1rem;">
+                            <p class="form-hint">
                                 If <code>DASHBOARD_API_KEY</code> is set on the server, paste the same key here once. It is stored only in your browser (localStorage) and sent as <code>x-api-key</code> on API requests.
                             </p>
                             <div class="form-group">
@@ -662,7 +662,7 @@
                             <h3><i class="fas fa-shield-alt"></i> Risk &amp; execution</h3>
                         </div>
                         <div class="card-body">
-                            <p class="form-hint" style="color: var(--gray-400); font-size: 0.875rem; margin-bottom: 1rem;">
+                            <p class="form-hint">
                                 SL/TP on orders use this model (signal channel TP/SL ignored unless “Use signal TP/SL” is on).
                             </p>
                             <div class="form-group">
@@ -706,7 +706,7 @@
                         </div>
                     </div>
 
-                    <div class="card unified-settings-card" style="grid-column: 1 / -1;">
+                    <div class="card unified-settings-card">
                         <div class="card-header">
                             <h3><i class="fas fa-sliders-h"></i> All runtime settings</h3>
                             <div class="unified-settings-actions">
@@ -719,7 +719,7 @@
                             </div>
                         </div>
                         <div class="card-body">
-                            <p class="form-hint" style="color: var(--gray-400); font-size: 0.875rem; margin-bottom: 1rem;">
+                            <p class="form-hint">
                                 Full list from <code>GET /api/settings</code>. Saves with <code>PATCH /api/settings</code> to <code>data/settings.json</code>.
                                 Secrets: leave blank to keep current value. Fields marked <span class="restart-badge">restart</span> often need a process restart (e.g. port changes).
                             </p>
