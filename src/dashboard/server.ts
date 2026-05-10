@@ -1,7 +1,12 @@
-            import express from 'express';
+import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { config } from '../utils/config';
+import { config, syncConfigFromEnv } from '../utils/config';
+import {
+  applySettingsPatch,
+  getSettingsPayload,
+  savePersistedSettingsFromEnv
+} from '../config/runtimeSettings';
 import { dashboardLogs } from '../utils/logger';
 import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
 import { TradeSignal } from '../types';
@@ -511,11 +516,25 @@ app.get('/api/logs/stream', (req, res) => {
     res.write(`data: ${JSON.stringify(activity)}\n\n`);
   });
 
-  // Cleanup on connection close
+  const heartbeat = setInterval(() => {
+    try {
+      if (res.writable && !res.destroyed) {
+        res.write(
+          'data: {"type":"heartbeat","timestamp":"' + new Date().toISOString() + '"}\n\n'
+        );
+      }
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 30000);
+
   req.on('close', () => {
+    clearInterval(heartbeat);
     streamClients = streamClients.filter(client => client.id !== clientId);
   });
-});// API endpoints
+});
+
+// API endpoints
 app.get('/api/status', (req, res) => {
   res.json(botStatus);
 });
@@ -548,14 +567,54 @@ app.get('/api/trades', (req, res) => {
 });
 
 app.get('/api/config', (req, res) => {
-  // Return sanitized config (no sensitive data)
+  const maxTs = parseFloat(process.env.MAX_TRADE_SIZE || '');
+  const riskPct = parseFloat(process.env.RISK_PERCENTAGE || '');
   res.json({
     allowedChannelId: config.allowedChannelId,
-    maxTradeSize: config.trading.maxTradeSize,
-    riskPercentage: config.trading.riskPercentage,
-    logLevel: config.logging.level,
+    maxTradeSize: isFinite(maxTs) && maxTs > 0 ? maxTs : config.trading.maxTradeSize,
+    riskPercentage: isFinite(riskPct) && riskPct > 0 ? riskPct : config.trading.riskPercentage,
+    logLevel: process.env.LOG_LEVEL || config.logging.level,
+    maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || '10', 10),
+    botEnabled: process.env.BOT_ENABLED !== 'false',
     currentAccountId: process.env.METAAPI_ACCOUNT_ID
   });
+});
+
+/** Unified settings: all managed keys with masked secrets */
+app.get('/api/settings', (req, res) => {
+  try {
+    const payload = getSettingsPayload();
+    res.json({ success: true, ...payload });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+/** Partial update: keys omitted unchanged; null clears key from env + persistence */
+app.patch('/api/settings', (req, res) => {
+  try {
+    const result = applySettingsPatch(req.body || {});
+    if (result.errors.length > 0) {
+      return res.status(400).json({ success: false, ...result });
+    }
+    addLog({
+      level: 'info',
+      message: `⚙️ Settings PATCH applied: ${result.applied.join(', ') || 'none'}`
+    });
+    res.json({
+      success: true,
+      ...result,
+      ...getSettingsPayload()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 });
 
 // ========== RISK MANAGEMENT ENDPOINTS ==========
@@ -576,20 +635,41 @@ app.get('/api/risk-config', async (req, res) => {
 
     const riskPercentage = parseFloat(process.env.RISK_PERCENTAGE || '0.33');
     const riskRewardRatio = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
-    const fixedRiskAmount = process.env.RISK_AMOUNT_USD ? parseFloat(process.env.RISK_AMOUNT_USD) : null;
-    
-    // Calculate effective risk amount
-    const effectiveRiskAmount = fixedRiskAmount || (currentBalance * (riskPercentage / 100));
-    
+    const dashboardFixedUsd =
+      process.env.RISK_AMOUNT_USD !== undefined && process.env.RISK_AMOUNT_USD !== ''
+        ? parseFloat(process.env.RISK_AMOUNT_USD)
+        : null;
+    const envFixedUsd = parseFloat(process.env.FIXED_RISK_AMOUNT || '');
+    const fixedRiskAmount =
+      dashboardFixedUsd != null && !isNaN(dashboardFixedUsd)
+        ? dashboardFixedUsd
+        : isFinite(envFixedUsd) && envFixedUsd > 0
+          ? envFixedUsd
+          : null;
+
+    const effectiveRiskAmount =
+      fixedRiskAmount != null && fixedRiskAmount > 0
+        ? fixedRiskAmount
+        : currentBalance * (riskPercentage / 100);
+
+    const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || String(config.trading.fixedLotSize));
+    const useSignalStops = process.env.USE_SIGNAL_STOPS === 'true';
+    const maxDailyLossPercent = parseFloat(process.env.MAX_DAILY_LOSS_PERCENT || '5');
+    const maxDrawdownPercent = parseFloat(process.env.MAX_DRAWDOWN_PERCENT || '10');
+
     res.json({
       success: true,
       config: {
         riskPercentage: riskPercentage,
         riskRewardRatio: riskRewardRatio,
         fixedRiskAmount: fixedRiskAmount,
+        fixedLotSize: fixedLotSize,
         effectiveRiskAmount: effectiveRiskAmount,
         currentBalance: currentBalance,
-        riskMode: fixedRiskAmount ? 'fixed' : 'percentage'
+        riskMode: fixedRiskAmount ? 'fixed' : 'percentage',
+        useSignalStops,
+        maxDailyLossPercent,
+        maxDrawdownPercent
       }
     });
   } catch (error) {
@@ -603,8 +683,16 @@ app.get('/api/risk-config', async (req, res) => {
 // Update risk configuration (runtime only - doesn't persist to .env)
 app.post('/api/risk-config', (req, res) => {
   try {
-    const { riskPercentage, riskRewardRatio, fixedRiskAmount } = req.body;
-    
+    const {
+      riskPercentage,
+      riskRewardRatio,
+      fixedRiskAmount,
+      fixedLotSize,
+      useSignalStops,
+      maxDailyLossPercent,
+      maxDrawdownPercent
+    } = req.body;
+
     // Update environment variables (runtime only)
     if (riskPercentage !== undefined) {
       process.env.RISK_PERCENTAGE = riskPercentage.toString();
@@ -619,20 +707,55 @@ app.post('/api/risk-config', (req, res) => {
         process.env.RISK_AMOUNT_USD = fixedRiskAmount.toString();
       }
     }
+    if (fixedLotSize !== undefined) {
+      if (fixedLotSize === null || fixedLotSize === '') {
+        delete process.env.FIXED_LOT_SIZE;
+      } else {
+        process.env.FIXED_LOT_SIZE = String(fixedLotSize);
+      }
+    }
+    if (useSignalStops !== undefined) {
+      process.env.USE_SIGNAL_STOPS = useSignalStops ? 'true' : 'false';
+    }
+    if (maxDailyLossPercent !== undefined) {
+      process.env.MAX_DAILY_LOSS_PERCENT = String(maxDailyLossPercent);
+    }
+    if (maxDrawdownPercent !== undefined) {
+      process.env.MAX_DRAWDOWN_PERCENT = String(maxDrawdownPercent);
+    }
 
     addLog({
       level: 'info',
-      message: `🎯 Risk configuration updated via dashboard: ${JSON.stringify({ riskPercentage, riskRewardRatio, fixedRiskAmount })}`
+      message: `🎯 Risk configuration updated via dashboard: ${JSON.stringify({
+        riskPercentage,
+        riskRewardRatio,
+        fixedRiskAmount,
+        fixedLotSize,
+        useSignalStops,
+        maxDailyLossPercent,
+        maxDrawdownPercent
+      })}`
     });
+
+    syncConfigFromEnv();
+    try {
+      savePersistedSettingsFromEnv();
+    } catch {
+      /* optional disk */
+    }
 
     res.json({
       success: true,
-      message: 'Risk configuration updated (runtime only - restart to restore .env defaults)',
+      message: 'Risk configuration updated (saved to data/settings.json)',
       config: {
         riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '0.33'),
         riskRewardRatio: parseFloat(process.env.RISK_REWARD_RATIO || '1.5'),
         fixedRiskAmount: process.env.RISK_AMOUNT_USD ? parseFloat(process.env.RISK_AMOUNT_USD) : null,
-        riskMode: process.env.RISK_AMOUNT_USD ? 'fixed' : 'percentage'
+        fixedLotSize: parseFloat(process.env.FIXED_LOT_SIZE || String(config.trading.fixedLotSize)),
+        riskMode: process.env.RISK_AMOUNT_USD ? 'fixed' : 'percentage',
+        useSignalStops: process.env.USE_SIGNAL_STOPS === 'true',
+        maxDailyLossPercent: parseFloat(process.env.MAX_DAILY_LOSS_PERCENT || '5'),
+        maxDrawdownPercent: parseFloat(process.env.MAX_DRAWDOWN_PERCENT || '10')
       }
     });
   } catch (error) {
@@ -1530,20 +1653,76 @@ app.get('/api/metaapi/test/:accountId', async (req, res) => {
 });
 
 app.post('/api/config', (req, res) => {
-  // Update configuration
-  const { maxTradeSize, riskPercentage, logLevel } = req.body;
-  
-  // Validate inputs
-  if (maxTradeSize && (maxTradeSize < 0.01 || maxTradeSize > 10)) {
-    return res.status(400).json({ error: 'Max trade size must be between 0.01 and 10' });
+  try {
+    const { maxTradeSize, riskPercentage, logLevel, maxDailyTrades, botEnabled } = req.body;
+
+    if (maxTradeSize !== undefined && maxTradeSize !== null && maxTradeSize !== '') {
+      const v = parseFloat(maxTradeSize);
+      if (isNaN(v) || v < 0.01 || v > 100) {
+        return res.status(400).json({ error: 'Max trade size must be between 0.01 and 100' });
+      }
+      process.env.MAX_TRADE_SIZE = String(v);
+    }
+
+    if (riskPercentage !== undefined && riskPercentage !== null && riskPercentage !== '') {
+      const v = parseFloat(riskPercentage);
+      if (isNaN(v) || v < 0.1 || v > 10) {
+        return res.status(400).json({ error: 'Risk percentage must be between 0.1 and 10' });
+      }
+      process.env.RISK_PERCENTAGE = String(v);
+    }
+
+    if (logLevel !== undefined && logLevel !== null && logLevel !== '') {
+      process.env.LOG_LEVEL = String(logLevel);
+    }
+
+    if (maxDailyTrades !== undefined && maxDailyTrades !== null && maxDailyTrades !== '') {
+      const n = parseInt(String(maxDailyTrades), 10);
+      if (isNaN(n) || n < 1 || n > 50) {
+        return res.status(400).json({ error: 'Max daily trades must be between 1 and 50' });
+      }
+      process.env.MAX_DAILY_TRADES = String(n);
+    }
+
+    if (botEnabled !== undefined && botEnabled !== null) {
+      process.env.BOT_ENABLED = botEnabled ? 'true' : 'false';
+    }
+
+    addLog({
+      level: 'info',
+      message: `⚙️ Bot/config updated via dashboard: ${JSON.stringify({
+        maxTradeSize,
+        riskPercentage,
+        logLevel,
+        maxDailyTrades,
+        botEnabled
+      })}`
+    });
+
+    syncConfigFromEnv();
+    try {
+      savePersistedSettingsFromEnv();
+    } catch {
+      /* optional disk */
+    }
+
+    res.json({
+      success: true,
+      message: 'Configuration updated (runtime + data/settings.json)',
+      config: {
+        maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || String(config.trading.maxTradeSize)),
+        riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || String(config.trading.riskPercentage)),
+        logLevel: process.env.LOG_LEVEL || config.logging.level,
+        maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || '10', 10),
+        botEnabled: process.env.BOT_ENABLED !== 'false'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Configuration update failed'
+    });
   }
-  
-  if (riskPercentage && (riskPercentage < 0.1 || riskPercentage > 10)) {
-    return res.status(400).json({ error: 'Risk percentage must be between 0.1% and 10%' });
-  }
-  
-  // TODO: Update config and restart bot with new settings
-  res.json({ success: true, message: 'Configuration updated successfully' });
 });
 
 app.get('/api/statistics', (req, res) => {
@@ -1602,84 +1781,6 @@ app.get('/api/mt5/diagnostic', async (req, res) => {
       }
     });
   }
-});
-
-// Real-time log streaming endpoint with proper memory management
-app.get('/api/logs/stream', (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Cache-Control'
-  });
-
-  // Send initial connection message
-  res.write('data: {"type":"connected","message":"Log stream connected"}\n\n');
-
-  // Send recent logs
-  const recentLogs = dashboardLogs.slice(-10);
-  recentLogs.forEach((log: any) => {
-    res.write(`data: ${JSON.stringify(log)}\n\n`);
-  });
-
-  // Set up periodic heartbeat with proper error handling
-  const heartbeat = setInterval(() => {
-    try {
-      // Check if response is still writable
-      if (res.writable && !res.destroyed) {
-        res.write('data: {"type":"heartbeat","timestamp":"' + new Date().toISOString() + '"}\n\n');
-      } else {
-        // Connection is dead, clean up immediately
-        clearInterval(heartbeat);
-        cleanup();
-      }
-    } catch (error) {
-      // Client disconnected, clean up immediately
-      clearInterval(heartbeat);
-      cleanup();
-    }
-  }, 30000);
-
-  // Add client to active connections list
-  streamClients.push({ res, heartbeat, created: Date.now() });
-
-  // Enhanced cleanup function
-  const cleanup = () => {
-    // Clear heartbeat interval
-    if (heartbeat) {
-      clearInterval(heartbeat);
-    }
-    
-    // Remove from active clients
-    const clientIndex = streamClients.findIndex(client => client.res === res);
-    if (clientIndex !== -1) {
-      streamClients.splice(clientIndex, 1);
-    }
-    
-    // Force close response if still open
-    if (!res.destroyed) {
-      try {
-        res.end();
-      } catch (e) {
-        // Ignore errors on forced close
-      }
-    }
-  };
-
-  // Enhanced connection monitoring
-  req.on('close', cleanup);
-  req.on('error', cleanup);
-  req.on('aborted', cleanup);
-  
-  // Automatic cleanup for stale connections (after 10 minutes)
-  setTimeout(() => {
-    if (streamClients.some(client => client.res === res)) {
-      cleanup();
-    }
-  }, 600000);
-  
-  streamClients.push(res);
 });
 
 // Test connection endpoint

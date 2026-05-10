@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 
 // Only load dotenv if environment variables aren't already set (e.g., in Electron)
 if (!process.env.BOT_TOKEN && !process.env.ELECTRON_IS_RUNNING) {
@@ -10,6 +11,25 @@ if (!process.env.BOT_TOKEN && !process.env.ELECTRON_IS_RUNNING) {
   const envPath = path.join(process.cwd(), '.env');
   dotenv.config({ path: envPath });
 }
+
+/** Merge data/settings.json over process.env before building config (persisted dashboard settings). */
+function mergePersistedSettingsFile(): void {
+  try {
+    const settingsPath = path.join(process.cwd(), 'data', 'settings.json');
+    if (!fs.existsSync(settingsPath)) return;
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(data)) {
+      if (v === null || v === undefined) continue;
+      process.env[k] = String(v);
+    }
+    console.log(`📂 Merged persisted settings from ${settingsPath}`);
+  } catch (e) {
+    console.warn('⚠️ Could not load data/settings.json:', e);
+  }
+}
+
+mergePersistedSettingsFile();
 
 export const config = {
   botToken: process.env.BOT_TOKEN || '',
@@ -45,6 +65,40 @@ export const config = {
     level: process.env.LOG_LEVEL || 'info'
   }
 };
+
+/**
+ * Refresh mutable `config` fields from process.env after dashboard PATCH or runtime edits.
+ */
+export function syncConfigFromEnv(): void {
+  config.botToken = process.env.BOT_TOKEN || '';
+  config.nodeEnv = process.env.NODE_ENV || 'development';
+  config.instanceType = process.env.INSTANCE_TYPE || 'production';
+  config.botEnabled = process.env.BOT_ENABLED !== 'false';
+  config.dashboardEnabled = process.env.DASHBOARD_ENABLED !== 'false';
+  config.dashboardPort = parseInt(process.env.DASHBOARD_PORT || '3000', 10);
+
+  config.metaApi.token = process.env.METAAPI_TOKEN || '';
+  config.metaApi.accountId = process.env.METAAPI_ACCOUNT_ID || '';
+  config.metaApi.accounts =
+    process.env.METAAPI_ACCOUNTS || process.env.METAAPI_TEST_ACCOUNT || '';
+
+  config.allowedChannelId = process.env.ALLOWED_CHANNEL_ID || '';
+  config.allowedChannelUsername = process.env.ALLOWED_CHANNEL_USERNAME || '';
+
+  config.trading.fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
+  config.trading.cryptoLotSize = parseFloat(process.env.CRYPTO_LOT_SIZE || '0.05');
+  config.trading.maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
+  config.trading.riskPercentage = parseFloat(process.env.RISK_PERCENTAGE || '1.3');
+  config.trading.fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+  config.trading.enforceOneToOneRR = process.env.ENFORCE_1_1_RR !== 'false';
+  config.trading.defaultOrderType = process.env.DEFAULT_ORDER_TYPE || 'MARKET';
+  config.trading.useSmartOrderType = process.env.USE_SMART_ORDER_TYPE !== 'false';
+  config.trading.limitOrderSlippage = parseFloat(process.env.LIMIT_ORDER_SLIPPAGE || '5');
+  config.trading.pendingOrderExpiration = parseInt(process.env.PENDING_ORDER_EXPIRATION || '4', 10);
+  config.trading.enableAdvancedOrderTypes = process.env.ENABLE_ADVANCED_ORDER_TYPES !== 'false';
+
+  config.logging.level = process.env.LOG_LEVEL || 'info';
+}
 
 export const validateConfig = (): boolean => {
   console.log('🔍 CRITICAL: Validating configuration for production safety...');

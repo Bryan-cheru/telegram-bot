@@ -24,6 +24,7 @@ class CleanTradingDashboard {
     
     // Skip loading state - load data directly
     try {
+      await this.loadRuntimeSettingsForms();
       await this.loadAccountData();
       await this.loadPositions();
       this.updateDashboardStats(); // Update stats after loading positions
@@ -201,6 +202,22 @@ class CleanTradingDashboard {
       section.classList.remove('active');
     });
     document.getElementById(page)?.classList.add('active');
+
+    this.currentPage = page;
+
+    const pageTitle = document.getElementById('page-title');
+    if (pageTitle) {
+      pageTitle.textContent = this.getPageTitle(page);
+    }
+
+    if (page === 'settings-section') {
+      this.loadRuntimeSettingsForms();
+      if (typeof window.UnifiedSettingsPanel !== 'undefined' && window.UnifiedSettingsPanel.refresh) {
+        window.UnifiedSettingsPanel.refresh();
+      }
+    } else {
+      this.loadPageData(page);
+    }
   }
 
   showAddAccountModal() {
@@ -242,14 +259,10 @@ class CleanTradingDashboard {
       modal.style.display = 'none';
     }
 
-    // Update page title to current page
     const pageTitle = document.getElementById('page-title');
     if (pageTitle) {
       pageTitle.textContent = this.getPageTitle(this.currentPage);
     }
-
-    this.currentPage = page;
-    this.loadPageData(page);
   }
 
   getPageTitle(page) {
@@ -282,6 +295,58 @@ class CleanTradingDashboard {
       case 'logs':
         this.initializeLogs();
         break;
+      case 'settings-section':
+        await this.loadRuntimeSettingsForms();
+        break;
+    }
+  }
+
+  /**
+   * Populate Settings from runtime env (requires API key in prod when DASHBOARD_API_KEY is set).
+   */
+  async loadRuntimeSettingsForms() {
+    const el = (id) => document.getElementById(id);
+
+    try {
+      const res = await fetch('/api/config');
+      const cfg = await res.json();
+      if (!res.ok) throw new Error(cfg.error || res.statusText);
+      if (el('risk-per-trade') && cfg.riskPercentage != null) {
+        el('risk-per-trade').value = cfg.riskPercentage;
+      }
+      if (el('max-daily-trades') && cfg.maxDailyTrades != null) {
+        el('max-daily-trades').value = cfg.maxDailyTrades;
+      }
+      if (el('max-trade-size-cap') && cfg.maxTradeSize != null) {
+        el('max-trade-size-cap').value = cfg.maxTradeSize;
+      }
+      if (el('bot-enabled')) {
+        el('bot-enabled').checked = cfg.botEnabled !== false;
+      }
+    } catch (e) {
+      console.warn('Could not load /api/config:', e);
+    }
+
+    try {
+      const res = await fetch('/api/risk-config');
+      const data = await res.json();
+      if (!data.success || !data.config) return;
+      const c = data.config;
+      if (el('risk-reward-ratio')) el('risk-reward-ratio').value = c.riskRewardRatio;
+      if (el('fixed-lot-size')) el('fixed-lot-size').value = c.fixedLotSize;
+      if (el('fixed-risk-usd')) {
+        el('fixed-risk-usd').value =
+          c.fixedRiskAmount != null && c.fixedRiskAmount !== '' ? c.fixedRiskAmount : '';
+      }
+      if (el('use-signal-stops')) el('use-signal-stops').checked = !!c.useSignalStops;
+      if (el('max-drawdown') && c.maxDrawdownPercent != null) {
+        el('max-drawdown').value = c.maxDrawdownPercent;
+      }
+      if (el('max-daily-loss-pct') && c.maxDailyLossPercent != null) {
+        el('max-daily-loss-pct').value = c.maxDailyLossPercent;
+      }
+    } catch (e) {
+      console.warn('Could not load /api/risk-config:', e);
     }
   }
 
@@ -899,7 +964,11 @@ class CleanTradingDashboard {
       this.logStream.close();
     }
 
-    this.logStream = new EventSource('/api/logs/stream');
+    const streamUrl =
+      typeof window.getLogsStreamUrl === 'function'
+        ? window.getLogsStreamUrl()
+        : '/api/logs/stream';
+    this.logStream = new EventSource(streamUrl);
     
     this.logStream.onopen = () => {
       console.log('📡 Log stream connected');
@@ -1139,7 +1208,21 @@ let dashboardInstance = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   dashboardInstance = new CleanTradingDashboard();
-  
+
+  if (typeof window.UnifiedSettingsPanel !== 'undefined' && window.UnifiedSettingsPanel.init) {
+    window.UnifiedSettingsPanel.init({
+      notify: function (message, type) {
+        if (dashboardInstance) dashboardInstance.showNotification(message, type);
+      }
+    });
+  }
+
+  window.loadRuntimeSettingsFormsHook = function () {
+    if (dashboardInstance && typeof dashboardInstance.loadRuntimeSettingsForms === 'function') {
+      dashboardInstance.loadRuntimeSettingsForms();
+    }
+  };
+
   // Make closeModal globally accessible for HTML onclick handlers
   window.closeModal = function(modalId) {
     if (dashboardInstance) {
@@ -1168,15 +1251,77 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
   
-  window.saveSettings = function() {
+  window.saveDashboardApiKey = function () {
+    var input = document.getElementById('dashboard-api-key');
+    var val = input ? input.value.trim() : '';
+    if (typeof window.setDashboardApiKey === 'function') {
+      window.setDashboardApiKey(val);
+    }
+    if (input) input.value = '';
     if (dashboardInstance) {
-      dashboardInstance.showNotification('Settings saved!', 'success');
+      dashboardInstance.showNotification(
+        val ? 'API key saved in this browser. Reload if panels were failing.' : 'API key cleared.',
+        'success'
+      );
+      dashboardInstance.loadRuntimeSettingsForms();
+      if (typeof window.UnifiedSettingsPanel !== 'undefined' && window.UnifiedSettingsPanel.refresh) {
+        window.UnifiedSettingsPanel.refresh();
+      }
     }
   };
-  
-  window.saveRiskSettings = function() {
-    if (dashboardInstance) {
-      dashboardInstance.showNotification('Risk settings saved!', 'success');
+
+  window.saveSettings = async function () {
+    if (!dashboardInstance) return;
+    try {
+      var body = {
+        botEnabled: document.getElementById('bot-enabled').checked,
+        maxDailyTrades: parseInt(document.getElementById('max-daily-trades').value, 10),
+        maxTradeSize: parseFloat(document.getElementById('max-trade-size-cap').value),
+        riskPercentage: parseFloat(document.getElementById('risk-per-trade').value)
+      };
+      var res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+      dashboardInstance.showNotification('Bot settings saved.', 'success');
+    } catch (e) {
+      dashboardInstance.showNotification('Save failed: ' + (e.message || e), 'error');
+    }
+  };
+
+  window.saveRiskSettings = async function () {
+    if (!dashboardInstance) return;
+    try {
+      var fixedUsd = document.getElementById('fixed-risk-usd').value.trim();
+      var body = {
+        riskRewardRatio: parseFloat(document.getElementById('risk-reward-ratio').value),
+        fixedLotSize: parseFloat(document.getElementById('fixed-lot-size').value),
+        useSignalStops: document.getElementById('use-signal-stops').checked,
+        maxDailyLossPercent: parseFloat(document.getElementById('max-daily-loss-pct').value),
+        maxDrawdownPercent: parseFloat(document.getElementById('max-drawdown').value)
+      };
+      if (fixedUsd === '') {
+        body.fixedRiskAmount = null;
+      } else {
+        body.fixedRiskAmount = parseFloat(fixedUsd);
+      }
+      var res = await fetch('/api/risk-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+      dashboardInstance.showNotification('Risk settings saved.', 'success');
+    } catch (e) {
+      dashboardInstance.showNotification('Save failed: ' + (e.message || e), 'error');
     }
   };
   

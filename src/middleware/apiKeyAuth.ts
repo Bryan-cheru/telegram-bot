@@ -16,8 +16,14 @@ export function requireApiKey(opts?: { headerName?: string; envVarName?: string 
       });
     }
 
-    const provided = (req.headers[headerName] as string | undefined) || '';
-    if (provided && provided === expected) return next();
+    const headerProvided = (req.headers[headerName] as string | undefined) || '';
+    const queryRaw = req.query?.api_key;
+    const queryProvided =
+      typeof queryRaw === 'string' ? queryRaw : Array.isArray(queryRaw) ? queryRaw[0] : '';
+
+    // Prefer header; allow ?api_key= for EventSource (cannot set headers) — use HTTPS in production
+    if (headerProvided && headerProvided === expected) return next();
+    if (queryProvided && queryProvided === expected) return next();
 
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   };

@@ -5168,3 +5168,103 @@ input:checked + .slider:before {
   margin-top: var(--space-xs);
   font-style: italic;
 }
+
+/* Unified settings (Phase 3) */
+.unified-settings-card .card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.unified-settings-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.unified-settings-meta {
+  margin-bottom: var(--space-lg);
+}
+
+.unified-settings-meta .pill {
+  display: inline-block;
+  font-size: var(--font-size-xs);
+  color: var(--gray-400);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--gray-900);
+  border-radius: var(--border-radius);
+}
+
+.unified-settings-group {
+  margin-bottom: var(--space-xl);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--gray-700);
+}
+
+.unified-settings-group:last-child {
+  border-bottom: none;
+}
+
+.unified-settings-group-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--white);
+  margin-bottom: var(--space-md);
+}
+
+.unified-setting-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(200px, 2fr);
+  gap: var(--space-md);
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.unified-setting-row:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 768px) {
+  .unified-setting-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.unified-setting-label code {
+  font-size: var(--font-size-xs);
+  color: var(--gray-300);
+}
+
+.restart-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  margin-left: var(--space-xs);
+  vertical-align: middle;
+}
+
+.secret-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  margin-left: var(--space-xs);
+}
+
+.unified-settings-loading {
+  color: var(--gray-400);
+  padding: var(--space-xl);
+  text-align: center;
+}
+
+.unified-setting-switch {
+  justify-content: flex-start;
+}

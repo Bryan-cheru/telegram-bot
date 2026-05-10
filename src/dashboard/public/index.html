@@ -611,6 +611,24 @@
                 <div class="settings-grid">
                     <div class="card">
                         <div class="card-header">
+                            <h3><i class="fas fa-key"></i> Dashboard API access</h3>
+                        </div>
+                        <div class="card-body">
+                            <p class="form-hint" style="color: var(--gray-400); font-size: 0.875rem; margin-bottom: 1rem;">
+                                If <code>DASHBOARD_API_KEY</code> is set on the server, paste the same key here once. It is stored only in your browser (localStorage) and sent as <code>x-api-key</code> on API requests.
+                            </p>
+                            <div class="form-group">
+                                <label for="dashboard-api-key">API key</label>
+                                <input type="password" id="dashboard-api-key" class="form-input" autocomplete="current-password" placeholder="Paste dashboard API key">
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="saveDashboardApiKey()">
+                                <i class="fas fa-save"></i> Save API key
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
                             <h3><i class="fas fa-robot"></i> Bot Settings</h3>
                         </div>
                         <div class="card-body">
@@ -622,42 +640,92 @@
                                 </label>
                             </div>
                             <div class="form-group">
-                                <label for="risk-per-trade">Risk Per Trade (%)</label>
-                                <input type="number" id="risk-per-trade" class="form-input" value="2" min="0.1" max="10" step="0.1">
+                                <label for="risk-per-trade">Risk per trade (% of balance — used when fixed USD not set)</label>
+                                <input type="number" id="risk-per-trade" class="form-input" value="0.33" min="0.1" max="10" step="0.05">
                             </div>
                             <div class="form-group">
-                                <label for="max-daily-trades">Max Daily Trades</label>
-                                <input type="number" id="max-daily-trades" class="form-input" value="5" min="1" max="20">
+                                <label for="max-daily-trades">Max daily trades</label>
+                                <input type="number" id="max-daily-trades" class="form-input" value="10" min="1" max="50">
                             </div>
-                            <button class="btn btn-primary" onclick="saveSettings()">
-                                <i class="fas fa-save"></i> Save Settings
+                            <div class="form-group">
+                                <label for="max-trade-size-cap">Max lot size (cap)</label>
+                                <input type="number" id="max-trade-size-cap" class="form-input" value="0.1" min="0.01" max="100" step="0.01">
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="saveSettings()">
+                                <i class="fas fa-save"></i> Save bot settings
                             </button>
                         </div>
                     </div>
 
                     <div class="card">
                         <div class="card-header">
-                            <h3><i class="fas fa-shield-alt"></i> Risk Management</h3>
+                            <h3><i class="fas fa-shield-alt"></i> Risk &amp; execution</h3>
                         </div>
                         <div class="card-body">
+                            <p class="form-hint" style="color: var(--gray-400); font-size: 0.875rem; margin-bottom: 1rem;">
+                                SL/TP on orders use this model (signal channel TP/SL ignored unless “Use signal TP/SL” is on).
+                            </p>
                             <div class="form-group">
-                                <label for="max-drawdown">Max Drawdown (%)</label>
-                                <input type="number" id="max-drawdown" class="form-input" value="10" min="1" max="50">
+                                <label for="fixed-risk-usd">Fixed risk (USD)</label>
+                                <input type="number" id="fixed-risk-usd" class="form-input" placeholder="e.g. 1000" min="1" step="1">
                             </div>
                             <div class="form-group">
-                                <label for="daily-loss-limit">Daily Loss Limit ($)</label>
-                                <input type="number" id="daily-loss-limit" class="form-input" value="500" min="10">
+                                <label for="risk-reward-ratio">Risk : reward ratio</label>
+                                <input type="number" id="risk-reward-ratio" class="form-input" value="1.5" min="0.5" max="10" step="0.1">
                             </div>
                             <div class="form-group">
-                                <label for="emergency-stop">Emergency Stop</label>
+                                <label for="fixed-lot-size">Reference lot size (for SL/TP distance math)</label>
+                                <input type="number" id="fixed-lot-size" class="form-input" value="0.65" min="0.01" max="100" step="0.01">
+                            </div>
+                            <div class="form-group">
+                                <label for="use-signal-stops">Use TP/SL from Telegram signal text</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="use-signal-stops">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <hr style="border-color: var(--gray-700); margin: 1rem 0;">
+                            <div class="form-group">
+                                <label for="max-drawdown">Max drawdown (%)</label>
+                                <input type="number" id="max-drawdown" class="form-input" value="10" min="1" max="50" step="0.5">
+                            </div>
+                            <div class="form-group">
+                                <label for="max-daily-loss-pct">Max daily loss (%)</label>
+                                <input type="number" id="max-daily-loss-pct" class="form-input" value="5" min="0.1" max="50" step="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="emergency-stop">Emergency stop (placeholder)</label>
                                 <label class="switch">
                                     <input type="checkbox" id="emergency-stop">
                                     <span class="slider"></span>
                                 </label>
                             </div>
-                            <button class="btn btn-primary" onclick="saveRiskSettings()">
-                                <i class="fas fa-save"></i> Save Risk Settings
+                            <button type="button" class="btn btn-primary" onclick="saveRiskSettings()">
+                                <i class="fas fa-save"></i> Save risk settings
                             </button>
+                        </div>
+                    </div>
+
+                    <div class="card unified-settings-card" style="grid-column: 1 / -1;">
+                        <div class="card-header">
+                            <h3><i class="fas fa-sliders-h"></i> All runtime settings</h3>
+                            <div class="unified-settings-actions">
+                                <button type="button" class="btn btn-outline btn-sm" id="unified-settings-refresh">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                                <button type="button" class="btn btn-primary btn-sm" id="unified-settings-save">
+                                    <i class="fas fa-save"></i> Save changes
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <p class="form-hint" style="color: var(--gray-400); font-size: 0.875rem; margin-bottom: 1rem;">
+                                Full list from <code>GET /api/settings</code>. Saves with <code>PATCH /api/settings</code> to <code>data/settings.json</code>.
+                                Secrets: leave blank to keep current value. Fields marked <span class="restart-badge">restart</span> often need a process restart (e.g. port changes).
+                            </p>
+                            <div id="unified-settings-root">
+                                <div class="unified-settings-loading">Open this tab to load settings…</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -764,9 +832,11 @@
     <!-- Toast Notifications Container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <!-- Core Scripts -->
+    <!-- Core Scripts — auth-helper must load first (injects API key on fetch) -->
+    <script src="scripts/auth-helper.js"></script>
     <script src="scripts/api.js"></script>
     <script src="scripts/utils.js"></script>
+    <script src="scripts/unified-settings.js"></script>
     <script src="scripts/clean-dashboard.js"></script>
     
     <!-- Dashboard initialization now handled in clean-dashboard.js -->

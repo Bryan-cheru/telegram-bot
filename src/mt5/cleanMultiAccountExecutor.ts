@@ -8,6 +8,12 @@ import { TradeSignal, TradeResult } from '../types';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { logger } from '../utils/logger';
 import { config } from '../utils/config';
+import {
+  calculateFixedDollarStopsAndTargets,
+  formatPriceForInstrument,
+  getPipSize,
+  getPipValuePerLot
+} from '../trading/riskMath';
 
 interface AccountConfig {
   id: string;
@@ -257,79 +263,65 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate Stop Loss and Take Profit with realistic distances for $900 risk target
-   * Uses instrument-appropriate distances instead of forcing exact $900 on all instruments
+   * Target risk in account USD: dashboard RISK_AMOUNT_USD, else FIXED_RISK_AMOUNT, else balance * RISK_PERCENTAGE.
    */
-  private calculateTakeProfit(signal: TradeSignal, entryPrice: number): number {
-    const fixedLotSize = config.trading.fixedLotSize;   // Use configured lot size
-    const targetRisk = config.trading.fixedRiskAmount;      // Use configured risk amount
+  private getEffectiveRiskUsd(connection: any): number {
+    const dashFixed = process.env.RISK_AMOUNT_USD;
+    if (dashFixed != null && dashFixed !== '') {
+      const v = parseFloat(dashFixed);
+      if (isFinite(v) && v > 0) return v;
+    }
+    const fixedEnv = parseFloat(process.env.FIXED_RISK_AMOUNT || '');
+    if (isFinite(fixedEnv) && fixedEnv > 0) return fixedEnv;
+    const pct = parseFloat(process.env.RISK_PERCENTAGE || '0.33');
+    try {
+      const bal = connection?.terminalState?.accountInformation?.balance;
+      if (typeof bal === 'number' && bal > 0 && isFinite(pct)) {
+        return bal * (pct / 100);
+      }
+    } catch {
+      /* ignore */
+    }
+    return parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+  }
+
+  /** Lot size for risk-distance math: FIXED_LOT_SIZE env or config default. */
+  private getEffectiveLotSize(): number {
+    const fromEnv = parseFloat(process.env.FIXED_LOT_SIZE || '');
+    if (isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+    return config.trading.fixedLotSize;
+  }
+
+  /**
+   * SL/TP from user-facing risk settings (same helpers as parser fallback).
+   * Channel TP/SL lines are ignored when USE_SIGNAL_STOPS is not true.
+   */
+  private applyUserRiskLevels(
+    signal: TradeSignal,
+    entryPrice: number,
+    connection: any
+  ): { stopLoss: number; takeProfit: number } {
+    const lotSize = this.getEffectiveLotSize();
+    const riskAmount = this.getEffectiveRiskUsd(connection);
     const riskRewardRatio = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
-    const targetReward = targetRisk * riskRewardRatio;   // Calculate reward based on configured ratio
-    
-    // Get pip value for this instrument
-    const pipValue = this.getPipValue(signal.symbol);
-    
-    // Calculate EXACT distance for $900 risk / $1350 reward (in pips)
-    const exactRiskDistanceInPips = targetRisk / (fixedLotSize * pipValue);
-    const exactRewardDistanceInPips = targetReward / (fixedLotSize * pipValue);
-    
-    // Convert pip distance to actual price difference based on instrument
-    let riskPriceDistance = exactRiskDistanceInPips;
-    let rewardPriceDistance = exactRewardDistanceInPips;
-    const upperSymbol = signal.symbol.toUpperCase();
-    
-    if (this.isForexPair(upperSymbol) && !upperSymbol.includes('JPY') && !upperSymbol.includes('XAU') && !upperSymbol.includes('XAG')) {
-      // Major forex pairs: 1 pip = 0.0001
-      riskPriceDistance = exactRiskDistanceInPips * 0.0001;
-      rewardPriceDistance = exactRewardDistanceInPips * 0.0001;
-    } else if (upperSymbol.includes('JPY')) {
-      // JPY pairs: 1 pip = 0.01
-      riskPriceDistance = exactRiskDistanceInPips * 0.01;
-      rewardPriceDistance = exactRewardDistanceInPips * 0.01;
-    }
-    // For metals (Gold/Silver) and indices, use pip distance as-is (dollar amounts or points)
-    
-    let stopLoss: number;
-    let takeProfit: number;
-    
-    // Calculate SL and TP using the correct price distances (1:1.5 ratio)
-    if (signal.action === 'BUY') {
-      stopLoss = entryPrice - riskPriceDistance;    // $900 risk
-      takeProfit = entryPrice + rewardPriceDistance; // $1350 reward (1:1.5 RR)
-    } else if (signal.action === 'SELL') {
-      stopLoss = entryPrice + riskPriceDistance;     // $900 risk
-      takeProfit = entryPrice - rewardPriceDistance; // $1350 reward (1:1.5 RR)
-    } else {
-      throw new Error(`Invalid action for SL/TP calculation: ${signal.action}`);
-    }
-    
-    // Verify calculations are exactly $900 risk / $1350 reward
-    const actualRisk = fixedLotSize * exactRiskDistanceInPips * pipValue;
-    const actualReward = fixedLotSize * exactRewardDistanceInPips * pipValue;
-    
-    // Final safety validation
-    if (signal.action === 'BUY') {
-      if (stopLoss >= entryPrice) throw new Error(`Invalid BUY SL: ${stopLoss} must be < Entry ${entryPrice}`);
-      if (takeProfit <= entryPrice) throw new Error(`Invalid BUY TP: ${takeProfit} must be > Entry ${entryPrice}`);
-    } else {
-      if (stopLoss <= entryPrice) throw new Error(`Invalid SELL SL: ${stopLoss} must be > Entry ${entryPrice}`);
-      if (takeProfit >= entryPrice) throw new Error(`Invalid SELL TP: ${takeProfit} must be < Entry ${entryPrice}`);
-    }
-    
-    // Update signal with calculated stop loss
-    signal.stopLoss = stopLoss;
-    
-    logger.info(`💰 EXACT $900 RISK / $1350 REWARD STRATEGY - ${signal.symbol}:`);
-    logger.info(`   Fixed Risk: $${actualRisk.toFixed(2)} (EXACT)`);
-    logger.info(`   Fixed Reward: $${actualReward.toFixed(2)} (EXACT)`);
-    logger.info(`   Lot Size: ${fixedLotSize} lots (fixed)`);
-    logger.info(`   Pip Value: $${pipValue}/pip`);
-    logger.info(`   Entry: ${entryPrice.toFixed(5)}`);
-    logger.info(`   Stop Loss: ${stopLoss.toFixed(5)} (${exactRiskDistanceInPips.toFixed(2)} pips = ${riskPriceDistance.toFixed(5)} price distance)`);
-    logger.info(`   Take Profit: ${takeProfit.toFixed(5)} (${exactRewardDistanceInPips.toFixed(2)} pips = ${rewardPriceDistance.toFixed(5)} price distance)`);
-    logger.info(`   Risk/Reward: 1:${riskRewardRatio} (configured ratio)`);
-    
-    return takeProfit;
+
+    const { stopLoss, targets } = calculateFixedDollarStopsAndTargets({
+      symbol: signal.symbol,
+      entryPrice,
+      direction: signal.action,
+      config: { lotSize, riskAmount, riskRewardRatio }
+    });
+    const slDistance = Math.abs(entryPrice - stopLoss);
+    const fallbackTp =
+      signal.action === 'BUY'
+        ? entryPrice + slDistance * riskRewardRatio
+        : entryPrice - slDistance * riskRewardRatio;
+    const tp = targets[0] ?? fallbackTp;
+
+    return {
+      stopLoss: formatPriceForInstrument(stopLoss, signal.symbol),
+      takeProfit: formatPriceForInstrument(tp, signal.symbol)
+    };
   }
 
   /**
@@ -660,38 +652,63 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const price = await accountConfig.connection.getSymbolPrice(validSymbol, false);
       const marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
 
-      // Step 3: Calculate entry price and volume
+      // Step 3: Entry from signal only (limit/market zone); SL/TP from user config unless USE_SIGNAL_STOPS=true
       const entryPrice = this.calculateEntryPrice(signal, marketData);
-      // Calculate position size using proper risk management
-      const volume = this.calculateVolume(accountConfig.connection, signal);
 
-      // Step 3.5: Calculate take profit using 1:1.5 RR default
-      let finalTakeProfit = this.calculateTakeProfit(signal, entryPrice);
+      const useSignalStops = process.env.USE_SIGNAL_STOPS === 'true';
+      const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
+      let finalTakeProfit: number;
 
-      // Step 3.6: Validate and adjust stops for broker requirements
+      if (
+        useSignalStops &&
+        typeof signal.stopLoss === 'number' &&
+        signal.stopLoss > 0 &&
+        Array.isArray(signal.targets) &&
+        signal.targets.length > 0
+      ) {
+        signal.stopLoss = formatPriceForInstrument(signal.stopLoss, signal.symbol);
+        finalTakeProfit = formatPriceForInstrument(signal.targets[0], signal.symbol);
+        logger.info('📌 SL/TP from parsed signal (USE_SIGNAL_STOPS=true)');
+      } else {
+        if (useSignalStops) {
+          logger.warn(
+            '⚠️ USE_SIGNAL_STOPS=true but signal missing SL or TP — falling back to user risk config'
+          );
+        }
+        const levels = this.applyUserRiskLevels(signal, entryPrice, accountConfig.connection);
+        signal.stopLoss = levels.stopLoss;
+        finalTakeProfit = levels.takeProfit;
+        logger.info(
+          '📌 SL/TP from user risk config (dashboard / .env); entry follows signal'
+        );
+      }
+
+      const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice);
+
+      // Step 3.6: Validate and adjust stops for broker minimum distance (preserve RR on TP)
       const brokerName = accountConfig.brokerName;
       const minStopDistance = this.getBrokerMinimumStopDistance(validSymbol, brokerName);
-      
-      // Check if current stop distance meets broker minimum requirements
+
       const currentStopDistance = Math.abs(entryPrice - signal.stopLoss);
       if (currentStopDistance < minStopDistance) {
-        logger.warn(`⚠️ Stop distance ${currentStopDistance.toFixed(1)} points < broker minimum ${minStopDistance} points`);
-        logger.warn(`🔧 Adjusting stops to meet ${brokerName} requirements...`);
-        
-        // Adjust stop loss to meet minimum distance
+        logger.warn(
+          `⚠️ Stop distance ${currentStopDistance.toFixed(5)} < broker minimum ${minStopDistance} — widening`
+        );
+
         if (signal.action === 'BUY') {
           signal.stopLoss = entryPrice - minStopDistance;
+          finalTakeProfit = entryPrice + minStopDistance * rr;
         } else {
           signal.stopLoss = entryPrice + minStopDistance;
+          finalTakeProfit = entryPrice - minStopDistance * rr;
         }
-        
-        // Also adjust take profit to maintain 1:1.5 ratio
-        finalTakeProfit = signal.action === 'BUY' 
-          ? entryPrice + minStopDistance 
-          : entryPrice - minStopDistance;
-          
-        logger.info(`✅ Adjusted levels - SL: ${signal.stopLoss.toFixed(5)}, TP: ${finalTakeProfit.toFixed(5)}`);
-        logger.info(`📏 New distance: ${minStopDistance} points (meets ${brokerName} minimum)`);
+
+        signal.stopLoss = formatPriceForInstrument(signal.stopLoss, signal.symbol);
+        finalTakeProfit = formatPriceForInstrument(finalTakeProfit, signal.symbol);
+
+        logger.info(
+          `✅ Adjusted to broker minimum — SL: ${signal.stopLoss}, TP: ${finalTakeProfit} (RR ${rr})`
+        );
       }
 
       // Step 4: Execute the trade using MetaAPI (validation happens in getValidSymbol)
@@ -808,65 +825,57 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate trade volume based on $900 fixed risk per trade
+   * Volume sized to approximate target risk USD given entry→SL distance (aligned with riskMath pip model).
    */
-  private calculateVolume(connection: any, signal: TradeSignal): number {
+  private calculateVolume(connection: any, signal: TradeSignal, entryPrice: number): number {
     try {
       const accountInfo = connection.terminalState.accountInformation;
-      const balance = accountInfo?.balance || 197181.33; // Use your current balance as fallback
-      
-      // FIXED RISK STRATEGY: Always risk $900 per trade
-      const fixedRiskAmount = 900; // Always risk $900 per trade
-      
-      // Calculate entry price (use middle of entry zone)
-      const entryPrice = signal.entryZone ? 
-        (signal.entryZone.min + signal.entryZone.max) / 2 : 
-        signal.entryPrice || 0;
-        
-      // Calculate risk distance
+      const balance = accountInfo?.balance || 0;
+
+      const fixedRiskAmount = this.getEffectiveRiskUsd(connection);
+
       let riskDistance = 0;
       if (signal.stopLoss && entryPrice) {
         riskDistance = Math.abs(entryPrice - signal.stopLoss);
       }
-      
+
       if (!entryPrice || !signal.stopLoss || riskDistance === 0) {
-        logger.warn('⚠️ Invalid entry price or stop loss for volume calculation, using fallback');
-        return config.trading.fixedLotSize;
+        logger.warn('⚠️ Invalid entry/stop for volume — using configured lot size');
+        return Math.min(this.getEffectiveLotSize(), config.trading.maxTradeSize);
       }
-      
-      // Get pip value based on symbol for risk calculation
-      const pipValue = this.getPipValue(signal.symbol);
-      
-      // Calculate lot size to achieve exactly $900 risk
-      // Formula: Risk Amount / (Stop Loss Distance * Pip Value) = Lot Size
-      let calculatedLotSize = fixedRiskAmount / (riskDistance * pipValue);
-      
-      // Apply reasonable limits (0.01 to 10 lots)
+
+      const sym = signal.symbol.toUpperCase();
+      const pipSize = getPipSize(sym);
+      const pipValuePerLot = getPipValuePerLot(sym);
+      const riskPips = riskDistance / pipSize;
+      const dollarRiskPerLot = riskPips * pipValuePerLot;
+
+      if (!isFinite(dollarRiskPerLot) || dollarRiskPerLot <= 0) {
+        return Math.min(this.getEffectiveLotSize(), config.trading.maxTradeSize);
+      }
+
+      let calculatedLotSize = fixedRiskAmount / dollarRiskPerLot;
+
       calculatedLotSize = Math.max(0.01, calculatedLotSize);
       calculatedLotSize = Math.min(10.0, calculatedLotSize);
-      
-      // Round to 0.01 increments
+      const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
+      const maxVol =
+        isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
+      calculatedLotSize = Math.min(calculatedLotSize, maxVol);
       calculatedLotSize = Math.round(calculatedLotSize * 100) / 100;
-      
-      // Calculate actual risk with final lot size
-      const actualRisk = calculatedLotSize * riskDistance * pipValue;
-      const actualRiskPercentage = (actualRisk / balance) * 100;
-      
-      logger.info(`💰 $900 FIXED RISK CALCULATION for ${signal.symbol}:`);
-      logger.info(`   Account Balance: $${balance.toLocaleString()}`);
-      logger.info(`   Target Risk: $${fixedRiskAmount}`);
-      logger.info(`   Entry: ${entryPrice}, Stop: ${signal.stopLoss}`);
-      logger.info(`   Risk Distance: ${riskDistance.toFixed(5)} points`);
-      logger.info(`   Pip Value: $${pipValue}/lot`);
-      logger.info(`   Calculated Lot Size: ${calculatedLotSize} lots`);
-      logger.info(`   Actual Risk: $${actualRisk.toFixed(2)} (${actualRiskPercentage.toFixed(3)}%)`);
-      
+
+      const actualRisk = calculatedLotSize * dollarRiskPerLot;
+      const actualRiskPercentage = balance > 0 ? (actualRisk / balance) * 100 : 0;
+
+      logger.info(`💰 Risk-target volume (${signal.symbol}):`);
+      logger.info(`   Target risk USD: $${fixedRiskAmount.toFixed(2)}`);
+      logger.info(`   Entry: ${entryPrice}, SL: ${signal.stopLoss}, distance: ${riskDistance.toFixed(6)}`);
+      logger.info(`   Lots: ${calculatedLotSize} (actual risk ~$${actualRisk.toFixed(2)}, ${actualRiskPercentage.toFixed(3)}% of balance)`);
+
       return calculatedLotSize;
-      
     } catch (error) {
       logger.error('Volume calculation error:', error);
-      // Return fallback lot size on error
-      return config.trading.fixedLotSize;
+      return Math.min(this.getEffectiveLotSize(), config.trading.maxTradeSize);
     }
   }
 

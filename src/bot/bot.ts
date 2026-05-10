@@ -227,6 +227,11 @@ export class TelegramBot {
 
   private async handleTextMessage(ctx: any): Promise<void> {
     try {
+      if (process.env.BOT_ENABLED === 'false') {
+        logger.info('🚫 Trading disabled (BOT_ENABLED=false) — ignoring signal message');
+        return;
+      }
+
       // Check if message is from allowed channel (by ID or username)
       const chatId = ctx.chat?.id.toString();
       const chatUsername = (ctx.chat as any)?.username;

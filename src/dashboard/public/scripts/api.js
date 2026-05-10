@@ -15,9 +15,25 @@ class APIService {
 
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
+    const isFormData =
+      typeof FormData !== 'undefined' && options.body instanceof FormData;
+    const mergedHeaders = Object.assign(
+      {},
+      !isFormData ? this.defaultOptions.headers : {},
+      options.headers || {}
+    );
+    try {
+      const key = typeof window !== 'undefined' && window.getDashboardApiKey && window.getDashboardApiKey();
+      if (key && !mergedHeaders['x-api-key'] && !mergedHeaders['X-API-KEY']) {
+        mergedHeaders['x-api-key'] = key;
+      }
+    } catch (_) {
+      /* ignore */
+    }
     const config = {
       ...this.defaultOptions,
-      ...options
+      ...options,
+      headers: mergedHeaders
     };
 
     this.requestCount++;
