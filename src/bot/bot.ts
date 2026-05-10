@@ -3,10 +3,8 @@ import { MessageHandler } from './handlers/messageHandler';
 // import { ModernizedPhotoHandler } from './handlers/ModernizedPhotoHandler'; // Disabled complex handler
 import { CleanMultiAccountExecutor } from '../mt5/cleanMultiAccountExecutor';
 import { ITradeExecutor } from '../types/ITradeExecutor';
-import { TradeSignal } from '../types';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
-import { EnhancedMetaApiService } from '../services/EnhancedMetaApiService';
 import { ValidationService } from '../shared';
 import { ManualSignalParser } from '../services/ManualSignalParser';
 import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
@@ -16,83 +14,19 @@ export class TelegramBot {
   private messageHandler: MessageHandler;
   // private photoHandler: ModernizedPhotoHandler; // Disabled complex handler
   private tradeExecutor: ITradeExecutor;
-  private enhancedService: EnhancedMetaApiService;
   private manualSignalParser: ManualSignalParser;
 
   constructor() {
     this.bot = new Telegraf(config.botToken);
-    
-    // Initialize enhanced MetaAPI services
-    logger.info('🚀 Initializing Enhanced MetaAPI Trading System');
     this.tradeExecutor = new CleanMultiAccountExecutor();
-    this.enhancedService = new EnhancedMetaApiService({
-      maxDrawdownPercent: 10,
-      maxDailyLossPercent: 5,
-      maxPositionSizePercent: 5,
-      maxOpenPositions: 10
-    });
-    
     this.messageHandler = new MessageHandler();
-    // this.photoHandler = new ModernizedPhotoHandler(this.tradeExecutor); // Disabled complex handler
-    
-    // Initialize manual signal parser with configuration
     this.manualSignalParser = new ManualSignalParser();
-    logger.info('✅ Manual signal parser initialized');
-    
     this.setupHandlers();
   }
 
   // Getter to share executor with dashboard
   getTradeExecutor(): CleanMultiAccountExecutor {
     return this.tradeExecutor as CleanMultiAccountExecutor;
-  }
-
-  /**
-   * Execute signal using enhanced MetaAPI features with risk management
-   */
-  private async executeEnhancedSignal(signal: TradeSignal): Promise<any> {
-    try {
-      // Get the first available account ID from environment
-      const accountsConfig = process.env.METAAPI_ACCOUNTS;
-      if (!accountsConfig) {
-        throw new Error('No MetaAPI accounts configured');
-      }
-
-      const firstAccountId = accountsConfig.split(',')[0].split(':')[0];
-      
-      logger.info(`🎯 Using enhanced execution for ${signal.symbol} on account ${firstAccountId}`);
-
-      // Execute with enhanced features using fixed lot size strategy
-      const result = await this.enhancedService.executeEnhancedTrade({
-        signal,
-        accountId: firstAccountId,
-        riskPercent: 0.45, // Fixed 0.45 lot size ($900 fixed risk per trade)
-        maxSlippage: 3  // 3 pip max slippage
-      });
-
-      if (result.success) {
-        const riskRewardRatio = process.env.RISK_REWARD_RATIO || '1.5';
-        logger.info(`✅ Enhanced trade execution successful with 1:${riskRewardRatio} RR:`, {
-          ticket: result.ticket,
-          positionSize: result.positionSize,
-          riskAmount: result.riskAmount,
-          executionPrice: result.executionPrice,
-          risk: `${config.trading.riskPercentage}%`
-        });
-      }
-
-      return {
-        success: result.success,
-        message: result.message,
-        error: result.success ? undefined : result.message,
-        ticket: result.ticket,
-        signalId: result.ticket || `enhanced-${Date.now()}`
-      };
-
-    } catch (error) {
-      logger.error('Enhanced signal execution error:', error);
-      throw error;
-    }
   }
 
   private setupHandlers(): void {
@@ -282,19 +216,18 @@ export class TelegramBot {
       logger.info('📨 Processing text message for trading signal');
       logger.debug('Message text:', text);
 
-      // 🎯 PRIORITY 1: Check for ultra-simple manual signal format: "XAGUSD BUY 50.9207"
-      const manualSignal = this.manualSignalParser.parseSignal(text);
-      if (manualSignal) {
-        logger.info('✅ Manual signal detected - requesting confirmation');
-        
-        // Generate confirmation message
-        const confirmationMsg = this.manualSignalParser.generateConfirmationMessage(manualSignal);
-        await ctx.reply(confirmationMsg);
-        
-        // TODO: Add confirmation handler (wait for user to reply ✅ CONFIRM or ❌ CANCEL)
-        // For now, just log that we would execute
-        logger.info(`📋 Manual signal ready for execution:`, manualSignal);
-        return;
+      // 🎯 PRIORITY 1: Ultra-simple manual format ONLY ("XAGUSD BUY 50.9207" — no TP/SL lines, no "Now"/"Limit")
+      // Skip for channel signals which always have TP/SL lines or "Now"/"Limit" keywords.
+      const isChannelFormat = /\b(now|limit)\b/i.test(text) || /\bTP\b/i.test(text) || /\bSL\b/i.test(text);
+      if (!isChannelFormat) {
+        const manualSignal = this.manualSignalParser.parseSignal(text);
+        if (manualSignal) {
+          logger.info('✅ Manual signal detected - requesting confirmation');
+          const confirmationMsg = this.manualSignalParser.generateConfirmationMessage(manualSignal);
+          await ctx.reply(confirmationMsg);
+          logger.info(`📋 Manual signal ready for execution:`, manualSignal);
+          return;
+        }
       }
 
       // 🎯 PRIORITY 2: Check if this is a manual trading command (OLD FORMAT)
@@ -411,16 +344,8 @@ export class TelegramBot {
           return;
         }
         
-        logger.info('🚀 Attempting to execute trade signal with enhanced features...');
-        
-        // Try enhanced execution first, fallback to regular execution
-        let result;
-        try {
-          result = await this.executeEnhancedSignal(tradeSignal);
-        } catch (enhancedError) {
-          logger.warn('Enhanced execution failed, using fallback:', enhancedError);
-          result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
-        }
+        logger.info('🚀 Executing trade signal...');
+        const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
         
         logger.info('📊 Trade execution result received:', {
           success: result.success,
