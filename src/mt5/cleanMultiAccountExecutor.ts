@@ -22,6 +22,7 @@ interface AccountConfig {
   account?: MetatraderAccount;
   connection?: RpcMetaApiConnectionInstance;
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
+  symbolCache: Map<string, string>; // canonical → broker symbol
 }
 
 interface TradeExecutionResult {
@@ -75,7 +76,8 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         id: id.trim(),
         brokerName: brokerName.trim(),
         accountType: accountType.trim() as 'DEMO' | 'LIVE',
-        status: 'CONNECTING'
+        status: 'CONNECTING',
+        symbolCache: new Map()
       };
 
       this.accounts.set(accountConfig.id, accountConfig);
@@ -325,6 +327,166 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
+   * Resolve canonical symbol (e.g. "NAS100") to the exact name the broker uses.
+   * Tries a static alias list first (no network), then verifies via getSymbolPrice.
+   * Results are cached per account so each symbol is only looked up once.
+   */
+  private async resolveSymbol(canonical: string, accountConfig: AccountConfig): Promise<string> {
+    const upper = canonical.toUpperCase();
+
+    // Return cached result immediately
+    if (accountConfig.symbolCache.has(upper)) {
+      return accountConfig.symbolCache.get(upper)!;
+    }
+
+    // Static alias candidates — ordered by likeliness (exact match first, then common broker variants)
+    const ALIASES: Record<string, string[]> = {
+
+      // ── Metals ──────────────────────────────────────────────────────────────
+      'XAUUSD':  ['XAUUSD', 'GOLD', 'XAUUSDm', 'XAUUSD.x', 'XAU/USD', 'XAUUSD.'],
+      'XAGUSD':  ['XAGUSD', 'SILVER', 'XAGUSDm', 'XAGUSD.x', 'XAG/USD'],
+      'XPTUSD':  ['XPTUSD', 'PLATINUM', 'XPT/USD'],
+      'XPDUSD':  ['XPDUSD', 'PALLADIUM', 'XPD/USD'],
+
+      // ── Forex majors ────────────────────────────────────────────────────────
+      'EURUSD':  ['EURUSD', 'EURUSDm', 'EURUSD.x', 'EUR/USD'],
+      'GBPUSD':  ['GBPUSD', 'GBPUSDm', 'GBPUSD.x', 'GBP/USD'],
+      'USDJPY':  ['USDJPY', 'USDJPYm', 'USDJPY.x', 'USD/JPY'],
+      'USDCHF':  ['USDCHF', 'USDCHFm', 'USDCHF.x', 'USD/CHF'],
+      'AUDUSD':  ['AUDUSD', 'AUDUSDm', 'AUDUSD.x', 'AUD/USD'],
+      'USDCAD':  ['USDCAD', 'USDCADm', 'USDCAD.x', 'USD/CAD'],
+      'NZDUSD':  ['NZDUSD', 'NZDUSDm', 'NZDUSD.x', 'NZD/USD'],
+
+      // ── Forex crosses ───────────────────────────────────────────────────────
+      'EURJPY':  ['EURJPY', 'EURJPYm', 'EUR/JPY'],
+      'EURGBP':  ['EURGBP', 'EURGBPm', 'EUR/GBP'],
+      'EURAUD':  ['EURAUD', 'EURAUDm', 'EUR/AUD'],
+      'EURCAD':  ['EURCAD', 'EURCADm', 'EUR/CAD'],
+      'EURCHF':  ['EURCHF', 'EURCHFm', 'EUR/CHF'],
+      'EURNZD':  ['EURNZD', 'EURNZDm', 'EUR/NZD'],
+      'GBPJPY':  ['GBPJPY', 'GBPJPYm', 'GBP/JPY'],
+      'GBPAUD':  ['GBPAUD', 'GBPAUDm', 'GBP/AUD'],
+      'GBPCAD':  ['GBPCAD', 'GBPCADm', 'GBP/CAD'],
+      'GBPCHF':  ['GBPCHF', 'GBPCHFm', 'GBP/CHF'],
+      'GBPNZD':  ['GBPNZD', 'GBPNZDm', 'GBP/NZD'],
+      'AUDJPY':  ['AUDJPY', 'AUDJPYm', 'AUD/JPY'],
+      'AUDCAD':  ['AUDCAD', 'AUDCADm', 'AUD/CAD'],
+      'AUDCHF':  ['AUDCHF', 'AUDCHFm', 'AUD/CHF'],
+      'AUDNZD':  ['AUDNZD', 'AUDNZDm', 'AUD/NZD'],
+      'CADJPY':  ['CADJPY', 'CADJPYm', 'CAD/JPY'],
+      'CADCHF':  ['CADCHF', 'CADCHFm', 'CAD/CHF'],
+      'CHFJPY':  ['CHFJPY', 'CHFJPYm', 'CHF/JPY'],
+      'NZDJPY':  ['NZDJPY', 'NZDJPYm', 'NZD/JPY'],
+      'NZDCAD':  ['NZDCAD', 'NZDCADm', 'NZD/CAD'],
+      'NZDCHF':  ['NZDCHF', 'NZDCHFm', 'NZD/CHF'],
+
+      // ── US Indices ──────────────────────────────────────────────────────────
+      'US30':    ['US30', 'DJ30', 'US30.cash', 'DOWJONES', 'US30m', 'DJI', 'DOW30'],
+      'NAS100':  ['NAS100', 'USTEC', 'NAS100.cash', 'US100', 'NAS100m', 'NDX', 'NASDAQ100'],
+      'SPX500':  ['SPX500', 'US500', 'SPX500.cash', 'SP500', 'SPX', 'US500m'],
+      'US2000':  ['US2000', 'RUSSELL2000', 'RUT', 'US2000.cash'],
+
+      // ── European Indices ────────────────────────────────────────────────────
+      'UK100':   ['UK100', 'FTSE100', 'UK100.cash', 'FTSE', 'UKXm'],
+      'GER30':   ['GER30', 'GER40', 'DE30', 'DAX', 'DAX40', 'GER30.cash', 'GER40.cash'],
+      'FRA40':   ['FRA40', 'CAC40', 'FRA40.cash', 'CAC', 'F40EUR'],
+      'EU50':    ['EU50', 'STOXX50', 'EUSTX50', 'SX5E', 'ESXEUR'],
+      'SWI20':   ['SWI20', 'SMI', 'SWI20.cash'],
+      'ESP35':   ['ESP35', 'IBEX35', 'ESP35.cash'],
+
+      // ── Asian / Pacific Indices ─────────────────────────────────────────────
+      'JPN225':  ['JPN225', 'NIKKEI', 'JP225', 'JPN225.cash', 'NIK', 'N225'],
+      'AUS200':  ['AUS200', 'AU200', 'ASX200', 'AUS200.cash'],
+      'HK50':    ['HK50', 'HANGSENG', 'HSI', 'HK50.cash', 'HSIHED'],
+      'CHINAH':  ['CHINAH', 'CHINA50', 'CHINAH.cash'],
+      'SGD':     ['SGD', 'STI'],
+
+      // ── Commodities — Energy ────────────────────────────────────────────────
+      'USOIL':   ['USOIL', 'WTI', 'OIL', 'CL', 'CRUDEOIL', 'USOIL.cash'],
+      'UKOIL':   ['UKOIL', 'BRENT', 'BRENTOIL', 'UKOIL.cash'],
+      'NGAS':    ['NGAS', 'NATURALGAS', 'NG', 'NATGAS'],
+
+      // ── Commodities — Agricultural ──────────────────────────────────────────
+      'WHEAT':   ['WHEAT', 'WEAT', 'ZW'],
+      'CORN':    ['CORN', 'ZC'],
+      'SOYBEAN': ['SOYBEAN', 'SOYA', 'ZS'],
+      'COFFEE':  ['COFFEE', 'KC'],
+      'SUGAR':   ['SUGAR', 'SB'],
+      'COTTON':  ['COTTON', 'CT'],
+
+      // ── Crypto ──────────────────────────────────────────────────────────────
+      'BTCUSD':  ['BTCUSD', 'BITCOIN', 'BTCUSDm', 'BTC/USD', 'BTCUSDT', 'XBTUSD'],
+      'ETHUSD':  ['ETHUSD', 'ETHEREUM', 'ETHUSDm', 'ETH/USD', 'ETHUSDT'],
+      'LTCUSD':  ['LTCUSD', 'LITECOIN', 'LTC/USD'],
+      'XRPUSD':  ['XRPUSD', 'RIPPLE', 'XRP/USD'],
+      'BNBUSD':  ['BNBUSD', 'BNB/USD'],
+      'SOLUSD':  ['SOLUSD', 'SOLANA', 'SOL/USD'],
+      'ADAUSD':  ['ADAUSD', 'CARDANO', 'ADA/USD'],
+      'DOTUSD':  ['DOTUSD', 'POLKADOT', 'DOT/USD'],
+
+      // ── Deriv Volatility Index (Synthetic Indices) ──────────────────────────
+      'V10':     ['V10', 'Volatility 10 Index', 'Vol. 10 Index', '1HZ10V'],
+      'V25':     ['V25', 'Volatility 25 Index', 'Vol. 25 Index', '1HZ25V'],
+      'V50':     ['V50', 'Volatility 50 Index', 'Vol. 50 Index', '1HZ50V'],
+      'V75':     ['V75', 'Volatility 75 Index', 'Vol. 75 Index', '1HZ75V', 'R_75'],
+      'V100':    ['V100', 'Volatility 100 Index', 'Vol. 100 Index', '1HZ100V', 'R_100'],
+      'V10S':    ['V10S', 'Volatility 10 (1s) Index', 'Vol. 10 (1s) Index'],
+      'V25S':    ['V25S', 'Volatility 25 (1s) Index', 'Vol. 25 (1s) Index'],
+      'V50S':    ['V50S', 'Volatility 50 (1s) Index', 'Vol. 50 (1s) Index'],
+      'V75S':    ['V75S', 'Volatility 75 (1s) Index', 'Vol. 75 (1s) Index'],
+      'V100S':   ['V100S', 'Volatility 100 (1s) Index', 'Vol. 100 (1s) Index'],
+      'V150S':   ['V150S', 'Volatility 150 (1s) Index', 'Vol. 150 (1s) Index'],
+      'V200S':   ['V200S', 'Volatility 200 (1s) Index', 'Vol. 200 (1s) Index'],
+      'V250S':   ['V250S', 'Volatility 250 (1s) Index', 'Vol. 250 (1s) Index'],
+
+      // ── Deriv Crash & Boom ───────────────────────────────────────────────────
+      'CRASH300':  ['CRASH300', 'Crash 300 Index'],
+      'CRASH500':  ['CRASH500', 'Crash 500 Index', 'CRASH500'],
+      'CRASH1000': ['CRASH1000', 'Crash 1000 Index', 'CRASH1000'],
+      'BOOM300':   ['BOOM300', 'Boom 300 Index'],
+      'BOOM500':   ['BOOM500', 'Boom 500 Index', 'BOOM500'],
+      'BOOM1000':  ['BOOM1000', 'Boom 1000 Index', 'BOOM1000'],
+
+      // ── Deriv Step / Range / Bear-Bull ───────────────────────────────────────
+      'STPIDX':  ['STPIDX', 'Step Index', 'STP_IDX'],
+      'RANIDX':  ['RANIDX', 'Range Break 100 Index', 'RB100V', 'Range Break 200 Index'],
+      'BERIDX':  ['BERIDX', 'Bear Market Index'],
+      'BULIDX':  ['BULIDX', 'Bull Market Index'],
+
+      // ── Deriv Jump Indices ───────────────────────────────────────────────────
+      'JUMP10':  ['JUMP10', 'Jump 10 Index'],
+      'JUMP25':  ['JUMP25', 'Jump 25 Index'],
+      'JUMP50':  ['JUMP50', 'Jump 50 Index'],
+      'JUMP75':  ['JUMP75', 'Jump 75 Index'],
+      'JUMP100': ['JUMP100', 'Jump 100 Index'],
+
+      // ── US Bonds / Rates ─────────────────────────────────────────────────────
+      'US10Y':   ['US10Y', 'TNX', 'TNOTE', 'US10YR'],
+      'US2Y':    ['US2Y', 'US2YR'],
+      'GER10Y':  ['GER10Y', 'BUND'],
+    };
+
+    const candidates: string[] = ALIASES[upper] ?? [upper, upper + '.x', upper + 'm'];
+
+    for (const candidate of candidates) {
+      try {
+        await accountConfig.connection!.getSymbolPrice(candidate, false);
+        if (candidate !== canonical) {
+          logger.info(`🔄 Symbol mapping: ${canonical} → ${candidate} on ${accountConfig.brokerName}`);
+        }
+        accountConfig.symbolCache.set(upper, candidate);
+        return candidate;
+      } catch {
+        // not available under this name, try next
+      }
+    }
+
+    logger.warn(`⚠️ No broker match for ${canonical} on ${accountConfig.brokerName} — tried: ${candidates.join(', ')}`);
+    accountConfig.symbolCache.set(upper, canonical); // cache the miss so we don't retry every trade
+    return canonical;
+  }
+
+  /**
    * Get broker-specific minimum stop distance in points
    */
   private getBrokerMinimumStopDistance(symbol: string, brokerName: string): number {
@@ -495,8 +657,8 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         }
       }
 
-      // Step 1: Get valid symbol (fallback implementation)
-      const validSymbol = signal.symbol;
+      // Step 1: Resolve canonical symbol → broker symbol
+      const validSymbol = await this.resolveSymbol(signal.symbol, accountConfig);
 
       // Step 2: Get market data from connection
       const price = await accountConfig.connection.getSymbolPrice(validSymbol, false);
