@@ -237,10 +237,8 @@ export class CleanRealWorldTradeParser {
 
     // Small zone around single entry price (0.2% default, but avoid absurdly wide zones for small prices)
     const zoneSize = Math.max(entry * 0.002, 0.0002);
-    const orderType: OrderType =
-      /\blimit\b/i.test(m[0]) ? 'LIMIT' :
-      /\bnow\b/i.test(m[0]) ? 'MARKET' :
-      'MARKET';
+    // Always LIMIT — "now" means enter at this price, not at whatever market is doing at execution time
+    const orderType: OrderType = 'LIMIT';
 
     return { entryZone: { min: entry - zoneSize, max: entry + zoneSize }, orderType };
   }
@@ -463,17 +461,7 @@ export class CleanRealWorldTradeParser {
    * Determine order type from context
    */
   private static determineOrderType(text: string, action: TradeAction): OrderType {
-    const lowerText = text.toLowerCase();
-    
-    if (lowerText.includes('instant') || lowerText.includes('market') || lowerText.includes('now')) {
-      return 'MARKET';
-    }
-    
-    if (lowerText.includes('pending') || lowerText.includes('limit') || lowerText.includes('zone')) {
-      return 'LIMIT';
-    }
-    
-    // Default to LIMIT for zone-based trading
+    // Always LIMIT — execution at signal price is the only way to ensure correct entries
     return 'LIMIT';
   }
 

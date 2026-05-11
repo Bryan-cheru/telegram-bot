@@ -9,13 +9,14 @@ export class SymbolParser {
     /\$?\s*(V\d{1,3})(?![A-Za-z0-9])/i,
     /\$?\s*(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?(?![A-Za-z0-9])/i,
     /\$?\s*(BTCUSD|BITCOIN|ETHUSD|ETHEREUM|BTC|ETH)(?:\.x)?(?![A-Za-z0-9])/i,
+    /\$?\s*(NQ|NAS100|US30|SPX500|UK100|GER30)(?:\.x)?(?![A-Za-z0-9])/i,
     // Hashtag patterns - highest priority (with optional .x suffix for InstantFunding)
     /#(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?/i,
     /#(BTCUSD|BITCOIN|ETHUSD|ETHEREUM|BTC|ETH)(?:\.x)?/i,  // Crypto support
     /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)(?:\.x)?/i,
     /#(EURCHF|EURGBP|EURJPY|EURAUD|EURCAD|EURNZD|GBPCHF|GBPJPY|GBPAUD|GBPCAD|GBPNZD)(?:\.x)?/i,
     /#(CHFJPY|CADCHF|AUDCHF|NZDCHF|CADJPY|AUDJPY|NZDJPY|AUDCAD|AUDNZD|CADNZD)(?:\.x)?/i,
-    /#(US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|DOW|NASDAQ)(?:\.x)?/i,
+    /#(US30|NAS100|NQ|SPX500|UK100|GER30|US100|AUS200|JPN225|DOW|NASDAQ)(?:\.x)?/i,
     /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
     /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
     // Word boundaries without hashtag (with optional .x suffix)
@@ -34,7 +35,8 @@ export class SymbolParser {
     'ETHEREUM': 'ETHUSD',
     'ETH': 'ETHUSD',
     
-    // Indices  
+    // Indices
+    'NQ': 'NAS100',
     'NASDAQ': 'NAS100',
     'DOW': 'US30',
     'DOWJONES': 'US30',

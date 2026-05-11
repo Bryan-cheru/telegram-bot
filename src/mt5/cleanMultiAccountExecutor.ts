@@ -383,6 +383,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       // ── US Indices ──────────────────────────────────────────────────────────
       'US30':    ['US30', 'DJ30', 'US30.cash', 'DOWJONES', 'US30m', 'DJI', 'DOW30'],
       'NAS100':  ['NAS100', 'USTEC', 'NAS100.cash', 'US100', 'NAS100m', 'NDX', 'NASDAQ100'],
+      'NQ':      ['NAS100', 'NQ', 'USTEC', 'NAS100.cash', 'US100', 'NAS100m', 'NDX', 'NASDAQ100'],
       'SPX500':  ['SPX500', 'US500', 'SPX500.cash', 'SP500', 'SPX', 'US500m'],
       'US2000':  ['US2000', 'RUSSELL2000', 'RUT', 'US2000.cash'],
 
@@ -723,60 +724,42 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         );
       }
 
-      // Step 4: Execute the trade using MetaAPI (validation happens in getValidSymbol)
+      // Step 4: Place a pending order at the signal's entry price — never market.
+      // Choose LIMIT vs STOP based on where signal price sits relative to current market:
+      //   BUY  + signal below market  → BUY LIMIT  (wait for price to drop to us)
+      //   BUY  + signal above market  → BUY STOP   (wait for price to rise to us)
+      //   SELL + signal above market  → SELL LIMIT (wait for price to rise to us)
+      //   SELL + signal below market  → SELL STOP  (wait for price to drop to us)
       let result;
-      const tradeOptions = {
-        comment: 'Bot Trade'
-      };
+      const tradeOptions = { comment: 'Bot Trade' };
+      const currentMid = (marketData.bid + marketData.ask) / 2;
 
-      // Check if this should be a market order or limit order
-      // 🎯 DEFAULT TO LIMIT ORDERS (as per your excellent suggestion!)
-      const orderType = signal.orderType || 'LIMIT'; // Always LIMIT by default for better execution
-      
-      if (orderType === 'MARKET') {
-        // Market orders - execute immediately at current price
-        if (signal.action === 'BUY') {
-          result = await accountConfig.connection.createMarketBuyOrder(
-            validSymbol,
-            volume,
-            signal.stopLoss,
-            finalTakeProfit,
-            tradeOptions
-          );
-        } else if (signal.action === 'SELL') {
-          result = await accountConfig.connection.createMarketSellOrder(
-            validSymbol,
-            volume,
-            signal.stopLoss,
-            finalTakeProfit,
-            tradeOptions
+      if (signal.action === 'BUY') {
+        if (entryPrice <= currentMid) {
+          logger.info(`📋 BUY LIMIT @ ${entryPrice} (market ${currentMid})`);
+          result = await accountConfig.connection.createLimitBuyOrder(
+            validSymbol, volume, entryPrice, signal.stopLoss, finalTakeProfit, tradeOptions
           );
         } else {
-          throw new Error(`Unsupported action: ${signal.action}`);
+          logger.info(`📋 BUY STOP @ ${entryPrice} (market ${currentMid})`);
+          result = await accountConfig.connection.createStopBuyOrder(
+            validSymbol, volume, entryPrice, signal.stopLoss, finalTakeProfit, tradeOptions
+          );
+        }
+      } else if (signal.action === 'SELL') {
+        if (entryPrice >= currentMid) {
+          logger.info(`📋 SELL LIMIT @ ${entryPrice} (market ${currentMid})`);
+          result = await accountConfig.connection.createLimitSellOrder(
+            validSymbol, volume, entryPrice, signal.stopLoss, finalTakeProfit, tradeOptions
+          );
+        } else {
+          logger.info(`📋 SELL STOP @ ${entryPrice} (market ${currentMid})`);
+          result = await accountConfig.connection.createStopSellOrder(
+            validSymbol, volume, entryPrice, signal.stopLoss, finalTakeProfit, tradeOptions
+          );
         }
       } else {
-        // Limit orders - execute at specified entry price
-        if (signal.action === 'BUY') {
-          result = await accountConfig.connection.createLimitBuyOrder(
-            validSymbol,
-            volume,
-            entryPrice,
-            signal.stopLoss,
-            finalTakeProfit, // Use adjusted TP if stops were modified
-            tradeOptions
-          );
-        } else if (signal.action === 'SELL') {
-          result = await accountConfig.connection.createLimitSellOrder(
-            validSymbol,
-            volume,
-            entryPrice,
-            signal.stopLoss,
-            finalTakeProfit, // Use adjusted TP if stops were modified
-            tradeOptions
-          );
-        } else {
-          throw new Error(`Unsupported action: ${signal.action}`);
-        }
+        throw new Error(`Unsupported action: ${signal.action}`);
       }
 
       const ticket = result.positionId || result.orderId || 'Unknown';
@@ -810,29 +793,13 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   }
 
   /**
-   * Calculate optimal entry price based on signal and current market
+   * Return the signal's entry price as-is. Pending order type (LIMIT vs STOP)
+   * is chosen later based on direction vs current market — we never override the signal price.
    */
   private calculateEntryPrice(signal: TradeSignal, marketData: { bid: number; ask: number }): number {
-    const currentPrice = (marketData.bid + marketData.ask) / 2;
-    const entryZoneCenter = (signal.entryZone.min + signal.entryZone.max) / 2;
-
-    // Use entry zone center as the limit price
-    let entryPrice = entryZoneCenter;
-
-    // Ensure limit orders are placed correctly relative to current price
-    if (signal.action === 'BUY') {
-      // BUY limit must be at or below current price
-      if (entryPrice > currentPrice) {
-        entryPrice = currentPrice - (currentPrice * 0.0001); // Small buffer
-      }
-    } else if (signal.action === 'SELL') {
-      // SELL limit must be at or above current price
-      if (entryPrice < currentPrice) {
-        entryPrice = currentPrice + (currentPrice * 0.0001); // Small buffer
-      }
-    }
-
-    logger.info(`📊 Entry price calculated: ${entryPrice} (Current: ${currentPrice})`);
+    const entryPrice = (signal.entryZone.min + signal.entryZone.max) / 2;
+    const currentMid = (marketData.bid + marketData.ask) / 2;
+    logger.info(`📊 Signal entry: ${entryPrice} | Market: ${currentMid}`);
     return entryPrice;
   }
 
