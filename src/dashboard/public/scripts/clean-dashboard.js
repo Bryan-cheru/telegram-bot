@@ -799,12 +799,21 @@ class CleanTradingDashboard {
   updateMetaStatsDisplay() {
     if (!this.metricsData) return;
 
-    // Update performance metrics with animation
+    const winRateText = this.metricsData.winRate != null
+      ? `${(this.metricsData.winRate * 100).toFixed(1)}%`
+      : 'N/A';
+    const totalTradesText = this.metricsData.totalTrades != null
+      ? String(this.metricsData.totalTrades)
+      : '0';
+
     this.updateElementTextWithAnimation('profit-factor', this.metricsData.profitFactor?.toFixed(2) || 'N/A');
-    this.updateElementTextWithAnimation('win-rate', `${(this.metricsData.winRate * 100).toFixed(1)}%` || 'N/A');
-    this.updateElementTextWithAnimation('max-drawdown', `${this.metricsData.maxDrawdown?.toFixed(2)}%` || 'N/A');
+    this.updateElementTextWithAnimation('metastats-win-rate', winRateText);
+    this.updateElementTextWithAnimation('metastats-max-drawdown', `${this.metricsData.maxDrawdown?.toFixed(2)}%` || 'N/A');
     this.updateElementTextWithAnimation('sharpe-ratio', this.metricsData.sharpeRatio?.toFixed(2) || 'N/A');
-    this.updateElementTextWithAnimation('total-trades', this.metricsData.totalTrades || '0');
+    this.updateElementTextWithAnimation('metastats-total-trades', totalTradesText);
+
+    this.updateElementTextWithAnimation('analytics-win-rate', winRateText);
+    this.updateElementTextWithAnimation('analytics-total-trades', totalTradesText);
 
     // Update rate limiting information
     if (this.rateLimitStatus) {

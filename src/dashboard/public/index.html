@@ -79,7 +79,7 @@
             
             <div class="sidebar-footer">
                 <div class="connection-status">
-                    <div class="status-indicator" id="bot-status">
+                    <div class="status-indicator" id="sidebar-bot-status">
                         <i class="fas fa-circle"></i>
                         <span>Bot Status</span>
                     </div>
@@ -87,9 +87,6 @@
                 </div>
             </div>
         </nav>
-
-        <!-- Mobile Navigation Overlay -->
-        <div id="mobile-nav-overlay" class="mobile-nav-overlay"></div>
 
         <!-- Main Content Area -->
         <main class="main-content">
@@ -104,19 +101,18 @@
                     <h1 id="page-title">Dashboard Overview</h1>
                 </div>
                 <div class="header-right">
-                    <div class="header-stats">
+                    <div class="header-stats" title="Connected accounts · active signals">
                         <div class="stat-item">
-                            <span class="stat-label">Connected Accounts</span>
+                            <span class="stat-label">Accounts</span>
                             <span class="stat-value" id="connected-accounts">0</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Active Signals</span>
+                            <span class="stat-label">Signals</span>
                             <span class="stat-value" id="active-signals">0</span>
                         </div>
                     </div>
-                    <button class="btn btn-primary" data-action="refresh-all">
+                    <button class="btn btn-outline btn-icon" data-action="refresh-all" title="Refresh all data" aria-label="Refresh all data">
                         <i class="fas fa-sync-alt"></i>
-                        Refresh
                     </button>
                 </div>
             </header>
@@ -126,7 +122,7 @@
                 <nav class="mobile-nav">
                     <ul class="mobile-menu-list">
                         <li class="mobile-menu-item">
-                            <a href="#overview" class="mobile-menu-link" data-page="overview-section">
+                            <a href="#overview" class="mobile-menu-link active" data-page="overview-section">
                                 <i class="fas fa-dashboard"></i>
                                 <span>Overview</span>
                             </a>
@@ -139,20 +135,20 @@
                         </li>
                         <li class="mobile-menu-item">
                             <a href="#signals" class="mobile-menu-link" data-page="signals-section">
-                                <i class="fas fa-chart-line"></i>
+                                <i class="fas fa-broadcast-tower"></i>
                                 <span>Signals</span>
                             </a>
                         </li>
                         <li class="mobile-menu-item">
-                            <a href="#positions" class="mobile-menu-link" data-page="positions-section">
-                                <i class="fas fa-list-ul"></i>
-                                <span>Positions</span>
+                            <a href="#trades" class="mobile-menu-link" data-page="trades-section">
+                                <i class="fas fa-exchange-alt"></i>
+                                <span>Trades</span>
                             </a>
                         </li>
                         <li class="mobile-menu-item">
-                            <a href="#performance" class="mobile-menu-link" data-page="performance-section">
+                            <a href="#analytics" class="mobile-menu-link" data-page="analytics-section">
                                 <i class="fas fa-chart-bar"></i>
-                                <span>Performance</span>
+                                <span>Analytics</span>
                             </a>
                         </li>
                         <li class="mobile-menu-item">
@@ -240,7 +236,7 @@
                                     <i class="fas fa-percentage"></i>
                                     <span>Win Rate</span>
                                 </div>
-                                <div class="metric-value" id="win-rate">N/A</div>
+                                <div class="metric-value" id="metastats-win-rate">N/A</div>
                                 <div class="metric-description">Percentage of Winning Trades</div>
                             </div>
                             
@@ -249,7 +245,7 @@
                                     <i class="fas fa-arrow-down"></i>
                                     <span>Max Drawdown</span>
                                 </div>
-                                <div class="metric-value" id="max-drawdown">N/A</div>
+                                <div class="metric-value" id="metastats-max-drawdown">N/A</div>
                                 <div class="metric-description">Maximum Loss Period</div>
                             </div>
                             
@@ -267,7 +263,7 @@
                                     <i class="fas fa-exchange-alt"></i>
                                     <span>Total Trades</span>
                                 </div>
-                                <div class="metric-value" id="total-trades">0</div>
+                                <div class="metric-value" id="metastats-total-trades">0</div>
                                 <div class="metric-description">All Time Trade Count</div>
                             </div>
                             
@@ -409,7 +405,7 @@
                 <div class="bot-status-bar">
                     <div class="status-item">
                         <span class="status-label">Bot Status:</span>
-                        <span class="status-value online" id="bot-status">
+                        <span class="status-value online" id="trades-bot-status">
                             <i class="fas fa-circle"></i> ACTIVE
                         </span>
                     </div>
@@ -488,31 +484,10 @@
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="logs-container" id="trading-logs">
-                            <div class="log-entry success">
-                                <span class="log-time">10:23:45</span>
-                                <span class="log-type">TRADE</span>
-                                <span class="log-message">✅ XAUUSD BUY 0.45 lots executed at 2,651.20</span>
-                            </div>
-                            <div class="log-entry info">
-                                <span class="log-time">10:22:30</span>
-                                <span class="log-type">SIGNAL</span>
-                                <span class="log-message">📡 New signal received: XAUUSD BUY zone 2,650-2,652</span>
-                            </div>
-                            <div class="log-entry success">
-                                <span class="log-time">10:18:12</span>
-                                <span class="log-type">TRADE</span>
-                                <span class="log-message">💰 EURUSD position closed: +$127.50 profit</span>
-                            </div>
-                            <div class="log-entry warning">
-                                <span class="log-time">10:15:03</span>
-                                <span class="log-type">SYSTEM</span>
-                                <span class="log-message">⚠️ Risk limit reached: 2% for today</span>
-                            </div>
-                            <div class="log-entry error">
-                                <span class="log-time">10:12:45</span>
-                                <span class="log-type">ERROR</span>
-                                <span class="log-message">❌ Failed to execute GBPUSD: Insufficient margin</span>
+                        <div class="logs-container" id="logs-container">
+                            <div class="empty-state">
+                                <i class="fas fa-terminal"></i>
+                                <p>No trading activity yet</p>
                             </div>
                         </div>
                     </div>
@@ -575,11 +550,11 @@
                             <div class="performance-stats">
                                 <div class="perf-stat">
                                     <span class="perf-label">Win Rate</span>
-                                    <span class="perf-value" id="win-rate">0%</span>
+                                    <span class="perf-value" id="analytics-win-rate">0%</span>
                                 </div>
                                 <div class="perf-stat">
                                     <span class="perf-label">Total Trades</span>
-                                    <span class="perf-value" id="total-trades">0</span>
+                                    <span class="perf-value" id="analytics-total-trades">0</span>
                                 </div>
                                 <div class="perf-stat">
                                     <span class="perf-label">Avg. Profit</span>
@@ -657,7 +632,7 @@
                         </div>
                     </div>
 
-                    <div class="card">
+                    <div class="card risk-settings-card">
                         <div class="card-header">
                             <h3><i class="fas fa-shield-alt"></i> Risk &amp; execution</h3>
                         </div>
@@ -665,41 +640,50 @@
                             <p class="form-hint">
                                 SL/TP on orders use this model (signal channel TP/SL ignored unless “Use signal TP/SL” is on).
                             </p>
-                            <div class="form-group">
-                                <label for="fixed-risk-usd">Fixed risk (USD)</label>
-                                <input type="number" id="fixed-risk-usd" class="form-input" placeholder="e.g. 1000" min="1" step="1">
-                            </div>
-                            <div class="form-group">
-                                <label for="risk-reward-ratio">Risk : reward ratio</label>
-                                <input type="number" id="risk-reward-ratio" class="form-input" value="1.5" min="0.5" max="10" step="0.1">
-                            </div>
-                            <div class="form-group">
-                                <label for="fixed-lot-size">Reference lot size (for SL/TP distance math)</label>
-                                <input type="number" id="fixed-lot-size" class="form-input" value="0.65" min="0.01" max="100" step="0.01">
-                            </div>
-                            <div class="form-group">
-                                <label for="use-signal-stops">Use TP/SL from Telegram signal text</label>
-                                <label class="switch">
-                                    <input type="checkbox" id="use-signal-stops">
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                            <hr style="border-color: var(--gray-700); margin: 1rem 0;">
-                            <div class="form-group">
-                                <label for="max-drawdown">Max drawdown (%)</label>
-                                <input type="number" id="max-drawdown" class="form-input" value="10" min="1" max="50" step="0.5">
-                            </div>
-                            <div class="form-group">
-                                <label for="max-daily-loss-pct">Max daily loss (%)</label>
-                                <input type="number" id="max-daily-loss-pct" class="form-input" value="5" min="0.1" max="50" step="0.1">
-                            </div>
-                            <div class="form-group">
-                                <label for="emergency-stop">Emergency stop (placeholder)</label>
-                                <label class="switch">
-                                    <input type="checkbox" id="emergency-stop">
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
+                            <fieldset class="field-group">
+                                <legend class="field-group-title">Position sizing</legend>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="fixed-risk-usd">Fixed risk (USD)</label>
+                                        <input type="number" id="fixed-risk-usd" class="form-input" placeholder="e.g. 1000" min="1" step="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="risk-reward-ratio">Risk : reward ratio</label>
+                                        <input type="number" id="risk-reward-ratio" class="form-input" value="1.5" min="0.5" max="10" step="0.1">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="fixed-lot-size">Reference lot size (for SL/TP distance math)</label>
+                                    <input type="number" id="fixed-lot-size" class="form-input" value="0.65" min="0.01" max="100" step="0.01">
+                                </div>
+                                <div class="form-group">
+                                    <label for="use-signal-stops">Use TP/SL from Telegram signal text</label>
+                                    <label class="switch">
+                                        <input type="checkbox" id="use-signal-stops">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                            </fieldset>
+                            <fieldset class="field-group">
+                                <legend class="field-group-title">Drawdown limits</legend>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="max-drawdown">Max drawdown (%)</label>
+                                        <input type="number" id="max-drawdown" class="form-input" value="10" min="1" max="50" step="0.5">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="max-daily-loss-pct">Max daily loss (%)</label>
+                                        <input type="number" id="max-daily-loss-pct" class="form-input" value="5" min="0.1" max="50" step="0.1">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="emergency-stop">Emergency stop (placeholder)</label>
+                                    <label class="switch">
+                                        <input type="checkbox" id="emergency-stop">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                            </fieldset>
                             <button type="button" class="btn btn-primary" onclick="saveRiskSettings()">
                                 <i class="fas fa-save"></i> Save risk settings
                             </button>

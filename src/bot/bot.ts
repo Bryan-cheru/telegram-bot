@@ -564,6 +564,14 @@ export class TelegramBot {
         logger.info('🎯 Trade execution is ready and available');
       }
       
+      // Clear any existing webhook before starting polling to avoid 409 conflicts
+      try {
+        await this.bot.telegram.deleteWebhook({ drop_pending_updates: false });
+        logger.info('🧹 Webhook cleared — starting polling');
+      } catch (e) {
+        // Not fatal — continue anyway
+      }
+
       // Always start the bot regardless of MetaAPI status
       logger.info('🚀 Launching Telegram bot...');
       this.bot.launch();
