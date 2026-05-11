@@ -669,35 +669,38 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const price = await accountConfig.connection.getSymbolPrice(validSymbol, false);
       const marketData = { bid: price?.bid || 0, ask: price?.ask || 0 };
 
-      // Step 3: Entry from signal only (limit/market zone); SL/TP from user config unless USE_SIGNAL_STOPS=true
+      // Step 3: Entry price from signal. SL/TP: signal values take priority;
+      // user risk config is only the fallback when the signal provides none.
       const entryPrice = this.calculateEntryPrice(signal, marketData);
-
-      const useSignalStops = process.env.USE_SIGNAL_STOPS === 'true';
       const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
       let finalTakeProfit: number;
 
-      if (
-        useSignalStops &&
-        typeof signal.stopLoss === 'number' &&
-        signal.stopLoss > 0 &&
-        Array.isArray(signal.targets) &&
-        signal.targets.length > 0
-      ) {
+      const hasSignalSL = typeof signal.stopLoss === 'number' && signal.stopLoss > 0;
+      const hasSignalTP = Array.isArray(signal.targets) && signal.targets.length > 0;
+
+      if (hasSignalSL && hasSignalTP) {
+        // Signal provides both SL and TP — always use them
         signal.stopLoss = formatPriceForInstrument(signal.stopLoss, signal.symbol);
         finalTakeProfit = formatPriceForInstrument(signal.targets[0], signal.symbol);
-        logger.info('📌 SL/TP from parsed signal (USE_SIGNAL_STOPS=true)');
-      } else {
-        if (useSignalStops) {
-          logger.warn(
-            '⚠️ USE_SIGNAL_STOPS=true but signal missing SL or TP — falling back to user risk config'
-          );
+        logger.info(`📌 SL: ${signal.stopLoss} | TP: ${finalTakeProfit} (from signal)`);
+        if (signal.targets.length > 1) {
+          logger.info(`📌 Additional signal targets: ${signal.targets.slice(1).join(', ')}`);
         }
+      } else if (hasSignalSL && !hasSignalTP) {
+        // Signal has SL but no TP — use signal SL, derive TP from RR
+        signal.stopLoss = formatPriceForInstrument(signal.stopLoss, signal.symbol);
+        const slDistance = Math.abs(entryPrice - signal.stopLoss);
+        finalTakeProfit = signal.action === 'BUY'
+          ? formatPriceForInstrument(entryPrice + slDistance * rr, signal.symbol)
+          : formatPriceForInstrument(entryPrice - slDistance * rr, signal.symbol);
+        logger.info(`📌 SL: ${signal.stopLoss} (signal) | TP: ${finalTakeProfit} (derived at ${rr}R)`);
+      } else {
+        // Signal has no SL/TP — fall back to user risk config
+        logger.warn('⚠️ Signal missing SL/TP — falling back to user risk config');
         const levels = this.applyUserRiskLevels(signal, entryPrice, accountConfig.connection);
         signal.stopLoss = levels.stopLoss;
         finalTakeProfit = levels.takeProfit;
-        logger.info(
-          '📌 SL/TP from user risk config (dashboard / .env); entry follows signal'
-        );
+        logger.info(`📌 SL: ${signal.stopLoss} | TP: ${finalTakeProfit} (user risk config)`);
       }
 
       const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice);
