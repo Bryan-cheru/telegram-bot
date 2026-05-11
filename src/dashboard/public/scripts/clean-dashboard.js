@@ -7,12 +7,15 @@ class CleanTradingDashboard {
   constructor() {
     this.accountData = null;
     this.positions = [];
-    this.currentPage = 'dashboard';
+    this.pendingOrders = [];
+    this.currentPage = 'overview-section';
     this.refreshInterval = null;
     this.isLoading = false;
     this.metricsData = null;
     this.performanceSummary = null;
     this.rateLimitStatus = null;
+    this.autoScroll = true;
+    this.logStream = null;
     
     console.log('🚀 Initializing Clean Trading Dashboard...');
     this.init();
@@ -27,8 +30,11 @@ class CleanTradingDashboard {
       await this.loadRuntimeSettingsForms();
       await this.loadAccountData();
       await this.loadPositions();
+      await this.loadPendingOrders();
       this.updateDashboardStats(); // Update stats after loading positions
       await this.loadMetaStatsData();
+      // Start live log streaming once on init so the Trades tab is always populated
+      this.setupLogStreaming();
       this.startAutoRefresh();
       this.showNotification('Dashboard loaded successfully!', 'success');
     } catch (error) {
@@ -37,6 +43,9 @@ class CleanTradingDashboard {
       // Force render empty states
       this.renderAccountInfo();
       this.renderPositions();
+      this.renderPendingOrders();
+      // Even on init failure, still try to stream logs so users can see what's happening
+      try { this.setupLogStreaming(); } catch (_) { /* noop */ }
     }
   }
 
@@ -267,36 +276,42 @@ class CleanTradingDashboard {
 
   getPageTitle(page) {
     const titles = {
-      'dashboard': 'Dashboard',
-      'accounts': 'Account Overview',
-      'positions': 'Active Positions',
-      'history': 'Trade History',
-      'logs': 'System Logs',
-      'settings': 'Settings'
+      'overview-section': 'Dashboard Overview',
+      'accounts-section': 'Trading Accounts',
+      'signals-section':  'Signal History',
+      'trades-section':   'Active Trades',
+      'analytics-section':'Analytics',
+      'settings-section': 'Settings'
     };
     return titles[page] || 'Dashboard';
   }
 
   async loadPageData(page) {
     switch (page) {
-      case 'dashboard':
+      case 'overview-section':
+        await this.loadAccountData();
+        await this.loadPositions();
         this.updateDashboardStats();
         break;
-      case 'accounts':
+      case 'accounts-section':
+        await this.loadAccountData();
         this.renderAccountInfo();
         break;
-      case 'positions':
-        await this.loadPositions();
-        this.renderPositions();
+      case 'signals-section':
+        // Signals list is server-streamed via the live log feed; nothing extra to fetch here.
         break;
-      case 'history':
+      case 'trades-section':
+        await this.loadPositions();
+        await this.loadPendingOrders();
         await this.loadTradeHistory();
         break;
-      case 'logs':
-        this.initializeLogs();
+      case 'analytics-section':
+        await this.loadMetaStatsData();
         break;
       case 'settings-section':
         await this.loadRuntimeSettingsForms();
+        break;
+      default:
         break;
     }
   }
@@ -402,6 +417,26 @@ class CleanTradingDashboard {
       console.error('❌ Error loading positions:', error);
       this.positions = [];
       this.renderPositions();
+    }
+  }
+
+  async loadPendingOrders() {
+    try {
+      console.log('📑 Loading pending orders...');
+      const response = await fetch('/api/mt5/orders');
+      const result = await response.json();
+      if (result.success) {
+        this.pendingOrders = Array.isArray(result.orders) ? result.orders : [];
+        console.log(`✅ Loaded ${this.pendingOrders.length} pending orders`);
+      } else {
+        console.warn('⚠️ No pending orders:', result.error);
+        this.pendingOrders = [];
+      }
+      this.renderPendingOrders();
+    } catch (error) {
+      console.error('❌ Error loading pending orders:', error);
+      this.pendingOrders = [];
+      this.renderPendingOrders();
     }
   }
 
@@ -594,6 +629,79 @@ class CleanTradingDashboard {
     container.innerHTML = positionsHTML;
   }
 
+  renderPendingOrders() {
+    const container = document.getElementById('pending-orders-container');
+    if (!container) return;
+
+    const headerRow = `
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Type</th>
+          <th>Volume</th>
+          <th>Entry Price</th>
+          <th>SL</th>
+          <th>TP</th>
+          <th>Placed</th>
+        </tr>
+      </thead>`;
+
+    if (!this.pendingOrders || this.pendingOrders.length === 0) {
+      container.innerHTML = `
+        <table class="trades-table enhanced-table">
+          ${headerRow}
+          <tbody>
+            <tr class="empty-row">
+              <td colspan="7">
+                <div class="empty-state">
+                  <i class="fas fa-hourglass-half"></i>
+                  <p>No pending orders</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>`;
+      return;
+    }
+
+    const rows = this.pendingOrders.map(order => {
+      const side  = this.getOrderSide(order.type);
+      const label = this.formatOrderType(order.type);
+      const sl    = order.stopLoss != null && order.stopLoss !== '' ? order.stopLoss : '—';
+      const tp    = order.takeProfit != null && order.takeProfit !== '' ? order.takeProfit : '—';
+      const placed = order.time ? new Date(order.time).toLocaleString() : '—';
+      return `
+        <tr>
+          <td><strong>${order.symbol || '—'}</strong></td>
+          <td><span class="trade-type ${side}">${label}</span></td>
+          <td>${order.volume ?? '—'}</td>
+          <td>${order.openPrice ?? '—'}</td>
+          <td>${sl}</td>
+          <td>${tp}</td>
+          <td>${placed}</td>
+        </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <table class="trades-table enhanced-table">
+        ${headerRow}
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  /**
+   * MT5 order types look like ORDER_TYPE_BUY_LIMIT / ORDER_TYPE_SELL_STOP, etc.
+   * Anything containing "SELL" is rendered as the sell variant; everything else as buy.
+   */
+  getOrderSide(type) {
+    return typeof type === 'string' && type.toUpperCase().includes('SELL') ? 'sell' : 'buy';
+  }
+
+  formatOrderType(type) {
+    if (!type) return 'UNKNOWN';
+    return String(type).replace(/^ORDER_TYPE_/, '').replace(/_/g, ' ');
+  }
+
   renderTradeHistory(data) {
     const container = document.getElementById('history-container');
     if (!container) return;
@@ -715,8 +823,9 @@ class CleanTradingDashboard {
     this.refreshInterval = setInterval(() => {
       if (!this.isLoading && !document.hidden) {
         this.loadAccountData();
-        if (this.currentPage === 'positions') {
+        if (this.currentPage === 'trades-section') {
           this.loadPositions();
+          this.loadPendingOrders();
         }
         // Load MetaStats data every few refreshes to avoid rate limits
         if (Math.random() < 0.3) { // 30% chance each refresh
@@ -1016,6 +1125,11 @@ class CleanTradingDashboard {
   appendLogEntry(activity) {
     const container = document.getElementById('logs-container');
     if (!container) return;
+
+    // First real entry: clear any empty-state / placeholder content so it doesn't sit above the stream
+    if (!container.querySelector('.log-entry') && container.querySelector('.empty-state, .no-data, .error-state')) {
+      container.innerHTML = '';
+    }
 
     // Handle both old log format and new activity format
     const isActivity = activity.type === 'activity';
@@ -1369,6 +1483,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh MetaStats
     document.querySelectorAll('[data-action="refresh-metastats"]').forEach(btn => {
       btn.addEventListener('click', () => dashboardInstance.loadMetaStatsData());
+    });
+
+    // Refresh positions
+    document.querySelectorAll('[data-action="refresh-positions"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.loadPositions());
+    });
+
+    // Refresh pending orders
+    document.querySelectorAll('[data-action="refresh-orders"]').forEach(btn => {
+      btn.addEventListener('click', () => dashboardInstance.loadPendingOrders());
     });
   };
   

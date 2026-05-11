@@ -886,6 +886,61 @@ app.get('/api/mt5/positions', async (req, res) => {
   }
 });
 
+// Get MT5 pending (limit/stop) orders
+app.get('/api/mt5/orders', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMT5();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({
+          success: false,
+          error: 'MT5 connection not available',
+          orders: []
+        });
+      }
+    }
+
+    const isConnected = await multiAccountExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({
+        success: false,
+        error: 'MT5 not connected',
+        orders: []
+      });
+    }
+
+    const shouldUpdate = !mt5AccountsData.length || (Date.now() - mt5LastUpdate) > 15000;
+    if (shouldUpdate) {
+      await updateMT5Data();
+    }
+
+    const allOrders = mt5AccountsData.reduce((orders: any[], account) => {
+      return orders.concat(account.pendingOrders || []);
+    }, []);
+
+    res.json({
+      success: true,
+      connected: true,
+      orders: allOrders,
+      count: allOrders.length,
+      accountBreakdown: mt5AccountsData.map(account => ({
+        brokerName: account.brokerName,
+        accountType: account.accountType,
+        status: account.status,
+        orderCount: account.pendingOrders ? account.pendingOrders.length : 0
+      })),
+      lastUpdate: mt5LastUpdate
+    });
+  } catch (error) {
+    console.error('Error getting MT5 pending orders:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch pending orders',
+      orders: []
+    });
+  }
+});
+
 // Get MT5 trading summary/statistics
 app.get('/api/mt5/summary', async (req, res) => {
   try {

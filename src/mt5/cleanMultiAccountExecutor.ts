@@ -936,6 +936,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           freeMargin: 0,
           marginLevel: 0,
           positions: [],
+          pendingOrders: [],
           lastUpdate: Date.now()
         };
       }
@@ -944,6 +945,18 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         // Get real account information from MetaAPI RPC connection
         const accountInfo = await accountConfig.connection.getAccountInformation() || {};
         const positions = await accountConfig.connection.getPositions() || [];
+
+        // Pending orders (limit/stop) live separately from open positions on MT5.
+        // Fetch defensively because not every connection implementation exposes them.
+        let pendingOrders: any[] = [];
+        try {
+          if (typeof (accountConfig.connection as any).getOrders === 'function') {
+            pendingOrders = await (accountConfig.connection as any).getOrders() || [];
+          }
+        } catch (ordersErr) {
+          logger.warn(`Could not fetch pending orders for ${acc.brokerName}:`, ordersErr);
+          pendingOrders = [];
+        }
         
         // Extract real financial data
         const balance = accountInfo.balance || 0;
@@ -964,6 +977,20 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           commission: pos.commission || 0,
           openTime: pos.openTime
         }));
+
+        const formattedOrders = pendingOrders.map((order: any) => ({
+          id: order.id,
+          symbol: order.symbol,
+          type: order.type,
+          volume: order.volume ?? order.currentVolume,
+          openPrice: order.openPrice,
+          stopLoss: order.stopLoss,
+          takeProfit: order.takeProfit,
+          time: order.time,
+          comment: order.comment,
+          state: order.state,
+          accountId: acc.id
+        }));
         
         return {
           ...acc,
@@ -972,6 +999,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           freeMargin: parseFloat(freeMargin.toFixed(2)),
           marginLevel: parseFloat(marginLevel.toFixed(2)),
           positions: formattedPositions,
+          pendingOrders: formattedOrders,
           lastUpdate: Date.now()
         };
         
@@ -984,6 +1012,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
           freeMargin: 0,
           marginLevel: 0,
           positions: [],
+          pendingOrders: [],
           lastUpdate: Date.now(),
           error: 'Failed to fetch account data'
         };
