@@ -731,17 +731,41 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         );
       }
 
-      // Step 4: Place a pending order at the signal's entry price — never market.
-      // Choose LIMIT vs STOP based on where signal price sits relative to current market:
-      //   BUY  + signal below market  → BUY LIMIT  (wait for price to drop to us)
-      //   BUY  + signal above market  → BUY STOP   (wait for price to rise to us)
-      //   SELL + signal above market  → SELL LIMIT (wait for price to rise to us)
-      //   SELL + signal below market  → SELL STOP  (wait for price to drop to us)
+      // Guard: TP must not equal entry — that produces a zero-profit trade and likely
+      // indicates the parser mistook a TP level for the entry price.
+      const tpToEntryDistance = Math.abs(finalTakeProfit - entryPrice);
+      if (tpToEntryDistance < entryPrice * 0.001) {
+        throw new Error(
+          `TP (${finalTakeProfit}) is within 0.1% of entry (${entryPrice}) — ` +
+          `likely a signal parsing error. Aborting to prevent zero-profit trade.`
+        );
+      }
+
+      // Step 4: Place the order.
+      // MARKET signals (e.g. "Buy Now" without a specific price) execute immediately.
+      // Everything else uses a pending order: LIMIT if signal is on the correct side of
+      // the market, STOP if we need to wait for price to break through first.
+      //   BUY  + signal below market  → BUY LIMIT
+      //   BUY  + signal above market  → BUY STOP
+      //   SELL + signal above market  → SELL LIMIT
+      //   SELL + signal below market  → SELL STOP
       let result;
       const tradeOptions = { comment: 'Bot Trade' };
       const currentMid = (marketData.bid + marketData.ask) / 2;
 
-      if (signal.action === 'BUY') {
+      if (signal.orderType === 'MARKET') {
+        if (signal.action === 'BUY') {
+          logger.info(`📋 BUY MARKET (signal: "Buy Now") SL: ${signal.stopLoss} TP: ${finalTakeProfit}`);
+          result = await accountConfig.connection.createMarketBuyOrder(
+            validSymbol, volume, signal.stopLoss, finalTakeProfit, tradeOptions
+          );
+        } else {
+          logger.info(`📋 SELL MARKET (signal: "Sell Now") SL: ${signal.stopLoss} TP: ${finalTakeProfit}`);
+          result = await accountConfig.connection.createMarketSellOrder(
+            validSymbol, volume, signal.stopLoss, finalTakeProfit, tradeOptions
+          );
+        }
+      } else if (signal.action === 'BUY') {
         if (entryPrice <= currentMid) {
           logger.info(`📋 BUY LIMIT @ ${entryPrice} (market ${currentMid})`);
           result = await accountConfig.connection.createLimitBuyOrder(

@@ -137,12 +137,23 @@ export class CleanRealWorldTradeParser {
 
     // Extract entry price/zone (supports: "Sell Now 4566.80", "Sell Limit 4644.10", ranges)
     const extractedEntry = this.extractEntry(text);
-    let entryZone = extractedEntry?.entryZone || this.extractEntryZone(text);
-    if (!entryZone && explicitStopEarly != null && explicitTpsEarly.length > 0) {
-      const inferred = this.inferEntryZoneFromSlTp(action, explicitStopEarly, explicitTpsEarly);
-      if (inferred) {
-        entryZone = inferred;
-        logger.info(`🎯 Inferred entry zone from SL/TP geometry: ${inferred.min}–${inferred.max}`);
+    // "Buy/Sell Now" with no price after it — extractEntry returns null but extractSinglePrice
+    // would blindly steal the first TP value as the entry, making TP === entry.
+    const hasNowWithoutPrice = !extractedEntry && /\b(buy|sell)\s+now\b/i.test(text);
+
+    let entryZone: { min: number; max: number } | null = extractedEntry?.entryZone ?? null;
+    if (!entryZone) {
+      if (!hasNowWithoutPrice) {
+        // Only call extractEntryZone when there is no "Now" keyword without a price —
+        // otherwise extractSinglePrice would pick up a TP level as the entry.
+        entryZone = this.extractEntryZone(text);
+      }
+      if (!entryZone && explicitStopEarly != null && explicitTpsEarly.length > 0) {
+        const inferred = this.inferEntryZoneFromSlTp(action, explicitStopEarly, explicitTpsEarly);
+        if (inferred) {
+          entryZone = inferred;
+          logger.info(`🎯 Inferred entry zone from SL/TP geometry: ${inferred.min}–${inferred.max}`);
+        }
       }
     }
 
@@ -171,8 +182,10 @@ export class CleanRealWorldTradeParser {
       return null;
     }
 
-    // Determine order type (channel uses explicit Now/Limit)
-    const orderType = extractedEntry?.orderType || this.determineOrderType(text, action);
+    // "Buy/Sell Now" without a specific price → execute at market, not as a pending limit
+    const orderType: OrderType = hasNowWithoutPrice
+      ? 'MARKET'
+      : (extractedEntry?.orderType || this.determineOrderType(text, action));
 
     // Extract explicit SL/TP if provided (preferred). Otherwise compute from fixed-$ risk.
     const entryMid = (entryZone.min + entryZone.max) / 2;
