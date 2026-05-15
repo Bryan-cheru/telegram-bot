@@ -705,22 +705,27 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
       const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice);
 
-      // Step 3.6: Validate and adjust stops for broker minimum distance (preserve RR on TP)
+      // Step 3.6: Validate and adjust stops for broker minimum distance (preserve RR on TP).
+      // getBrokerMinimumStopDistance returns a value in POINTS — convert to price distance
+      // using pipSize before comparing or applying, otherwise forex pairs like NZDUSD (pipSize
+      // 0.0001) would be compared against a raw "20" and produce a negative stop loss.
       const brokerName = accountConfig.brokerName;
-      const minStopDistance = this.getBrokerMinimumStopDistance(validSymbol, brokerName);
+      const minStopPoints = this.getBrokerMinimumStopDistance(validSymbol, brokerName);
+      const symPipSize = getPipSize(validSymbol);
+      const minStopPrice = minStopPoints * symPipSize;
 
       const currentStopDistance = Math.abs(entryPrice - signal.stopLoss);
-      if (currentStopDistance < minStopDistance) {
+      if (currentStopDistance < minStopPrice) {
         logger.warn(
-          `⚠️ Stop distance ${currentStopDistance.toFixed(5)} < broker minimum ${minStopDistance} — widening`
+          `⚠️ Stop distance ${currentStopDistance.toFixed(5)} < broker minimum ${minStopPrice.toFixed(5)} (${minStopPoints} pts) — widening`
         );
 
         if (signal.action === 'BUY') {
-          signal.stopLoss = entryPrice - minStopDistance;
-          finalTakeProfit = entryPrice + minStopDistance * rr;
+          signal.stopLoss = entryPrice - minStopPrice;
+          finalTakeProfit = entryPrice + minStopPrice * rr;
         } else {
-          signal.stopLoss = entryPrice + minStopDistance;
-          finalTakeProfit = entryPrice - minStopDistance * rr;
+          signal.stopLoss = entryPrice + minStopPrice;
+          finalTakeProfit = entryPrice - minStopPrice * rr;
         }
 
         signal.stopLoss = formatPriceForInstrument(signal.stopLoss, signal.symbol);
@@ -839,7 +844,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    */
   private calculateVolume(connection: any, signal: TradeSignal, entryPrice: number): number {
     try {
-      const accountInfo = connection.terminalState.accountInformation;
+      const accountInfo = connection.terminalState?.accountInformation;
       const balance = accountInfo?.balance || 0;
 
       const fixedRiskAmount = this.getEffectiveRiskUsd(connection);
