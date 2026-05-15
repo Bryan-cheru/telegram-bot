@@ -68,3 +68,10 @@ temp/
 # Test files (development only)
 test-*.js
 critical-analysis.js
+
+# Debug/verification scripts (read sensitive credentials from env)
+check-balance.js
+verify-account.js
+prove-live-data.js
+debug-btc-pattern.js
+debug_scale_ocr*.png
