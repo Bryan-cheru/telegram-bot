@@ -130,7 +130,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         attempt: retryCount + 1
       };
       
-      logger.error(`❌ Failed to connect ${accountConfig.brokerName}:`, errorDetails);
+      // Log the full error so it's visible in PM2 / VPS logs
+      logger.error(
+        `❌ Failed to connect ${accountConfig.brokerName}: [${errorDetails.name}] ${errorDetails.message} | statusCode=${errorDetails.statusCode} | attempt=${errorDetails.attempt} | details=${JSON.stringify(errorDetails.details)}`
+      );
       
       // Retry logic for specific errors
       const shouldRetry = (

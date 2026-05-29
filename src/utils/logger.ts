@@ -53,33 +53,52 @@ const getLogsDirectory = (): string => {
 
 const logsDirectory = getLogsDirectory();
 
+// Serialize extra metadata into a readable string (excludes internal winston fields)
+const WINSTON_INTERNAL_KEYS = new Set(['timestamp', 'level', 'message', 'service', 'stack', 'splat']);
+function serializeMeta(meta: Record<string, any>): string {
+  const filtered = Object.fromEntries(
+    Object.entries(meta).filter(([k]) => !WINSTON_INTERNAL_KEYS.has(k))
+  );
+  if (Object.keys(filtered).length === 0) return '';
+  try {
+    return ' ' + JSON.stringify(filtered, null, 0);
+  } catch {
+    return ' [unserializable metadata]';
+  }
+}
+
 // Custom format for dashboard integration (clean, no ANSI codes)
-const dashboardFormat = winston.format.printf(({ timestamp, level, message, service, ...metadata }) => {
+const dashboardFormat = winston.format.printf(({ timestamp, level, message, service, stack, ...metadata }) => {
+  const metaStr = serializeMeta(metadata);
+  const stackStr = stack ? `\n${stack}` : '';
+
   // Store in memory for dashboard - clean message without ANSI codes
   const logEntry = {
     timestamp: String(timestamp || new Date().toISOString()),
     level: String(level),
-    message: String(message), // This will be clean since colorize hasn't been applied yet
+    message: String(message) + (metaStr ? metaStr : '') + stackStr,
     service: String(service || 'telegram-trading-bot'),
     metadata: Object.keys(metadata).length > 0 ? metadata : undefined
   };
-  
+
   dashboardLogs.push(logEntry);
-  
+
   // Keep only last MAX_DASHBOARD_LOGS entries
   if (dashboardLogs.length > MAX_DASHBOARD_LOGS) {
     dashboardLogs.shift();
   }
-  
+
   // Return formatted string for console (will be colorized later)
-  return `${timestamp} [${level.toUpperCase()}] ${message}`;
+  return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}${stackStr}`;
 });
 
 // Separate format for console output (with colors)
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
-  winston.format.printf(({ timestamp, level, message }) => {
-    return `${timestamp} [${level.toUpperCase()}] ${message}`;
+  winston.format.printf(({ timestamp, level, message, stack, ...metadata }) => {
+    const metaStr = serializeMeta(metadata);
+    const stackStr = stack ? `\n${stack}` : '';
+    return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}${stackStr}`;
   })
 );
 
