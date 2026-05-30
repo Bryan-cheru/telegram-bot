@@ -41,14 +41,47 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   private api: MetaApi;
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
-  
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor() {
     const token = process.env.METAAPI_TOKEN;
     if (!token) {
       throw new Error('METAAPI_TOKEN environment variable is required');
     }
-    
+
     this.api = new MetaApi(token);
+  }
+
+  /**
+   * Start a background loop that checks all accounts every 60 seconds and
+   * reconnects any that have dropped to FAILED status.
+   */
+  private startReconnectMonitor(): void {
+    if (this.reconnectTimer) return; // already running
+
+    this.reconnectTimer = setInterval(async () => {
+      const failedAccounts = Array.from(this.accounts.values()).filter(
+        acc => acc.status === 'FAILED'
+      );
+
+      if (failedAccounts.length === 0) return;
+
+      logger.warn(`🔄 Reconnect monitor: ${failedAccounts.length} account(s) FAILED — attempting reconnect...`);
+
+      for (const accountConfig of failedAccounts) {
+        accountConfig.status = 'CONNECTING';
+        try {
+          await this.connectAccount(accountConfig);
+          if ((accountConfig.status as string) === 'CONNECTED') {
+            logger.info(`✅ Reconnected ${accountConfig.brokerName} successfully`);
+            this.initialized = true;
+          }
+        } catch (err: any) {
+          accountConfig.status = 'FAILED';
+          logger.error(`❌ Reconnect attempt failed for ${accountConfig.brokerName}: ${err.message}`);
+        }
+      }
+    }, 60_000); // check every 60 seconds
   }
 
   /**
@@ -65,17 +98,20 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     // Parse account configurations
     const accountStrings = accountsConfig.split(',');
     for (const accountString of accountStrings) {
-      const [id, brokerName, accountType] = accountString.trim().split(':');
-      
-      if (!id || !brokerName || !accountType) {
-        logger.warn(`⚠️ Invalid account config: ${accountString}`);
+      const parts = accountString.trim().split(':');
+      const id = parts[0];
+      const brokerName = parts[1];
+      const accountType = parts[2] || 'LIVE'; // default to LIVE if not specified
+
+      if (!id || !brokerName) {
+        logger.warn(`⚠️ Invalid account config (need at least id:brokerName): ${accountString}`);
         continue;
       }
 
       const accountConfig: AccountConfig = {
         id: id.trim(),
         brokerName: brokerName.trim(),
-        accountType: accountType.trim() as 'DEMO' | 'LIVE',
+        accountType: accountType.trim().toUpperCase() as 'DEMO' | 'LIVE',
         status: 'CONNECTING',
         symbolCache: new Map()
       };
@@ -96,8 +132,12 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       .filter(acc => acc.status === 'CONNECTED').length;
     
     this.initialized = connectedCount > 0;
-    
+
     logger.info(`✅ Initialized ${connectedCount}/${this.accounts.size} accounts`);
+
+    // Start background health monitor regardless of initial success
+    this.startReconnectMonitor();
+    logger.info('🩺 Background reconnect monitor started (60s interval)');
   }
 
   /**
@@ -879,6 +919,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
       const maxVol =
         isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
+      if (calculatedLotSize > maxVol) {
+        logger.warn(`⚠️ Lot size ${calculatedLotSize.toFixed(2)} capped to MAX_TRADE_SIZE ${maxVol} — raise MAX_TRADE_SIZE if this is wrong`);
+      }
       calculatedLotSize = Math.min(calculatedLotSize, maxVol);
       calculatedLotSize = Math.round(calculatedLotSize * 100) / 100;
 
@@ -911,7 +954,12 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    */
   async closeConnection(): Promise<void> {
     logger.info('🔌 Closing all connections...');
-    
+
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     for (const [_, accountConfig] of this.accounts) {
       if (accountConfig.connection) {
         try {
@@ -921,7 +969,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         }
       }
     }
-    
+
     this.accounts.clear();
     this.initialized = false;
   }

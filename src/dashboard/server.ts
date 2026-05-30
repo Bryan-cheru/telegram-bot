@@ -52,9 +52,46 @@ app.use('/api', requireApiKey());
 
 // Store for real-time data
 import { randomUUID } from 'crypto';
+import os from 'os';
 
 let tradeHistory: any[] = [];
 let streamClients: any[] = []; // Store for SSE clients
+
+// ── Signal history persistence ───────────────────────────────────────────────
+const SIGNALS_FILE = path.join(
+  process.env.SIGNALS_DATA_DIR ||
+    (process.platform === 'win32'
+      ? path.join(os.homedir(), 'AppData', 'Roaming', 'Telegram Trading Bot')
+      : path.join(os.homedir(), '.telegram-trading-bot')),
+  'signal-history.json'
+);
+
+function loadSignalHistory(): any[] {
+  try {
+    if (fs.existsSync(SIGNALS_FILE)) {
+      const raw = fs.readFileSync(SIGNALS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        console.log(`📂 Loaded ${parsed.length} signals from ${SIGNALS_FILE}`);
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load signal history from disk:', err);
+  }
+  return [];
+}
+
+function saveSignalHistory(signals: any[]): void {
+  try {
+    fs.mkdirSync(path.dirname(SIGNALS_FILE), { recursive: true });
+    fs.writeFileSync(SIGNALS_FILE, JSON.stringify(signals.slice(-1000), null, 0));
+  } catch (err) {
+    console.warn('Could not save signal history to disk:', err);
+  }
+}
+
+let signalHistory: any[] = loadSignalHistory();
 
 // Convert technical logs to user-friendly activities
 const convertToUserFriendlyActivity = (log: any) => {
@@ -502,7 +539,16 @@ app.get('/api/logs/stream', (req, res) => {
   // Send connection established event
   res.write('data: {"type":"connected","message":"📊 Live activity stream connected","timestamp":"' + new Date().toISOString() + '"}\n\n');
 
-  // Store client connection for real-time logs
+  // Evict dead clients before adding the new one
+  streamClients = streamClients.filter((c: any) => !c.res.destroyed && c.res.writable);
+
+  // Cap connections — drop the oldest if over limit
+  const MAX_SSE = parseInt(process.env.MAX_SSE_CONNECTIONS || '10');
+  if (streamClients.length >= MAX_SSE) {
+    const oldest = streamClients.shift();
+    try { oldest?.res.end(); } catch { /* already dead */ }
+  }
+
   const clientId = Math.random().toString(36);
   streamClients.push({ id: clientId, res });
 
@@ -541,6 +587,21 @@ app.get('/api/status', (req, res) => {
 
 // Mount Trading Management API
 app.use('/api', tradingAPIRouter);
+
+app.get('/api/signals', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 500;
+    const filter = req.query.status as string || 'all';
+    let signals = signalHistory.slice(-limit);
+    if (filter !== 'all') {
+      signals = signals.filter((s: any) => s.status === filter);
+    }
+    res.json({ signals: signals.reverse(), total: signalHistory.length });
+  } catch (error) {
+    console.error('Error fetching signals:', error);
+    res.json({ signals: [], total: 0 });
+  }
+});
 
 app.get('/api/logs', (req, res) => {
   try {
@@ -2082,15 +2143,14 @@ export const addLog = (logEntry: any) => {
     const userActivity = convertToUserFriendlyActivity(logWithTimestamp);
     if (userActivity) {
       const activityData = JSON.stringify(userActivity);
-      streamClients.forEach((client: any) => {
+      // Build a new list keeping only live clients (avoids splice-during-forEach bugs)
+      streamClients = streamClients.filter((client: any) => {
+        if (client.res.destroyed || !client.res.writable) return false;
         try {
           client.res.write(`data: ${activityData}\n\n`);
-        } catch (error) {
-          // Client disconnected, remove from list
-          const index = streamClients.indexOf(client);
-          if (index !== -1) {
-            streamClients.splice(index, 1);
-          }
+          return true;
+        } catch {
+          return false;
         }
       });
     }
@@ -2103,10 +2163,33 @@ export const addTrade = (trade: any) => {
     timestamp: new Date().toISOString(),
     id: randomUUID()
   });
-  
+
   // Keep only last 500 trades
   if (tradeHistory.length > 500) {
     tradeHistory = tradeHistory.slice(-500);
+  }
+};
+
+export const addSignal = (signal: any): string => {
+  const id = randomUUID();
+  signalHistory.push({
+    ...signal,
+    timestamp: new Date().toISOString(),
+    id
+  });
+  if (signalHistory.length > 1000) {
+    signalHistory = signalHistory.slice(-1000);
+  }
+  saveSignalHistory(signalHistory);
+  return id;
+};
+
+export const updateSignalStatus = (id: string, status: string, extra?: any) => {
+  const entry = signalHistory.find((s: any) => s.id === id);
+  if (entry) {
+    entry.status = status;
+    if (extra) Object.assign(entry, extra);
+    saveSignalHistory(signalHistory);
   }
 };
 

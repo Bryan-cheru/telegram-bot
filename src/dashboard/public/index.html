@@ -377,13 +377,13 @@
                     <div class="card-header">
                         <h2><i class="fas fa-broadcast-tower"></i> Signal History</h2>
                         <div class="header-actions">
-                            <select class="form-select" id="signal-filter">
+                            <select class="form-select" id="signal-filter" onchange="dashboard && dashboard.loadSignalHistory()">
                                 <option value="all">All Signals</option>
                                 <option value="executed">Executed</option>
                                 <option value="pending">Pending</option>
                                 <option value="failed">Failed</option>
                             </select>
-                            <button class="btn btn-outline btn-sm" onclick="refreshSignals()">
+                            <button class="btn btn-outline btn-sm" onclick="dashboard && dashboard.loadSignalHistory()">
                                 <i class="fas fa-sync-alt"></i> Refresh
                             </button>
                         </div>

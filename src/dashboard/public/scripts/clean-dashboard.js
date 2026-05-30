@@ -298,7 +298,7 @@ class CleanTradingDashboard {
         this.renderAccountInfo();
         break;
       case 'signals-section':
-        // Signals list is server-streamed via the live log feed; nothing extra to fetch here.
+        await this.loadSignalHistory();
         break;
       case 'trades-section':
         await this.loadPositions();
@@ -438,6 +438,58 @@ class CleanTradingDashboard {
       this.pendingOrders = [];
       this.renderPendingOrders();
     }
+  }
+
+  async loadSignalHistory() {
+    try {
+      console.log('📡 Loading signal history...');
+      const filter = document.getElementById('signal-filter')?.value || 'all';
+      const response = await fetch('/api/signals?limit=500&status=' + encodeURIComponent(filter));
+      const result = await response.json();
+      const signals = Array.isArray(result.signals) ? result.signals : [];
+      console.log(`✅ Loaded ${signals.length} signals`);
+      this.renderSignalHistory(signals);
+    } catch (error) {
+      console.error('❌ Error loading signal history:', error);
+      this.renderSignalHistory([]);
+    }
+  }
+
+  renderSignalHistory(signals) {
+    const list = document.getElementById('signals-list');
+    if (!list) return;
+
+    if (signals.length === 0) {
+      list.innerHTML = '<div class="empty-state"><i class="fas fa-satellite-dish"></i><p>No signals received yet</p></div>';
+      return;
+    }
+
+    const statusIcon = { executed: '✅', failed: '❌', pending: '⏳' };
+    const statusClass = { executed: 'success', failed: 'danger', pending: 'warning' };
+
+    list.innerHTML = signals.map(s => {
+      const icon = statusIcon[s.status] || '📡';
+      const cls = statusClass[s.status] || 'info';
+      const entry = s.entryMin === s.entryMax
+        ? (s.entryMin || '—')
+        : `${s.entryMin || '?'} – ${s.entryMax || '?'}`;
+      const targets = Array.isArray(s.targets) && s.targets.length ? s.targets.join(', ') : '—';
+      const sl = s.stopLoss || '—';
+      const time = s.timestamp ? new Date(s.timestamp).toLocaleString() : '';
+      return `
+        <div class="signal-item" style="border-left:3px solid var(--${cls === 'success' ? 'green' : cls === 'danger' ? 'red' : 'yellow'},#888);padding:10px 12px;margin-bottom:8px;background:var(--card-bg,#1a1a2e);border-radius:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <strong>${icon} ${s.symbol || '?'} ${s.action || ''}</strong>
+            <span style="font-size:0.75rem;opacity:0.6">${time}</span>
+          </div>
+          <div style="font-size:0.82rem;opacity:0.85;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
+            <span>Entry: ${entry}</span>
+            <span>SL: ${sl}</span>
+            <span>TP: ${targets}</span>
+          </div>
+          ${s.executionMessage ? `<div style="font-size:0.75rem;opacity:0.6;margin-top:2px">${s.executionMessage}</div>` : ''}
+        </div>`;
+    }).join('');
   }
 
   async loadTradeHistory() {

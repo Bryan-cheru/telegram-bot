@@ -8,6 +8,7 @@ import { logger } from '../utils/logger';
 import { ValidationService } from '../shared';
 import { ManualSignalParser } from '../services/ManualSignalParser';
 import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
+import { addSignal, updateSignalStatus } from '../dashboard/server';
 
 export class TelegramBot {
   private bot: Telegraf;
@@ -332,6 +333,19 @@ export class TelegramBot {
       const signalInfo = `Symbol: ${tradeSignal.symbol}, Action: ${tradeSignal.action}, Entry: ${tradeSignal.entryZone.min}-${tradeSignal.entryZone.max}, Targets: ${tradeSignal.targets.join(', ')}`;
       logger.info('Trade signal detected from text:', signalInfo);
 
+      // Record in signal history for the dashboard
+      const signalId = addSignal({
+        symbol: tradeSignal.symbol,
+        action: tradeSignal.action,
+        entryMin: tradeSignal.entryZone.min,
+        entryMax: tradeSignal.entryZone.max,
+        stopLoss: tradeSignal.stopLoss,
+        targets: tradeSignal.targets,
+        orderType: tradeSignal.orderType,
+        status: 'pending',
+        rawText: text?.substring(0, 500)
+      });
+
       // Execute trade
       try {
         // Check if trade executor is properly initialized before attempting execution
@@ -346,16 +360,22 @@ export class TelegramBot {
         
         logger.info('🚀 Executing trade signal...');
         const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
-        
+
         logger.info('📊 Trade execution result received:', {
           success: result.success,
           message: result.message,
           error: result.error,
           signalId: result.signalId
         });
-        
+
+        // Update signal status in dashboard history
+        updateSignalStatus(signalId, result.success ? 'executed' : 'failed', {
+          executionMessage: result.message || result.error,
+          ticket: result.ticket
+        });
+
         if (result.success) {
-          const successMessage = result.signalId 
+          const successMessage = result.signalId
             ? `✅ Text signal processed! Signal ID: ${result.signalId}`
             : `✅ Trade executed from text signal!`;
           logger.info(successMessage);

@@ -15,8 +15,14 @@
 
   window.setDashboardApiKey = function (key) {
     try {
-      if (key && String(key).trim()) {
-        localStorage.setItem(STORAGE_KEY, String(key).trim());
+      var value = String(key || '').trim();
+      // Strip "VARNAME=" prefix if user pasted the entire .env line (e.g. "DASHBOARD_API_KEY=abc123")
+      var eqIdx = value.indexOf('=');
+      if (eqIdx > 0 && /^[A-Z][A-Z0-9_]*$/.test(value.substring(0, eqIdx))) {
+        value = value.substring(eqIdx + 1).trim();
+      }
+      if (value) {
+        localStorage.setItem(STORAGE_KEY, value);
       } else {
         localStorage.removeItem(STORAGE_KEY);
       }

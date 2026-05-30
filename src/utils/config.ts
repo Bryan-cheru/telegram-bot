@@ -160,6 +160,15 @@ export const validateConfig = (): boolean => {
     console.warn('⚠️ MAX_TRADE_SIZE seems unusual:', config.trading.maxTradeSize);
   }
 
+  if (config.trading.maxTradeSize < config.trading.fixedLotSize) {
+    warnings.push(
+      `WARNING: MAX_TRADE_SIZE (${config.trading.maxTradeSize}) is less than FIXED_LOT_SIZE (${config.trading.fixedLotSize}) — trades will always be capped at ${config.trading.maxTradeSize} lots`
+    );
+    console.warn(
+      `⚠️ CONFIG CONFLICT: MAX_TRADE_SIZE=${config.trading.maxTradeSize} < FIXED_LOT_SIZE=${config.trading.fixedLotSize}. Every trade will be capped.`
+    );
+  }
+
   if (config.trading.riskPercentage <= 0 || config.trading.riskPercentage > 10) {
     warnings.push('WARNING: RISK_PERCENTAGE should be between 0.1 and 10');
     console.warn('⚠️ RISK_PERCENTAGE seems unusual:', config.trading.riskPercentage);
