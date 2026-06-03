@@ -232,10 +232,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       await accountConfig.account.waitConnected(45000);  // Reduced from 90s to 45s
       logger.info(`🔗 ${accountConfig.brokerName} account connected`);
 
-      // Get connection — v13 API: account.connect() creates and connects in one call
-      logger.info(`📡 Establishing connection for ${accountConfig.brokerName}...`);
-      accountConfig.connection = await accountConfig.account.connect();
-      logger.info(`✅ ${accountConfig.brokerName} connected`);
+      // Get RPC connection — v29 API: getRPCConnection() is synchronous, then connect() async
+      logger.info(`📡 Establishing RPC connection for ${accountConfig.brokerName}...`);
+      accountConfig.connection = accountConfig.account.getRPCConnection();
+      await accountConfig.connection.connect();
+      logger.info(`✅ ${accountConfig.brokerName} RPC connected`);
       
       // Wait for synchronization (critical step)
       logger.info(`🔄 Synchronizing ${accountConfig.brokerName}...`);

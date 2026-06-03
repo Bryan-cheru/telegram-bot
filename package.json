@@ -45,7 +45,7 @@
     "express": "^5.1.0",
     "jshint": "^0.5.9",
     "jsonwebtoken": "^9.0.2",
-    "metaapi.cloud-sdk": "^13.2.9",
+    "metaapi.cloud-sdk": "^29.3.3",
     "mongoose": "^8.18.3",
     "sharp": "^0.34.5",
     "telegraf": "^4.15.4",
