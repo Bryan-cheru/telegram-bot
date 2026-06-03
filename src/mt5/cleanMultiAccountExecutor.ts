@@ -3,7 +3,7 @@
  * Follows MetaAPI documentation exactly - replaces the complex existing system
  */
 
-import MetaApi, { MetatraderAccount, RpcMetaApiConnectionInstance } from 'metaapi.cloud-sdk';
+import MetaApi from 'metaapi.cloud-sdk';
 import { TradeSignal, TradeResult } from '../types';
 import { ITradeExecutor } from '../types/ITradeExecutor';
 import { logger } from '../utils/logger';
@@ -19,8 +19,8 @@ interface AccountConfig {
   id: string;
   brokerName: string;
   accountType: 'DEMO' | 'LIVE';
-  account?: InstanceType<typeof MetatraderAccount>;
-  connection?: InstanceType<typeof RpcMetaApiConnectionInstance>;
+  account?: any;
+  connection?: any;
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
   symbolCache: Map<string, string>; // canonical → broker symbol
 }
@@ -38,7 +38,7 @@ interface TradeExecutionResult {
  * Clean, reliable multi-account executor following MetaAPI best practices
  */
 export class CleanMultiAccountExecutor implements ITradeExecutor {
-  private api: InstanceType<typeof MetaApi>;
+  private api: any;
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
@@ -232,11 +232,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       await accountConfig.account.waitConnected(45000);  // Reduced from 90s to 45s
       logger.info(`🔗 ${accountConfig.brokerName} account connected`);
 
-      // Get RPC connection (following official examples)
-      accountConfig.connection = accountConfig.account.getRPCConnection();
-      logger.info(`📡 Establishing RPC connection for ${accountConfig.brokerName}...`);
-      await accountConfig.connection.connect();
-      logger.info(`✅ ${accountConfig.brokerName} RPC connected`);
+      // Get connection — v13 API: account.connect() creates and connects in one call
+      logger.info(`📡 Establishing connection for ${accountConfig.brokerName}...`);
+      accountConfig.connection = await accountConfig.account.connect();
+      logger.info(`✅ ${accountConfig.brokerName} connected`);
       
       // Wait for synchronization (critical step)
       logger.info(`🔄 Synchronizing ${accountConfig.brokerName}...`);

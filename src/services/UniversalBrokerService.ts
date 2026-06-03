@@ -5,7 +5,7 @@
  */
 
 import { logger } from '../utils/logger';
-import MetaApi, { MetatraderAccount } from 'metaapi.cloud-sdk';
+import MetaApi from 'metaapi.cloud-sdk';
 import { SymbolParser, ValidationService, FormatService } from '../shared';
 
 export interface BrokerInfo {
@@ -43,7 +43,7 @@ export class UniversalBrokerService {
   private static instance: UniversalBrokerService;
   private brokerCache = new Map<string, BrokerInfo>();
   private symbolCache = new Map<string, Symbol[]>();
-  private metaApi: InstanceType<typeof MetaApi>;
+  private metaApi: any;
 
   constructor(metaApiToken: string) {
     this.metaApi = new MetaApi(metaApiToken);
