@@ -23,26 +23,17 @@ export class TextExtractor {
         logger: m => logger.debug('OCR Progress:', m),
       });
       
-      // Calculate average confidence from all words
-      const validWords = data.words.filter(w => w.confidence > 0);
-      const averageConfidence = validWords.length > 0 
-        ? validWords.reduce((sum, w) => sum + w.confidence, 0) / validWords.length / 100
-        : 0;
-      
-      // Filter low-confidence words for better text quality
-      const highConfidenceWords = data.words.filter(w => w.confidence >= 30);
-      
-      logger.info(`OCR completed with ${(averageConfidence * 100).toFixed(1)}% average confidence`);
-      logger.info(`Processed ${data.words.length} words, ${highConfidenceWords.length} high-confidence`);
-      
+      // data.confidence is the page-level confidence (0–100) — word-level data
+      // was removed from the Page type in tesseract.js v6+ (moved into blocks).
+      // Since words are not consumed downstream, use page confidence directly.
+      const averageConfidence = (data.confidence || 0) / 100;
+
+      logger.info(`OCR completed with ${data.confidence.toFixed(1)}% average confidence`);
+
       return {
         text: data.text.trim(),
         confidence: averageConfidence,
-        words: data.words.map(w => ({
-          text: w.text,
-          confidence: w.confidence / 100,
-          bbox: w.bbox
-        }))
+        words: []
       };
     } catch (error) {
       logger.error('Error extracting text from image:', error);

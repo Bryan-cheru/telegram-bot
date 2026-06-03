@@ -9,6 +9,7 @@ import { ValidationService } from '../shared';
 import { ManualSignalParser } from '../services/ManualSignalParser';
 import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
 import { addSignal, updateSignalStatus } from '../dashboard/server';
+import { SignalDeduplicator } from '../utils/signalDeduplicator';
 
 export class TelegramBot {
   private bot: Telegraf;
@@ -16,6 +17,7 @@ export class TelegramBot {
   // private photoHandler: ModernizedPhotoHandler; // Disabled complex handler
   private tradeExecutor: ITradeExecutor;
   private manualSignalParser: ManualSignalParser;
+  private deduplicator = new SignalDeduplicator();
 
   constructor() {
     this.bot = new Telegraf(config.botToken);
@@ -206,7 +208,12 @@ export class TelegramBot {
         logger.warn('No text or caption found in message');
         return;
       }
-      
+
+      // Reject duplicate signals (same text arriving via multiple Telegram paths within 2 min)
+      if (this.deduplicator.isDuplicate(text)) {
+        return;
+      }
+
       // Log what type of text we're processing
       if (message?.caption) {
         logger.info('🎯 Processing photo caption as trading signal');

@@ -412,65 +412,6 @@ export class CleanRealWorldTradeParser {
   }
 
   /**
-   * Calculate stop loss and targets using simple fixed $900 risk/reward
-   */
-  private static calculateTradingLevels(
-    entryZone: { min: number; max: number }, 
-    action: TradeAction, 
-    symbol: string
-  ): { stopLoss: number; targets: number[] } {
-    const entryMid = (entryZone.min + entryZone.max) / 2;
-    
-    // FIXED STRATEGY: Always target +$900 profit and -$900 loss with 0.45 lots
-    // Calculate what price distance gives us $900 with 0.45 lots
-    
-    let dollarDistance: number;
-    
-    if (symbol === 'XAUUSD' || symbol === 'GOLD') {
-      // For Gold: $1 move = $0.45 with 0.45 lots
-      // So $900 / $0.45 = 2000 points = $20.00 price move
-      dollarDistance = 20.00; // $20 move for $900 risk/reward
-    } else if (symbol.includes('JPY')) {
-      // For JPY pairs: 1 yen move ≈ $4.50 with 0.45 lots
-      // So $900 / $4.50 = 200 points = 2.00 yen move
-      dollarDistance = 2.00; // 2 yen move for $900 risk/reward
-    } else {
-      // For major pairs: 100 pips ≈ $45 with 0.45 lots
-      // So $900 / $45 = 2000 pips = 0.20 price move
-      dollarDistance = 0.0200; // 200 pips for $900 risk/reward
-    }
-    
-    let stopLoss: number;
-    let targets: number[];
-
-    if (action === 'BUY') {
-      // Stop loss $900 below entry, target $900 above entry
-      stopLoss = entryMid - dollarDistance;
-      targets = [entryMid + dollarDistance];
-    } else {
-      // Stop loss $900 above entry, target $900 below entry  
-      stopLoss = entryMid + dollarDistance;
-      targets = [entryMid - dollarDistance];
-    }
-
-    // Round to appropriate decimal places
-    const decimals = this.getDecimalPlaces(symbol);
-    stopLoss = parseFloat(stopLoss.toFixed(decimals));
-    targets = targets.map(t => parseFloat(t.toFixed(decimals)));
-
-    logger.info(`🎯 Fixed $900 risk/reward levels for ${symbol}:`, {
-      entryZone: `${entryZone.min}-${entryZone.max}`,
-      entryMid: entryMid,
-      stopLoss: stopLoss,
-      target: targets[0],
-      dollarDistance: dollarDistance,
-      strategy: 'Fixed $900 risk/reward with 0.45 lots'
-    });
-
-    return { stopLoss, targets };
-  }
-
-  /**
    * Determine order type from context
    */
   private static determineOrderType(text: string, action: TradeAction): OrderType {
@@ -499,57 +440,6 @@ export class CleanRealWorldTradeParser {
     if (text.includes('breakout')) return 'Breakout strategy';
     
     return 'Technical analysis signal';
-  }
-
-  /**
-   * Normalize symbol using Universal approach
-   * Replaces hardcoded InstantFunding logic with broker-agnostic normalization
-   */
-  private static normalizeSymbol(symbol: string): string {
-    // Basic normalization - remove common variations and standardize
-    let normalized = symbol
-      .toUpperCase()
-      .replace(/\.X$/, '')         // Remove InstantFunding .x suffix
-      .replace(/[^A-Z0-9]/g, '')   // Remove special characters
-      .trim();
-    
-    // Common symbol mappings (broker-agnostic)
-    const symbolMap: Record<string, string> = {
-      // Metals
-      'GOLD': 'XAUUSD',
-      'SILVER': 'XAGUSD',
-      
-      // Indices  
-      'NASDAQ': 'NAS100',
-      'DOW': 'US30',
-      'DOWJONES': 'US30',
-      'SP500': 'SPX500',
-      'SPX': 'SPX500',
-      'DAX': 'GER30',
-      'GERMANY30': 'GER30',
-      'FTSE': 'UK100',
-      'UK100': 'UK100',
-      
-      // InstantFunding specific mappings
-      'AUS200': 'AUS200',
-      'US100': 'NAS100',
-      'JPN225': 'JPN225',
-      'ESXEUR': 'ESXEUR',
-      'F40EUR': 'F40EUR', 
-      'HSIHED': 'HSIHED',
-      
-      // Forex (already standard)
-      'EURUSD': 'EURUSD',
-      'GBPUSD': 'GBPUSD',
-      'USDJPY': 'USDJPY',
-      'USDCHF': 'USDCHF',
-      'AUDUSD': 'AUDUSD',
-      'USDCAD': 'USDCAD',
-      'EURCHF': 'EURCHF'
-    };
-    
-    // Apply mapping if found
-    return symbolMap[normalized] || normalized;
   }
 
   /**
@@ -613,7 +503,8 @@ export class CleanRealWorldTradeParser {
     if (/\b(deposit|broker|track\.|deriv|open 24\/7|profit split|discordpremiumsignal)\b/i.test(text)) return true;
 
     // Generic commentary with no actionable fields
-    const hasAction = /\b(buy|sell)\b/i.test(text);
+    const hasAction = /\b(buy|sell|selling|buying|bullish|bearish)\b/i.test(text) ||
+      /\b(supply\s+zone|demand\s+zone|sell\s+zone|buy\s+zone)\b/i.test(text);
     const hasSlTp = /\b(sl|tp|stop loss|target)\b/i.test(text);
     const hasEntryPrice = /\b(buy|sell)\s+(now|limit)\s+\d/i.test(text) || /@\s*\d/.test(text);
     if (!hasAction && !hasSlTp && !hasEntryPrice) return true;

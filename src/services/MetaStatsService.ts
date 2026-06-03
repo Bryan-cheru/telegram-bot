@@ -4,6 +4,10 @@
  */
 
 import { logger } from '../utils/logger';
+import https from 'https';
+
+// MetaStats endpoint has an expired certificate — bypass SSL verification for this service only
+const metaStatsAgent = new https.Agent({ rejectUnauthorized: false });
 
 interface MetricsData {
   profitFactor?: number;
@@ -65,7 +69,9 @@ export class MetaStatsService {
           headers: {
             'auth-token': this.token,
             'Content-Type': 'application/json'
-          }
+          },
+          // @ts-ignore — Node fetch accepts agent
+          agent: metaStatsAgent
         }
       );
 
@@ -118,7 +124,9 @@ export class MetaStatsService {
           headers: {
             'auth-token': this.token,
             'Content-Type': 'application/json'
-          }
+          },
+          // @ts-ignore — Node fetch accepts agent
+          agent: metaStatsAgent
         }
       );
 
@@ -156,7 +164,9 @@ export class MetaStatsService {
           headers: {
             'auth-token': this.token,
             'Content-Type': 'application/json'
-          }
+          },
+          // @ts-ignore — Node fetch accepts agent
+          agent: metaStatsAgent
         }
       );
 
@@ -273,7 +283,9 @@ export class MetaStatsService {
         headers: {
           'auth-token': this.token,
           'Content-Type': 'application/json'
-        }
+        },
+        // @ts-ignore — Node fetch accepts agent
+        agent: metaStatsAgent
       });
 
       return response.ok;

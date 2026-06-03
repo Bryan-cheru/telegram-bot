@@ -2,8 +2,6 @@ import express from 'express';
 import { logger } from '../utils/logger';
 import MetaApi from 'metaapi.cloud-sdk';
 import { MetaStatsService } from '../services/MetaStatsService';
-import { MetaApiConnectionPool } from '../services/MetaApiConnectionPool';
-
 const router = express.Router();
 
 // In-memory storage for connected accounts (no database needed)
@@ -18,7 +16,6 @@ interface ConnectedAccount {
 let connectedAccounts: Map<string, ConnectedAccount> = new Map();
 const metaApi = new MetaApi(process.env.METAAPI_TOKEN!);
 const metaStatsService = new MetaStatsService();
-const connectionPool = new MetaApiConnectionPool();
 
 // Rate limiter to prevent log spam
 const lastLogTime = new Map<string, number>();
@@ -50,9 +47,6 @@ router.get('/status', async (req: any, res: any) => {
     const connectedCount = Array.from(connectedAccounts.values())
       .filter(acc => acc.connection && acc.connection.connected).length;
 
-    // Get connection pool statistics
-    const poolStats = connectionPool.getPoolStats();
-
     res.json({
       success: true,
       data: {
@@ -60,12 +54,6 @@ router.get('/status', async (req: any, res: any) => {
         systemStatus: 'Running',
         totalAccounts,
         connectedAccounts: connectedCount,
-        connectionPool: {
-          totalConnections: poolStats.totalConnections,
-          healthyConnections: poolStats.healthyConnections,
-          avgUseCount: poolStats.avgUseCount
-        },
-        rateLimiting: poolStats.rateLimitStatus,
         timestamp: new Date().toISOString()
       }
     });
@@ -147,24 +135,6 @@ router.get('/metastats/:accountId/trades', async (req: any, res: any) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to retrieve trades'
-    });
-  }
-});
-
-// Connection Pool - Get pool statistics
-router.get('/pool/stats', async (req: any, res: any) => {
-  try {
-    const stats = connectionPool.getPoolStats();
-    
-    res.json({
-      success: true,
-      data: stats
-    });
-  } catch (error) {
-    logger.error('Error getting pool stats:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to retrieve pool statistics'
     });
   }
 });
