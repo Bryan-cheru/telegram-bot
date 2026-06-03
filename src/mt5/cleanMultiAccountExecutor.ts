@@ -19,8 +19,8 @@ interface AccountConfig {
   id: string;
   brokerName: string;
   accountType: 'DEMO' | 'LIVE';
-  account?: MetatraderAccount;
-  connection?: RpcMetaApiConnectionInstance;
+  account?: InstanceType<typeof MetatraderAccount>;
+  connection?: InstanceType<typeof RpcMetaApiConnectionInstance>;
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
   symbolCache: Map<string, string>; // canonical → broker symbol
 }
@@ -38,7 +38,7 @@ interface TradeExecutionResult {
  * Clean, reliable multi-account executor following MetaAPI best practices
  */
 export class CleanMultiAccountExecutor implements ITradeExecutor {
-  private api: MetaApi;
+  private api: InstanceType<typeof MetaApi>;
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;

@@ -43,7 +43,7 @@ export class UniversalBrokerService {
   private static instance: UniversalBrokerService;
   private brokerCache = new Map<string, BrokerInfo>();
   private symbolCache = new Map<string, Symbol[]>();
-  private metaApi: MetaApi;
+  private metaApi: InstanceType<typeof MetaApi>;
 
   constructor(metaApiToken: string) {
     this.metaApi = new MetaApi(metaApiToken);
