@@ -31,6 +31,27 @@ function mergePersistedSettingsFile(): void {
 
 mergePersistedSettingsFile();
 
+/**
+ * Persist a single runtime setting to data/settings.json so it survives restarts.
+ * Also applies it immediately to process.env and re-syncs the in-memory config.
+ */
+export function persistSetting(key: string, value: string): void {
+  process.env[key] = value;
+
+  const settingsPath = path.join(process.cwd(), 'data', 'settings.json');
+  let existing: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(settingsPath)) {
+      existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    }
+  } catch { /* start fresh if file is corrupt */ }
+
+  existing[key] = value;
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
+}
+
+
 export const config = {
   botToken: process.env.BOT_TOKEN || '',
   

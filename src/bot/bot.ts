@@ -13,6 +13,7 @@ import { SignalDeduplicator } from '../utils/signalDeduplicator';
 import { TradeNotifier } from '../utils/tradeNotifier';
 import { DailyLossTracker } from '../utils/dailyLossTracker';
 import { getOpenPositionsSummary } from '../utils/positionsMonitor';
+import { persistSetting, syncConfigFromEnv } from '../utils/config';
 
 export class TelegramBot {
   private bot: Telegraf;
@@ -33,6 +34,16 @@ export class TelegramBot {
     this.manualSignalParser = new ManualSignalParser();
     this.notifier = new TradeNotifier(this.bot);
     this.setupHandlers();
+  }
+
+  private isAdminChat(ctx: any): boolean {
+    const chatId = ctx.chat?.id?.toString();
+    const adminId = config.notificationChatId;
+    if (!adminId || chatId !== adminId) {
+      // Silently ignore — don't leak that this is an admin command
+      return false;
+    }
+    return true;
   }
 
   // Getter to share executor with dashboard
@@ -61,6 +72,102 @@ export class TelegramBot {
         `Your chat ID is: \`${id}\`\n\nSet this in your .env:\n\`NOTIFICATION_CHAT_ID=${id}\``,
         { parse_mode: 'Markdown' }
       );
+    });
+
+    // ── Runtime config commands ──────────────────────────────────────────────
+    // Only responds to the configured admin chat (NOTIFICATION_CHAT_ID)
+    this.bot.command('config', async (ctx) => {
+      if (!this.isAdminChat(ctx)) return;
+      const t = config.trading;
+      const l = config.limits;
+      await ctx.reply([
+        `⚙️ *Current Config*`,
+        ``,
+        `*Trading*`,
+        `  Risk per trade: $${t.fixedRiskAmount}`,
+        `  Lot size: ${t.fixedLotSize}`,
+        `  Max lot size: ${t.maxTradeSize}`,
+        ``,
+        `*Limits*`,
+        `  Max trades/day: ${l.maxDailyTrades}`,
+        `  Daily loss limit: $${l.dailyLossLimit}`,
+        ``,
+        `*Commands*`,
+        `  /set risk <amount> — e.g. /set risk 50`,
+        `  /set lots <size> — e.g. /set lots 0.45`,
+        `  /set maxlots <size> — e.g. /set maxlots 1.0`,
+        `  /set dailytrades <n> — e.g. /set dailytrades 5`,
+        `  /set dailyloss <amount> — e.g. /set dailyloss 200`,
+        `  /set bot on|off — pause/resume trading`,
+      ].join('\n'), { parse_mode: 'Markdown' });
+    });
+
+    this.bot.command('set', async (ctx) => {
+      if (!this.isAdminChat(ctx)) return;
+      const parts = (ctx.message as any)?.text?.split(/\s+/) ?? [];
+      // parts: ['set', 'key', 'value']
+      const key = parts[1]?.toLowerCase();
+      const value = parts[2];
+
+      if (!key || value === undefined) {
+        await ctx.reply('Usage: /set <key> <value>\nSee /config for available keys.');
+        return;
+      }
+
+      const handlers: Record<string, () => string | null> = {
+        risk: () => {
+          const v = parseFloat(value);
+          if (isNaN(v) || v <= 0) return 'Invalid amount — use a positive number e.g. /set risk 50';
+          persistSetting('FIXED_RISK_AMOUNT', String(v));
+          syncConfigFromEnv();
+          return `✅ Risk per trade set to $${v}`;
+        },
+        lots: () => {
+          const v = parseFloat(value);
+          if (isNaN(v) || v <= 0) return 'Invalid lot size';
+          persistSetting('FIXED_LOT_SIZE', String(v));
+          syncConfigFromEnv();
+          return `✅ Lot size set to ${v}`;
+        },
+        maxlots: () => {
+          const v = parseFloat(value);
+          if (isNaN(v) || v <= 0) return 'Invalid lot size';
+          persistSetting('MAX_TRADE_SIZE', String(v));
+          syncConfigFromEnv();
+          return `✅ Max lot size set to ${v}`;
+        },
+        dailytrades: () => {
+          const v = parseInt(value);
+          if (isNaN(v) || v < 1) return 'Invalid number — must be ≥ 1';
+          persistSetting('MAX_DAILY_TRADES', String(v));
+          syncConfigFromEnv();
+          (this.dailyTracker as any).maxDailyTrades = v;
+          return `✅ Max daily trades set to ${v}`;
+        },
+        dailyloss: () => {
+          const v = parseFloat(value);
+          if (isNaN(v) || v <= 0) return 'Invalid amount';
+          persistSetting('DAILY_LOSS_LIMIT', String(v));
+          syncConfigFromEnv();
+          return `✅ Daily loss limit set to $${v}`;
+        },
+        bot: () => {
+          if (!['on', 'off'].includes(value.toLowerCase())) return 'Use: /set bot on  or  /set bot off';
+          const enabled = value.toLowerCase() === 'on';
+          persistSetting('BOT_ENABLED', enabled ? 'true' : 'false');
+          syncConfigFromEnv();
+          return enabled ? '✅ Trading ENABLED' : '🛑 Trading DISABLED — signals will be ignored';
+        },
+      };
+
+      const handler = handlers[key];
+      if (!handler) {
+        await ctx.reply(`Unknown setting: "${key}"\nSee /config for available keys.`);
+        return;
+      }
+
+      const response = handler();
+      if (response) await ctx.reply(response);
     });
 
     this.bot.on('text', (ctx) => this.handleTextMessage(ctx));
@@ -155,14 +262,13 @@ export class TelegramBot {
         }
       }
 
-      // Regular message logging
+      // Skip commands — handled by bot.command() above
+      if (ctx.message && 'text' in ctx.message && ctx.message.text?.startsWith('/')) return;
+
       logger.info(`Message received from chat ${ctx.chat?.id} (type: ${ctx.chat?.type})`);
-      logger.info(`Expected channel ID: ${config.allowedChannelId}`);
-      logger.info(`Chat ID matches: ${ctx.chat?.id.toString() === config.allowedChannelId}`);
       if (ctx.chat?.id.toString() === config.allowedChannelId) {
         logger.info('Message from configured channel detected');
       }
-      this.messageHandler.handleUnknown(ctx);
     });
 
     // Error handling
