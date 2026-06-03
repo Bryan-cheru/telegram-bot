@@ -546,11 +546,8 @@ router.get('/history', async (req: any, res: any) => {
 });
 
 // ==================== RISK MANAGEMENT ENDPOINTS ====================
+// In-memory only — MetaAPI RiskManagement SDK not available in v13
 
-// Import RiskManagement from MetaAPI
-import { RiskManagement, TrackerEventListener, EquityChartListener, PeriodStatisticsListener } from 'metaapi.cloud-sdk';
-
-// In-memory storage for risk management
 interface RiskTracker {
   id: string;
   accountId: string;
@@ -562,7 +559,6 @@ interface RiskTracker {
   relativeProfitTarget?: number;
   status: 'active' | 'violated' | 'completed';
   createdAt: Date;
-  metaApiTrackerId?: string;
 }
 
 interface RiskEvent {
@@ -576,387 +572,81 @@ interface RiskEvent {
 
 let riskTrackers: Map<string, RiskTracker> = new Map();
 let riskEvents: RiskEvent[] = [];
-let activeListeners: Map<string, string> = new Map(); // trackerId -> listenerId mapping
 
-// Initialize RiskManagement instance
-const riskManagement = new RiskManagement(process.env.METAAPI_TOKEN!);
-const riskManagementApi = riskManagement.riskManagementApi;
-
-// Custom TrackerEventListener
-class CustomTrackerEventListener extends TrackerEventListener {
-  private localTrackerId: string;
-  
-  constructor(accountId: string, trackerId: string) {
-    super(accountId, trackerId);
-    this.localTrackerId = trackerId;
-  }
-
-  async onTrackerEvent(trackerEvent: any) {
-    try {
-      logger.info('Risk tracker event received:', trackerEvent);
-      
-      // Add to risk events
-      const event: RiskEvent = {
-        id: Date.now().toString(),
-        trackerId: this.localTrackerId,
-        type: trackerEvent.type || 'tracker_created',
-        message: `Tracker event: ${trackerEvent.type || 'Unknown event'}`,
-        timestamp: new Date(),
-        data: trackerEvent
-      };
-      
-      riskEvents.unshift(event);
-      
-      // Keep only last 100 events
-      if (riskEvents.length > 100) {
-        riskEvents = riskEvents.slice(0, 100);
-      }
-      
-      // Update tracker status if needed
-      const tracker = riskTrackers.get(this.localTrackerId);
-      if (tracker && trackerEvent.violationType) {
-        tracker.status = 'violated';
-        riskTrackers.set(this.localTrackerId, tracker);
-      }
-    } catch (error) {
-      logger.error('Error handling tracker event:', error);
-    }
-  }
-
-  async onError(error: any) {
-    logger.error('Risk tracker error:', error);
-    
-    const event: RiskEvent = {
-      id: Date.now().toString(),
-      trackerId: this.localTrackerId,
-      type: 'tracker_created',
-      message: `Tracker error: ${error.message || 'Unknown error'}`,
-      timestamp: new Date(),
-      data: error
-    };
-    
-    riskEvents.unshift(event);
-  }
-}
-
-// Get all risk trackers
-router.get('/risk-trackers', async (req: any, res: any) => {
-  try {
-    const trackers = Array.from(riskTrackers.values()).map(tracker => ({
-      ...tracker,
-      // Add real-time statistics if available
-      currentDrawdown: 0,
-      currentProfit: 0,
-      progressPercent: 0
-    }));
-
-    res.json({
-      success: true,
-      data: trackers
-    });
-  } catch (error) {
-    logger.error('Error getting risk trackers:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+router.get('/risk-trackers', (req: any, res: any) => {
+  const trackers = Array.from(riskTrackers.values()).map(t => ({
+    ...t, currentDrawdown: 0, currentProfit: 0, progressPercent: 0
+  }));
+  res.json({ success: true, data: trackers });
 });
 
-// Create new risk tracker
-router.post('/risk-trackers', async (req: any, res: any) => {
-  try {
-    const { 
-      name, 
-      accountId, 
-      period, 
-      absoluteDrawdownThreshold, 
-      relativeDrawdownThreshold,
-      profitTarget,
-      relativeProfitTarget 
-    } = req.body;
-
-    if (!name || !accountId || !period) {
-      return res.status(400).json({
-        success: false,
-        error: 'Name, accountId, and period are required'
-      });
-    }
-
-    // Verify account exists
-    const account = connectedAccounts.get(accountId);
-    if (!account) {
-      return res.status(400).json({
-        success: false,
-        error: 'Account not found. Please connect the account first.'
-      });
-    }
-
-    try {
-      // Create tracker in MetaAPI
-      const trackerConfig: any = {
-        name,
-        period,
-      };
-
-      // Add thresholds if provided
-      if (absoluteDrawdownThreshold) trackerConfig.absoluteDrawdownThreshold = absoluteDrawdownThreshold;
-      if (relativeDrawdownThreshold) trackerConfig.relativeDrawdownThreshold = relativeDrawdownThreshold;
-      if (profitTarget) trackerConfig.profitTarget = profitTarget;
-      if (relativeProfitTarget) trackerConfig.relativeProfitTarget = relativeProfitTarget;
-
-      const metaApiTracker = await riskManagementApi.createTracker(accountId, trackerConfig);
-      
-      // Create local tracker record
-      const trackerId = Date.now().toString();
-      const tracker: RiskTracker = {
-        id: trackerId,
-        accountId,
-        name,
-        period,
-        absoluteDrawdownThreshold,
-        relativeDrawdownThreshold,
-        profitTarget,
-        relativeProfitTarget,
-        status: 'active',
-        createdAt: new Date(),
-        metaApiTrackerId: metaApiTracker.id
-      };
-
-      riskTrackers.set(trackerId, tracker);
-
-      // Set up event listener
-      const trackerEventListener = new CustomTrackerEventListener(accountId, trackerId);
-      const listenerId = await riskManagementApi.addTrackerEventListener(
-        trackerEventListener, 
-        accountId, 
-        metaApiTracker.id
-      );
-      
-      activeListeners.set(trackerId, listenerId);
-
-      // Add creation event
-      const event: RiskEvent = {
-        id: Date.now().toString(),
-        trackerId,
-        type: 'tracker_created',
-        message: `Risk tracker "${name}" created for ${period} period`,
-        timestamp: new Date()
-      };
-      riskEvents.unshift(event);
-
-      logger.info(`Risk tracker created: ${name} for account ${accountId}`);
-
-      res.status(201).json({
-        success: true,
-        data: {
-          ...tracker,
-          metaApiTrackerId: metaApiTracker.id
-        }
-      });
-
-    } catch (metaApiError) {
-      logger.error('MetaAPI tracker creation failed:', metaApiError);
-      res.status(400).json({
-        success: false,
-        error: `Failed to create tracker in MetaAPI: ${metaApiError instanceof Error ? metaApiError.message : 'Unknown error'}`
-      });
-    }
-
-  } catch (error) {
-    logger.error('Error creating risk tracker:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
+router.post('/risk-trackers', (req: any, res: any) => {
+  const { name, accountId, period, absoluteDrawdownThreshold, relativeDrawdownThreshold, profitTarget, relativeProfitTarget } = req.body;
+  if (!name || !accountId || !period) {
+    return res.status(400).json({ success: false, error: 'Name, accountId, and period are required' });
   }
+  const trackerId = Date.now().toString();
+  const tracker: RiskTracker = {
+    id: trackerId, accountId, name, period,
+    absoluteDrawdownThreshold, relativeDrawdownThreshold, profitTarget, relativeProfitTarget,
+    status: 'active', createdAt: new Date()
+  };
+  riskTrackers.set(trackerId, tracker);
+  riskEvents.unshift({ id: Date.now().toString(), trackerId, type: 'tracker_created', message: `Tracker "${name}" created`, timestamp: new Date() });
+  res.status(201).json({ success: true, data: tracker });
 });
 
-// Delete risk tracker
-router.delete('/risk-trackers/:trackerId', async (req: any, res: any) => {
-  try {
-    const { trackerId } = req.params;
-    const tracker = riskTrackers.get(trackerId);
-
-    if (!tracker) {
-      return res.status(404).json({
-        success: false,
-        error: 'Tracker not found'
-      });
-    }
-
-    try {
-      // Remove listener if active
-      const listenerId = activeListeners.get(trackerId);
-      if (listenerId) {
-        riskManagementApi.removeTrackerEventListener(listenerId);
-        activeListeners.delete(trackerId);
-      }
-
-      // Delete from MetaAPI if exists
-      if (tracker.metaApiTrackerId) {
-        await riskManagementApi.deleteTracker(tracker.accountId, tracker.metaApiTrackerId);
-      }
-
-    } catch (metaApiError) {
-      logger.warn('Error cleaning up MetaAPI tracker:', metaApiError);
-      // Continue with local cleanup even if MetaAPI cleanup fails
-    }
-
-    // Remove from local storage
-    riskTrackers.delete(trackerId);
-
-    // Add deletion event
-    const event: RiskEvent = {
-      id: Date.now().toString(),
-      trackerId,
-      type: 'tracker_completed',
-      message: `Risk tracker "${tracker.name}" was deleted`,
-      timestamp: new Date()
-    };
-    riskEvents.unshift(event);
-
-    res.json({
-      success: true,
-      message: 'Tracker deleted successfully'
-    });
-
-  } catch (error) {
-    logger.error('Error deleting risk tracker:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+router.delete('/risk-trackers/:trackerId', (req: any, res: any) => {
+  const { trackerId } = req.params;
+  const tracker = riskTrackers.get(trackerId);
+  if (!tracker) return res.status(404).json({ success: false, error: 'Tracker not found' });
+  riskTrackers.delete(trackerId);
+  riskEvents.unshift({ id: Date.now().toString(), trackerId, type: 'tracker_completed', message: `Tracker "${tracker.name}" deleted`, timestamp: new Date() });
+  res.json({ success: true, message: 'Tracker deleted' });
 });
 
-// Get risk events
-router.get('/risk-events', async (req: any, res: any) => {
-  try {
-    const limit = parseInt(req.query.limit as string) || 50;
-    const events = riskEvents.slice(0, limit);
-
-    res.json({
-      success: true,
-      data: events
-    });
-  } catch (error) {
-    logger.error('Error getting risk events:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+router.get('/risk-events', (req: any, res: any) => {
+  const limit = parseInt(req.query.limit as string) || 50;
+  res.json({ success: true, data: riskEvents.slice(0, limit) });
 });
 
-// Clear risk events
-router.delete('/risk-events', async (req: any, res: any) => {
-  try {
-    riskEvents = [];
-    
-    res.json({
-      success: true,
-      message: 'Risk events cleared'
-    });
-  } catch (error) {
-    logger.error('Error clearing risk events:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+router.delete('/risk-events', (req: any, res: any) => {
+  riskEvents = [];
+  res.json({ success: true, message: 'Risk events cleared' });
 });
 
-// Get risk statistics
 router.get('/risk-statistics', async (req: any, res: any) => {
   try {
-    const activeTrackersCount = Array.from(riskTrackers.values())
-      .filter(t => t.status === 'active').length;
-    
-    const targetsHitCount = Array.from(riskTrackers.values())
-      .filter(t => t.status === 'completed').length;
-    
-    const violationsCount = Array.from(riskTrackers.values())
-      .filter(t => t.status === 'violated').length;
-
-    // Calculate aggregate statistics
     let maxDrawdown = 0;
     let totalPnL = 0;
-
-    // Get real-time data from connected accounts
-    for (const [accountId, account] of connectedAccounts) {
+    for (const account of connectedAccounts.values()) {
       try {
         if (account.connection && account.connection.connected) {
-          const accountInfo = await account.connection.getAccountInformation();
-          if (accountInfo) {
-            totalPnL += accountInfo.equity - accountInfo.balance;
-            // Calculate drawdown (simplified)
-            const currentDrawdown = Math.max(0, accountInfo.balance - accountInfo.equity);
-            maxDrawdown = Math.max(maxDrawdown, currentDrawdown);
+          const info = await account.connection.getAccountInformation();
+          if (info) {
+            totalPnL += info.equity - info.balance;
+            maxDrawdown = Math.max(maxDrawdown, Math.max(0, info.balance - info.equity));
           }
         }
-      } catch (error) {
-        logger.warn(`Error getting account info for ${accountId}:`, error);
-      }
+      } catch { /* skip unreachable accounts */ }
     }
-
     res.json({
       success: true,
       data: {
-        activeTrackers: activeTrackersCount,
-        targetsHit: targetsHitCount,
-        violations: violationsCount,
-        maxDrawdown: maxDrawdown,
-        totalPnL: totalPnL
+        activeTrackers: Array.from(riskTrackers.values()).filter(t => t.status === 'active').length,
+        targetsHit: Array.from(riskTrackers.values()).filter(t => t.status === 'completed').length,
+        violations: Array.from(riskTrackers.values()).filter(t => t.status === 'violated').length,
+        maxDrawdown,
+        totalPnL
       }
     });
   } catch (error) {
-    logger.error('Error getting risk statistics:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
-// Get equity chart for specific account
-router.get('/equity-chart/:accountId', async (req: any, res: any) => {
-  try {
-    const { accountId } = req.params;
-    
-    const account = connectedAccounts.get(accountId);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        error: 'Account not found'
-      });
-    }
-
-    try {
-      // Get equity chart from MetaAPI Risk Management
-      const equityChart = await riskManagementApi.getEquityChart(accountId);
-      
-      res.json({
-        success: true,
-        data: equityChart || []
-      });
-    } catch (metaApiError) {
-      logger.warn('Error getting equity chart from MetaAPI:', metaApiError);
-      
-      // Fallback: return empty chart
-      res.json({
-        success: true,
-        data: []
-      });
-    }
-
-  } catch (error) {
-    logger.error('Error getting equity chart:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+router.get('/equity-chart/:accountId', (req: any, res: any) => {
+  res.json({ success: true, data: [] });
 });
 
 // In-memory logs storage for dashboard
