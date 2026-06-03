@@ -55,6 +55,13 @@ export class TelegramBot {
         { parse_mode: 'Markdown' }
       );
     });
+    this.bot.command('chatid', async (ctx) => {
+      const id = ctx.chat?.id;
+      await ctx.reply(
+        `Your chat ID is: \`${id}\`\n\nSet this in your .env:\n\`NOTIFICATION_CHAT_ID=${id}\``,
+        { parse_mode: 'Markdown' }
+      );
+    });
 
     this.bot.on('text', (ctx) => this.handleTextMessage(ctx));
 

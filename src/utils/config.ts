@@ -164,6 +164,17 @@ export const validateConfig = (): boolean => {
     });
   }
 
+  // Warn if risk amount looks account-blowing (> 20% of any reasonable small account)
+  if (config.trading.fixedRiskAmount > 100) {
+    warnings.push(`WARNING: FIXED_RISK_AMOUNT=$${config.trading.fixedRiskAmount} is high — ensure this is ≤2% of your account balance`);
+    console.warn(`⚠️ FIXED_RISK_AMOUNT=$${config.trading.fixedRiskAmount} — set to 1-2% of balance (e.g. $${Math.round(715 * 0.02)} for a $715 account)`);
+  }
+
+  if (!config.notificationChatId) {
+    warnings.push('WARNING: NOTIFICATION_CHAT_ID not set — trade alerts disabled. Message the bot and use /chatid to get your ID.');
+    console.warn('⚠️ No NOTIFICATION_CHAT_ID set. Send /chatid to the bot to get your personal chat ID.');
+  }
+
   // Validate trading parameters
   if (config.trading.maxTradeSize <= 0 || config.trading.maxTradeSize > 100) {
     warnings.push('WARNING: MAX_TRADE_SIZE should be between 0.01 and 100');
