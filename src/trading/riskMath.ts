@@ -16,8 +16,10 @@ export function isForexPair(symbol: string): boolean {
 export function getPipSize(symbol: string): number {
   const s = symbol.toUpperCase();
   if (s.includes('JPY')) return 0.01;
+  // Metals must be checked before isForexPair — XAUUSD/XAGUSD are 6-letter symbols
+  // and would otherwise fall through to the forex 0.0001 pip size
+  if (['XAUUSD', 'GOLD', 'XAGUSD', 'SILVER'].includes(s)) return 1.0;
   if (isForexPair(s)) return 0.0001;
-  // Metals/indices/crypto: treat “pip” as 1 point/dollar unless broker specs are used
   return 1;
 }
 
@@ -28,13 +30,13 @@ export function getPipSize(symbol: string): number {
 export function getPipValuePerLot(symbol: string): number {
   const s = symbol.toUpperCase();
 
+  // Metals must be checked before isForexPair — same reason as getPipSize
+  if (['XAUUSD', 'GOLD'].includes(s)) return 100;
+  if (['XAGUSD', 'SILVER'].includes(s)) return 5000;
+
   // Forex
   if (s.includes('JPY')) return 10;
   if (isForexPair(s)) return 10;
-
-  // Metals
-  if (['XAUUSD', 'GOLD'].includes(s)) return 100;
-  if (['XAGUSD', 'SILVER'].includes(s)) return 5000;
 
   // Indices / crypto (fallback)
   return 1;

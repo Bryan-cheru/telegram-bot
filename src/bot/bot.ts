@@ -10,20 +10,28 @@ import { ManualSignalParser } from '../services/ManualSignalParser';
 import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
 import { addSignal, updateSignalStatus } from '../dashboard/server';
 import { SignalDeduplicator } from '../utils/signalDeduplicator';
+import { TradeNotifier } from '../utils/tradeNotifier';
+import { DailyLossTracker } from '../utils/dailyLossTracker';
+import { getOpenPositionsSummary } from '../utils/positionsMonitor';
 
 export class TelegramBot {
   private bot: Telegraf;
   private messageHandler: MessageHandler;
-  // private photoHandler: ModernizedPhotoHandler; // Disabled complex handler
   private tradeExecutor: ITradeExecutor;
   private manualSignalParser: ManualSignalParser;
   private deduplicator = new SignalDeduplicator();
+  private notifier!: TradeNotifier;
+  private dailyTracker = new DailyLossTracker(
+    config.limits.maxDailyTrades,
+    config.limits.dailyLossLimit
+  );
 
   constructor() {
     this.bot = new Telegraf(config.botToken);
     this.tradeExecutor = new CleanMultiAccountExecutor();
     this.messageHandler = new MessageHandler();
     this.manualSignalParser = new ManualSignalParser();
+    this.notifier = new TradeNotifier(this.bot);
     this.setupHandlers();
   }
 
@@ -33,17 +41,21 @@ export class TelegramBot {
   }
 
   private setupHandlers(): void {
-    // Existing command handlers
     this.bot.start((ctx) => this.messageHandler.handleStart(ctx));
     this.bot.help((ctx) => this.messageHandler.handleHelp(ctx));
     this.bot.command('status', (ctx) => this.messageHandler.handleStatus(ctx));
+    this.bot.command('positions', async (ctx) => {
+      const summary = await getOpenPositionsSummary(this.tradeExecutor);
+      await ctx.reply(summary, { parse_mode: 'Markdown' });
+    });
+    this.bot.command('stats', async (ctx) => {
+      const s = this.dailyTracker.getStats();
+      await ctx.reply(
+        `📊 *Today's Stats*\n\nTrades: ${s.tradesCount}/${s.maxTrades}\nLoss: $${s.realizedLoss.toFixed(2)} / $${s.lossLimit}`,
+        { parse_mode: 'Markdown' }
+      );
+    });
 
-    // Trading commands only - no user authentication needed
-
-    // Photo handler
-    // this.bot.on('photo', (ctx) => this.photoHandler.handlePhoto(ctx)); // Disabled complex handler
-
-    // Text message handler for trading signals
     this.bot.on('text', (ctx) => this.handleTextMessage(ctx));
 
     // Handle channel posts specifically (channels work differently than groups)
@@ -353,18 +365,31 @@ export class TelegramBot {
         rawText: text?.substring(0, 500)
       });
 
+      // Circuit breaker — daily limits
+      const limitCheck = this.dailyTracker.canTrade();
+      if (!limitCheck.allowed) {
+        logger.warn(`🛑 Trade blocked by daily limit: ${limitCheck.reason}`);
+        updateSignalStatus(signalId, 'failed', { executionMessage: `Blocked: ${limitCheck.reason}` });
+        const stats = this.dailyTracker.getStats();
+        if (stats.tradesCount >= stats.maxTrades) {
+          await this.notifier.dailyLimitHit(stats.tradesCount, stats.maxTrades);
+        } else {
+          await this.notifier.dailyLossLimitHit(stats.realizedLoss, stats.lossLimit);
+        }
+        return;
+      }
+
       // Execute trade
       try {
-        // Check if trade executor is properly initialized before attempting execution
         const isConnected = await this.tradeExecutor.isConnected();
         logger.info(`🔗 Trade executor connection status: ${isConnected}`);
-        
+
         if (!isConnected) {
           logger.error('❌ Trade executor is not connected - cannot execute trades');
-          logger.error('This means MetaAPI connections failed during startup');
+          await this.notifier.tradeFailed(tradeSignal, 'Not connected to broker', 'MetaAPI');
           return;
         }
-        
+
         logger.info('🚀 Executing trade signal...');
         const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
 
@@ -375,25 +400,34 @@ export class TelegramBot {
           signalId: result.signalId
         });
 
-        // Update signal status in dashboard history
         updateSignalStatus(signalId, result.success ? 'executed' : 'failed', {
           executionMessage: result.message || result.error,
           ticket: result.ticket
         });
 
         if (result.success) {
-          const successMessage = result.signalId
-            ? `✅ Text signal processed! Signal ID: ${result.signalId}`
-            : `✅ Trade executed from text signal!`;
-          logger.info(successMessage);
+          this.dailyTracker.recordTrade();
+          logger.info(`✅ Trade executed! Ticket: ${result.ticket}`);
+          await this.notifier.tradeOpened(
+            tradeSignal,
+            result.ticket ?? 'N/A',
+            'Pepperstone',
+            config.trading.fixedLotSize
+          );
+          // Update balance for loss tracking
+          try {
+            const executor = this.tradeExecutor as any;
+            const info = await executor.getAccountInfo?.();
+            if (info?.balance) this.dailyTracker.updateBalance(info.balance);
+          } catch { /* non-critical */ }
         } else {
-          const errorMessage = `❌ Trade execution failed: ${result.error || result.message}`;
-          logger.error(errorMessage);
-          logger.error('💡 Check MetaAPI account connections and market status');
+          const reason = result.error || result.message || 'Unknown error';
+          logger.error(`❌ Trade execution failed: ${reason}`);
+          await this.notifier.tradeFailed(tradeSignal, reason, 'Pepperstone');
         }
-      } catch (error) {
+      } catch (error: any) {
         logger.error('💥 Trade execution threw an exception:', error);
-        logger.error('This indicates a serious issue with the trade executor');
+        await this.notifier.tradeFailed(tradeSignal, error?.message ?? String(error), 'Pepperstone');
       }
 
     } catch (error) {
@@ -589,6 +623,14 @@ export class TelegramBot {
         logger.info('🔧 Check your MetaAPI configuration and account status in background');
       } else {
         logger.info('🎯 Trade execution is ready and available');
+        // Capture opening balance for daily loss tracking
+        try {
+          const executor = this.tradeExecutor as any;
+          const accounts = await executor.getAccountsSummary?.();
+          if (accounts?.totalBalance) {
+            this.dailyTracker.setOpeningBalance(accounts.totalBalance);
+          }
+        } catch { /* non-critical */ }
       }
       
       // Clear any existing webhook before starting polling to avoid 409 conflicts
@@ -603,10 +645,28 @@ export class TelegramBot {
       logger.info('🚀 Launching Telegram bot...');
       this.bot.launch();
       
-      // Give it a moment to start, then continue
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Reduced to 1 second
+      await new Promise(resolve => setTimeout(resolve, 1000));
       logger.info('✅ Telegram bot started successfully');
       logger.info('📱 Bot is now listening for trading signals...');
+
+      // Post startup summary to notification chat
+      if (config.notificationChatId) {
+        try {
+          const positionsSummary = await getOpenPositionsSummary(this.tradeExecutor);
+          const limits = this.dailyTracker.getStats();
+          const startupMsg = [
+            `🤖 *Bot Started*`,
+            ``,
+            `📊 Risk: $${config.trading.fixedRiskAmount} / trade | Max lot: ${config.trading.maxTradeSize}`,
+            `🛡️ Limits: ${limits.maxTrades} trades/day | $${limits.lossLimit} loss/day`,
+            ``,
+            positionsSummary,
+          ].join('\n');
+          await this.bot.telegram.sendMessage(config.notificationChatId, startupMsg, { parse_mode: 'Markdown' });
+        } catch (e) {
+          logger.warn('Could not send startup notification:', e);
+        }
+      }
       
       // Log monitoring configuration
       if (config.allowedChannelId) {

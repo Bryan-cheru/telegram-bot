@@ -47,19 +47,25 @@ export const config = {
     accounts: process.env.METAAPI_ACCOUNTS || process.env.METAAPI_TEST_ACCOUNT || '' // Multi-account or test account support
   },
   allowedChannelId: process.env.ALLOWED_CHANNEL_ID || '',
-  allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '', // e.g., 'tradingchannel' (without @)
+  allowedChannelUsername: process.env.ALLOWED_CHANNEL_USERNAME || '',
+  // Chat ID to send trade notifications to (defaults to the signal channel)
+  notificationChatId: process.env.NOTIFICATION_CHAT_ID || process.env.ALLOWED_CHANNEL_ID || '',
   trading: {
-    fixedLotSize: parseFloat(process.env.FIXED_LOT_SIZE || '0.45'), // Fixed lot size for all trades
-    cryptoLotSize: parseFloat(process.env.CRYPTO_LOT_SIZE || '0.05'), // Smaller lot size for crypto (high margin)
-    maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '0.1'),
+    fixedLotSize: parseFloat(process.env.FIXED_LOT_SIZE || '0.45'),
+    cryptoLotSize: parseFloat(process.env.CRYPTO_LOT_SIZE || '0.05'),
+    maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '1.0'),   // raised — set per account size
     riskPercentage: parseFloat(process.env.RISK_PERCENTAGE || '1.3'),
-    fixedRiskAmount: parseFloat(process.env.FIXED_RISK_AMOUNT || '900'), // Fixed $900 risk per trade
-    enforceOneToOneRR: process.env.ENFORCE_1_1_RR !== 'false', // Default to true unless explicitly disabled
-    defaultOrderType: process.env.DEFAULT_ORDER_TYPE || 'MARKET', // MARKET, LIMIT, or AUTO
-    useSmartOrderType: process.env.USE_SMART_ORDER_TYPE !== 'false', // Auto-detect best order type
-    limitOrderSlippage: parseFloat(process.env.LIMIT_ORDER_SLIPPAGE || '5'), // Pips from entry zone
-    pendingOrderExpiration: parseInt(process.env.PENDING_ORDER_EXPIRATION || '4'), // Hours
+    fixedRiskAmount: parseFloat(process.env.FIXED_RISK_AMOUNT || '50'), // $50 default — set to 1-2% of balance
+    enforceOneToOneRR: process.env.ENFORCE_1_1_RR !== 'false',
+    defaultOrderType: process.env.DEFAULT_ORDER_TYPE || 'MARKET',
+    useSmartOrderType: process.env.USE_SMART_ORDER_TYPE !== 'false',
+    limitOrderSlippage: parseFloat(process.env.LIMIT_ORDER_SLIPPAGE || '5'),
+    pendingOrderExpiration: parseInt(process.env.PENDING_ORDER_EXPIRATION || '4'),
     enableAdvancedOrderTypes: process.env.ENABLE_ADVANCED_ORDER_TYPES !== 'false'
+  },
+  limits: {
+    maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || '5'),
+    dailyLossLimit: parseFloat(process.env.DAILY_LOSS_LIMIT || '200'), // USD — stop trading if balance drops this much today
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info'
@@ -84,18 +90,22 @@ export function syncConfigFromEnv(): void {
 
   config.allowedChannelId = process.env.ALLOWED_CHANNEL_ID || '';
   config.allowedChannelUsername = process.env.ALLOWED_CHANNEL_USERNAME || '';
+  config.notificationChatId = process.env.NOTIFICATION_CHAT_ID || process.env.ALLOWED_CHANNEL_ID || '';
 
   config.trading.fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
   config.trading.cryptoLotSize = parseFloat(process.env.CRYPTO_LOT_SIZE || '0.05');
-  config.trading.maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '0.1');
+  config.trading.maxTradeSize = parseFloat(process.env.MAX_TRADE_SIZE || '1.0');
   config.trading.riskPercentage = parseFloat(process.env.RISK_PERCENTAGE || '1.3');
-  config.trading.fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+  config.trading.fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '50');
   config.trading.enforceOneToOneRR = process.env.ENFORCE_1_1_RR !== 'false';
   config.trading.defaultOrderType = process.env.DEFAULT_ORDER_TYPE || 'MARKET';
   config.trading.useSmartOrderType = process.env.USE_SMART_ORDER_TYPE !== 'false';
   config.trading.limitOrderSlippage = parseFloat(process.env.LIMIT_ORDER_SLIPPAGE || '5');
   config.trading.pendingOrderExpiration = parseInt(process.env.PENDING_ORDER_EXPIRATION || '4', 10);
   config.trading.enableAdvancedOrderTypes = process.env.ENABLE_ADVANCED_ORDER_TYPES !== 'false';
+
+  config.limits.maxDailyTrades = parseInt(process.env.MAX_DAILY_TRADES || '5', 10);
+  config.limits.dailyLossLimit = parseFloat(process.env.DAILY_LOSS_LIMIT || '200');
 
   config.logging.level = process.env.LOG_LEVEL || 'info';
 }
