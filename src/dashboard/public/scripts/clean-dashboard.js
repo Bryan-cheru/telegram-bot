@@ -807,36 +807,6 @@ class CleanTradingDashboard {
     console.log('🔄 No loading state to clear');
   }
 
-  showNotification(message, type = 'info') {
-    console.log(`📢 ${type.toUpperCase()}: ${message}`);
-    
-    const container = document.getElementById('notification-container');
-    if (!container) return;
-
-    const notification = document.createElement('div');
-    notification.className = `notification ${type}`;
-    notification.innerHTML = `
-      <div class="notification-content">
-        <span>${message}</span>
-        <button class="notification-close">&times;</button>
-      </div>
-    `;
-
-    container.appendChild(notification);
-
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.remove();
-      }
-    }, 5000);
-
-    // Manual close
-    notification.querySelector('.notification-close').addEventListener('click', () => {
-      notification.remove();
-    });
-  }
-
   // ===============================
   // AUTO-REFRESH & ACTIONS
   // ===============================
@@ -1256,7 +1226,7 @@ class CleanTradingDashboard {
         return;
       }
 
-      this.showNotification('info', `Closing ${symbol} position...`);
+      this.showNotification(`Closing ${symbol} position...`, 'info');
       
       const response = await fetch(`/api/mt5/positions/${accountId}/${positionId}/close`, {
         method: 'POST',
@@ -1268,18 +1238,18 @@ class CleanTradingDashboard {
       const result = await response.json();
 
       if (result.success) {
-        this.showNotification('success', `✅ ${symbol} position closed successfully!`);
+        this.showNotification(`✅ ${symbol} position closed successfully!`, 'success');
         // Refresh positions after 2 seconds
         setTimeout(() => {
           this.loadPositions();
           this.loadAccountData();
         }, 2000);
       } else {
-        this.showNotification('error', `❌ Failed to close position: ${result.error || 'Unknown error'}`);
+        this.showNotification(`❌ Failed to close position: ${result.error || 'Unknown error'}`, 'error');
       }
     } catch (error) {
       console.error('Error closing position:', error);
-      this.showNotification('error', `❌ Error closing position: ${error.message}`);
+      this.showNotification(`❌ Error closing position: ${error.message}`, 'error');
     }
   }
 
@@ -1290,7 +1260,7 @@ class CleanTradingDashboard {
         return;
       }
 
-      this.showNotification('info', 'Closing all positions...');
+      this.showNotification('Closing all positions...', 'info');
       
       const response = await fetch(`/api/mt5/positions/close-all/${accountId}`, {
         method: 'POST',
@@ -1302,27 +1272,27 @@ class CleanTradingDashboard {
       const result = await response.json();
 
       if (result.success) {
-        this.showNotification('success', `✅ All positions closed successfully!`);
+        this.showNotification('✅ All positions closed successfully!', 'success');
         setTimeout(() => {
           this.loadPositions();
           this.loadAccountData();
         }, 3000);
       } else {
-        this.showNotification('error', `❌ Failed to close all positions: ${result.error || 'Unknown error'}`);
+        this.showNotification(`❌ Failed to close all positions: ${result.error || 'Unknown error'}`, 'error');
       }
     } catch (error) {
       console.error('Error closing all positions:', error);
-      this.showNotification('error', `❌ Error closing all positions: ${error.message}`);
+      this.showNotification(`❌ Error closing all positions: ${error.message}`, 'error');
     }
   }
 
   async modifyPosition(accountId, positionId) {
     // For now, show coming soon message
-    this.showNotification('info', '🚧 Position modification feature coming soon!');
+    this.showNotification('🚧 Position modification feature coming soon!', 'info');
   }
 
-  showNotification(type, message) {
-    // Create notification element
+  showNotification(message, type = 'info') {
+    console.log(`📢 ${type.toUpperCase()}: ${message}`);
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
     notification.innerHTML = `
@@ -1350,6 +1320,7 @@ let dashboardInstance = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   dashboardInstance = new CleanTradingDashboard();
+  window.dashboard = dashboardInstance;
 
   if (typeof window.UnifiedSettingsPanel !== 'undefined' && window.UnifiedSettingsPanel.init) {
     window.UnifiedSettingsPanel.init({
@@ -1512,6 +1483,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh pending orders
     document.querySelectorAll('[data-action="refresh-orders"]').forEach(btn => {
       btn.addEventListener('click', () => dashboardInstance.loadPendingOrders());
+    });
+
+    // Close all positions
+    document.querySelectorAll('[data-action="close-all-positions"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const accountId = dashboardInstance?.accountData?.primaryAccountId
+          || dashboardInstance?.accountData?.accounts?.[0]?.accountId
+          || 'primary';
+        dashboardInstance.closeAllPositions(accountId);
+      });
+    });
+
+    // Clear logs
+    document.querySelectorAll('[data-action="clear-logs"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const container = document.getElementById('logs-container');
+        if (container) {
+          container.innerHTML = '<div class="empty-state"><p>Logs cleared</p></div>';
+        }
+      });
     });
   };
   
