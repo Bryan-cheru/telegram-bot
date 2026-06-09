@@ -829,6 +829,72 @@ app.post('/api/risk-config', (req, res) => {
 
 // ========== NEW MT5 TRADING DASHBOARD ENDPOINTS ==========
 
+// Combined dashboard endpoint — account + positions + orders in one round-trip
+app.get('/api/mt5/dashboard', async (req, res) => {
+  try {
+    if (!multiAccountExecutor) {
+      const initialized = await initializeMT5();
+      if (!initialized || !multiAccountExecutor) {
+        return res.status(503).json({
+          success: false,
+          connected: false,
+          error: 'MT5 connection not available',
+          accounts: [], summary: {}, positions: [], orders: [], primaryAccountId: null
+        });
+      }
+    }
+
+    const isConnected = await multiAccountExecutor.isConnected();
+    if (!isConnected) {
+      return res.status(503).json({
+        success: false,
+        connected: false,
+        error: 'MT5 not connected',
+        accounts: [], summary: {}, positions: [], orders: [], primaryAccountId: null
+      });
+    }
+
+    const shouldUpdate = !mt5AccountsData.length || (Date.now() - mt5LastUpdate) > 15000;
+    if (shouldUpdate) {
+      await updateMT5Data();
+    }
+
+    const accountsWithIds = mt5AccountsData.map(account => ({
+      ...account,
+      accountId: account.id
+    }));
+
+    const allPositions = mt5AccountsData.reduce((acc: any[], account) => acc.concat(account.positions || []), []);
+    const allOrders = mt5AccountsData.reduce((acc: any[], account) => acc.concat(account.pendingOrders || []), []);
+
+    res.json({
+      success: true,
+      connected: true,
+      accounts: accountsWithIds,
+      summary: {
+        totalBalance: mt5AccountsData.reduce((s, a) => s + (a.balance || 0), 0),
+        totalEquity: mt5AccountsData.reduce((s, a) => s + (a.equity || 0), 0),
+        totalFreeMargin: mt5AccountsData.reduce((s, a) => s + (a.freeMargin || 0), 0),
+        accountCount: mt5AccountsData.length,
+        connectedAccounts: mt5AccountsData.filter(a => a.status === 'CONNECTED').length
+      },
+      primaryAccountId: mt5AccountsData.find(a => a.status === 'CONNECTED')?.id || mt5AccountsData[0]?.id,
+      positions: allPositions,
+      orders: allOrders,
+      lastUpdate: mt5LastUpdate
+    });
+
+  } catch (error) {
+    console.error('Error getting MT5 dashboard data:', error);
+    res.status(500).json({
+      success: false,
+      connected: false,
+      error: 'Failed to fetch dashboard data',
+      accounts: [], summary: {}, positions: [], orders: [], primaryAccountId: null
+    });
+  }
+});
+
 // Get MT5 account information (balance, equity, margin, etc.)
 app.get('/api/mt5/account', async (req, res) => {
   try {

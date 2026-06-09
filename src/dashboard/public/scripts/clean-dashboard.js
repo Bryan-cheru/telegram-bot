@@ -28,10 +28,7 @@ class CleanTradingDashboard {
     // Skip loading state - load data directly
     try {
       await this.loadRuntimeSettingsForms();
-      await this.loadAccountData();
-      await this.loadPositions();
-      await this.loadPendingOrders();
-      this.updateDashboardStats(); // Update stats after loading positions
+      await this.loadDashboardData();
       await this.loadMetaStatsData();
       // Start live log streaming once on init so the Trades tab is always populated
       this.setupLogStreaming();
@@ -289,21 +286,13 @@ class CleanTradingDashboard {
   async loadPageData(page) {
     switch (page) {
       case 'overview-section':
-        await this.loadAccountData();
-        await this.loadPositions();
-        this.updateDashboardStats();
-        break;
       case 'accounts-section':
-        await this.loadAccountData();
-        this.renderAccountInfo();
+      case 'trades-section':
+        await this.loadDashboardData();
+        if (page === 'trades-section') await this.loadTradeHistory();
         break;
       case 'signals-section':
         await this.loadSignalHistory();
-        break;
-      case 'trades-section':
-        await this.loadPositions();
-        await this.loadPendingOrders();
-        await this.loadTradeHistory();
         break;
       case 'analytics-section':
         await this.loadMetaStatsData();
@@ -369,75 +358,57 @@ class CleanTradingDashboard {
   // DATA LOADING FUNCTIONS
   // ===============================
 
-  async loadAccountData() {
+  async loadDashboardData() {
     try {
       this.isLoading = true;
-      console.log('📊 Loading account data from MT5...');
+      console.log('📊 Loading dashboard data from MT5...');
 
-      const response = await fetch('/api/mt5/account');
+      const response = await fetch('/api/mt5/dashboard');
       const result = await response.json();
 
       if (result.success) {
         this.accountData = result;
-        console.log('✅ Account data loaded:', result.summary);
+        this.positions = result.positions || [];
+        this.pendingOrders = Array.isArray(result.orders) ? result.orders : [];
+        console.log(`✅ Dashboard data loaded: ${this.positions.length} positions, ${this.pendingOrders.length} orders`);
         this.renderAccountInfo();
-        this.updateDashboardStats(); // Update the stat cards
+        this.renderPositions();
+        this.renderPendingOrders();
+        this.updateDashboardStats();
         this.updateConnectionStatus(true);
       } else {
-        throw new Error(result.error || 'Failed to load account data');
+        throw new Error(result.error || 'Failed to load dashboard data');
       }
     } catch (error) {
-      console.error('❌ Error loading account data:', error);
+      console.error('❌ Error loading dashboard data:', error);
       this.showNotification('Failed to connect to trading account', 'error');
       this.updateConnectionStatus(false);
-      // Render error state instead of leaving loading spinner
       this.renderAccountInfo();
+      this.renderPositions();
+      this.renderPendingOrders();
     } finally {
       this.isLoading = false;
     }
   }
 
+  async loadAccountData() {
+    return this.loadDashboardData();
+  }
+
   async loadPositions() {
-    try {
-      console.log('📈 Loading positions...');
-
-      const response = await fetch('/api/mt5/positions');
-      const result = await response.json();
-
-      if (result.success) {
-        this.positions = result.positions || [];
-        console.log(`✅ Loaded ${this.positions.length} positions`);
-        this.renderPositions();
-      } else {
-        console.warn('⚠️ No positions data:', result.error);
-        this.positions = [];
-        this.renderPositions();
-      }
-    } catch (error) {
-      console.error('❌ Error loading positions:', error);
-      this.positions = [];
+    if (this.accountData) {
       this.renderPositions();
+      return;
     }
+    return this.loadDashboardData();
   }
 
   async loadPendingOrders() {
-    try {
-      console.log('📑 Loading pending orders...');
-      const response = await fetch('/api/mt5/orders');
-      const result = await response.json();
-      if (result.success) {
-        this.pendingOrders = Array.isArray(result.orders) ? result.orders : [];
-        console.log(`✅ Loaded ${this.pendingOrders.length} pending orders`);
-      } else {
-        console.warn('⚠️ No pending orders:', result.error);
-        this.pendingOrders = [];
-      }
+    if (this.accountData) {
       this.renderPendingOrders();
-    } catch (error) {
-      console.error('❌ Error loading pending orders:', error);
-      this.pendingOrders = [];
-      this.renderPendingOrders();
+      return;
     }
+    return this.loadDashboardData();
   }
 
   async loadSignalHistory() {
@@ -871,22 +842,18 @@ class CleanTradingDashboard {
   // ===============================
 
   startAutoRefresh() {
-    // Refresh every 30 seconds
+    // Single combined call every 30 seconds — account + positions + orders in one request
     this.refreshInterval = setInterval(() => {
       if (!this.isLoading && !document.hidden) {
-        this.loadAccountData();
-        if (this.currentPage === 'trades-section') {
-          this.loadPositions();
-          this.loadPendingOrders();
-        }
+        this.loadDashboardData();
         // Load MetaStats data every few refreshes to avoid rate limits
-        if (Math.random() < 0.3) { // 30% chance each refresh
+        if (Math.random() < 0.3) {
           this.loadMetaStatsData();
         }
       }
     }, 30000);
 
-    console.log('🔄 Auto-refresh started (30 seconds)');
+    console.log('🔄 Auto-refresh started (30 seconds, combined endpoint)');
   }
 
   async refreshAllData() {
