@@ -164,22 +164,35 @@ export const validateConfig = (): boolean => {
     console.log('ℹ️ MetaAPI accounts will be configured by users through the dashboard interface');
   }
 
-  // Validate multi-account format if provided
+  // Validate multi-account format if provided.
+  // Format: "accountId:brokerName:accountType" with an optional 4th field naming the
+  // env var that holds this account's own MetaAPI token (e.g. METAAPI_TOKEN_2). Accounts
+  // without a 4th field fall back to the default METAAPI_TOKEN.
   if (config.metaApi.accounts) {
     const accountStrings = config.metaApi.accounts.split(',');
     accountStrings.forEach((accountStr, index) => {
       const parts = accountStr.trim().split(':');
-      if (parts.length !== 3) {
-        errors.push(`CRITICAL: Invalid account format at index ${index}: "${accountStr}". Expected format: "accountId:brokerName:accountType"`);
+      if (parts.length < 3 || parts.length > 4) {
+        errors.push(`CRITICAL: Invalid account format at index ${index}: "${accountStr}". Expected format: "accountId:brokerName:accountType" with an optional ":tokenEnvVarName"`);
         console.error(`❌ Invalid account format: ${accountStr}`);
       } else {
-        const [id, broker, type] = parts;
+        const [id, broker, type, tokenEnvName] = parts;
         if (!id.trim() || !broker.trim() || !type.trim()) {
           errors.push(`CRITICAL: Empty values in account config: "${accountStr}"`);
         }
         if (!['DEMO', 'LIVE'].includes(type.trim().toUpperCase())) {
           warnings.push(`WARNING: Account type "${type}" should be DEMO or LIVE`);
           console.warn(`⚠️ Account type "${type}" should be DEMO or LIVE`);
+        }
+        // If this account declares its own token env var, make sure it actually resolves
+        if (tokenEnvName !== undefined) {
+          const envName = tokenEnvName.trim();
+          if (!envName) {
+            errors.push(`CRITICAL: Empty token env var name in account config: "${accountStr}"`);
+          } else if (!process.env[envName]) {
+            errors.push(`CRITICAL: Account "${broker.trim()}" references token env var "${envName}" but it is not set`);
+            console.error(`❌ Token env var "${envName}" referenced by ${broker.trim()} is not set`);
+          }
         }
       }
     });
