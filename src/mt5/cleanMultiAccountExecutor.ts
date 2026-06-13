@@ -19,6 +19,7 @@ interface AccountConfig {
   id: string;
   brokerName: string;
   accountType: 'DEMO' | 'LIVE';
+  token: string; // MetaAPI token this account authenticates with (may differ per account)
   account?: any;
   connection?: any;
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
@@ -38,7 +39,8 @@ interface TradeExecutionResult {
  * Clean, reliable multi-account executor following MetaAPI best practices
  */
 export class CleanMultiAccountExecutor implements ITradeExecutor {
-  private api: any;
+  private apiInstances = new Map<string, any>(); // token → MetaApi instance (reused across accounts sharing a token)
+  private defaultToken: string;
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
@@ -49,7 +51,20 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       throw new Error('METAAPI_TOKEN environment variable is required');
     }
 
-    this.api = new MetaApi(token);
+    this.defaultToken = token;
+  }
+
+  /**
+   * Get-or-create a MetaApi instance for a given token. Accounts that share a token
+   * reuse the same instance; an account with its own token gets a dedicated one.
+   */
+  private getApi(token: string): any {
+    let api = this.apiInstances.get(token);
+    if (!api) {
+      api = new MetaApi(token);
+      this.apiInstances.set(token, api);
+    }
+    return api;
   }
 
   /**
@@ -102,16 +117,31 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const id = parts[0];
       const brokerName = parts[1];
       const accountType = parts[2] || 'LIVE'; // default to LIVE if not specified
+      const tokenEnvName = parts[3]; // optional: name of env var holding this account's own token
 
       if (!id || !brokerName) {
         logger.warn(`⚠️ Invalid account config (need at least id:brokerName): ${accountString}`);
         continue;
       }
 
+      // Resolve the token for this account. A 4th field names an env var (e.g. METAAPI_TOKEN_2)
+      // holding a token scoped to this account; without it, fall back to the default METAAPI_TOKEN.
+      let token = this.defaultToken;
+      if (tokenEnvName) {
+        const accountToken = process.env[tokenEnvName.trim()];
+        if (!accountToken) {
+          logger.error(`❌ ${brokerName.trim()}: token env var "${tokenEnvName.trim()}" is empty or missing — skipping account`);
+          continue;
+        }
+        token = accountToken.trim();
+        logger.info(`🔑 ${brokerName.trim()} will use its own token from ${tokenEnvName.trim()}`);
+      }
+
       const accountConfig: AccountConfig = {
         id: id.trim(),
         brokerName: brokerName.trim(),
         accountType: accountType.trim().toUpperCase() as 'DEMO' | 'LIVE',
+        token,
         status: 'CONNECTING',
         symbolCache: new Map()
       };
@@ -217,8 +247,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    * Perform the actual connection process following MetaAPI best practices
    */
   private async performConnection(accountConfig: AccountConfig): Promise<void> {
-      // Get account (standard MetaAPI pattern)
-      accountConfig.account = await this.api.metatraderAccountApi.getAccount(accountConfig.id);
+      // Get account (standard MetaAPI pattern) using this account's own token
+      const api = this.getApi(accountConfig.token);
+      accountConfig.account = await api.metatraderAccountApi.getAccount(accountConfig.id);
       
       // Deploy if needed (standard pattern)
       if (accountConfig.account.state !== 'DEPLOYED') {
