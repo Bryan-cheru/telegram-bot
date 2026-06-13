@@ -494,8 +494,9 @@ class CleanTradingDashboard {
 
     const summary = this.accountData.summary;
     
-    // Update account stats
-    this.updateStatCard('total-accounts', summary.accountCount || 1);
+    // Update account stats (summary provides totalAccounts/connectedAccounts)
+    this.updateStatCard('total-accounts', summary.totalAccounts ?? 0);
+    this.updateStatCard('connected-accounts', summary.connectedAccounts ?? 0);
     this.updateStatCard('total-balance', Utils.formatCurrency(summary.totalBalance || 0));
     this.updateStatCard('total-equity', Utils.formatCurrency(summary.totalEquity || 0));
     this.updateStatCard('active-positions', this.positions.length);
@@ -526,7 +527,8 @@ class CleanTradingDashboard {
     const container = document.getElementById('accounts-container');
     if (!container) return;
 
-    if (!this.accountData || !this.accountData.accounts) {
+    const accounts = this.accountData?.accounts;
+    if (!accounts || accounts.length === 0) {
       container.innerHTML = `
         <div class="no-data">
           <i class="fas fa-wallet"></i>
@@ -540,10 +542,8 @@ class CleanTradingDashboard {
       return;
     }
 
-    const account = this.accountData.accounts[0]; // IFPro account
-    const summary = this.accountData.summary;
-
-    container.innerHTML = `
+    // Render a card for every configured account (not just the first)
+    container.innerHTML = accounts.map(account => `
       <div class="account-card">
         <div class="account-header">
           <div class="account-info">
@@ -557,7 +557,7 @@ class CleanTradingDashboard {
             </button>
           </div>
         </div>
-        
+
         <div class="account-details">
           <div class="detail-grid">
             <div class="detail-item">
@@ -589,7 +589,7 @@ class CleanTradingDashboard {
           </div>
         </div>
       </div>
-    `;
+    `).join('');
   }
 
   renderPositions() {
