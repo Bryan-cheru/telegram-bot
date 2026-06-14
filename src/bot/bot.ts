@@ -529,7 +529,7 @@ export class TelegramBot {
             tradeSignal,
             result.ticket ?? 'N/A',
             'Pepperstone',
-            config.trading.fixedLotSize
+            result.volume ?? config.trading.fixedLotSize
           );
           // Update balance for loss tracking
           try {

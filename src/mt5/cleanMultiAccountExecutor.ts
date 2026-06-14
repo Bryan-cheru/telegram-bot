@@ -32,6 +32,7 @@ interface TradeExecutionResult {
   success: boolean;
   message: string;
   ticket?: string;
+  volume?: number;
   error?: string;
 }
 
@@ -292,7 +293,8 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     success: boolean;
     message?: string;
     error?: string;
-    ticket?: number;
+    ticket?: string;
+    volume?: number;
     signalId?: string;
   }> {
     if (!this.initialized) {
@@ -330,10 +332,13 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
     const successCount = results.filter(r => r.success).length;
     const totalAccounts = results.length;
+    const firstSuccess = results.find(r => r.success);
 
     return {
       success: successCount > 0,
       message: `Executed on ${successCount}/${totalAccounts} accounts`,
+      ticket: firstSuccess?.ticket,
+      volume: firstSuccess?.volume,
       signalId: `multi-${Date.now()}`
     };
   }
@@ -882,7 +887,8 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         brokerName: accountConfig.brokerName,
         success: true,
         message: `Trade executed successfully`,
-        ticket
+        ticket,
+        volume
       };
 
     } catch (error: any) {
@@ -918,6 +924,17 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
    * Volume sized to approximate target risk USD given entry→SL distance (aligned with riskMath pip model).
    */
   private calculateVolume(connection: any, signal: TradeSignal, entryPrice: number): number {
+    // Fixed-lot mode: trade exactly the user-set FIXED_LOT_SIZE, ignoring risk/balance.
+    // Only clamped to the broker minimum (0.01) and the MAX_TRADE_SIZE safety ceiling.
+    if ((process.env.USE_FIXED_LOT_SIZE || '').toLowerCase() === 'true') {
+      const fixed = this.getEffectiveLotSize();
+      const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
+      const maxVol = isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
+      const lot = Math.round(Math.min(Math.max(0.01, fixed), maxVol) * 100) / 100;
+      logger.info(`📦 Fixed-lot mode: trading ${lot} lots (FIXED_LOT_SIZE=${fixed}) — ignores balance/risk`);
+      return lot;
+    }
+
     try {
       const accountInfo = connection.terminalState?.accountInformation;
       const balance = accountInfo?.balance || 0;

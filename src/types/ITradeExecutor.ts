@@ -6,7 +6,8 @@ export interface ITradeExecutor {
     success: boolean;
     message?: string;
     error?: string;
-    ticket?: number;
+    ticket?: string;
+    volume?: number;
     signalId?: string;
   }>;
   getAccountEquity?(): Promise<number>; // Optional method for position sizing
