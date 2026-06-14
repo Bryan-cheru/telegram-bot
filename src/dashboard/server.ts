@@ -35,7 +35,7 @@ app.use((req, res, next) => {
 app.use('/api', (req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-api-key');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
   } else {
@@ -1217,10 +1217,12 @@ app.post('/api/mt5/positions/close-all/:accountId', async (req, res) => {
       });
     }
 
-    // Get current positions from all accounts
-    const positions = mt5AccountsData.reduce((allPositions: any[], account) => {
-      return allPositions.concat(account.positions || []);
-    }, []);
+    // Only close positions belonging to the requested account
+    const positions = mt5AccountsData
+      .filter(account => account.id === accountId)
+      .reduce((allPositions: any[], account) => {
+        return allPositions.concat(account.positions || []);
+      }, []);
     if (positions.length === 0) {
       return res.json({
         success: true,
@@ -1317,26 +1319,6 @@ app.get('/api/mt5/analytics/:accountId', async (req, res) => {
   } catch (error) {
     console.error('Error getting analytics:', error);
     res.status(500).json({ error: 'Failed to get analytics: ' + error });
-  }
-});
-
-// Get trade history data (using existing method)
-app.get('/api/mt5/trade-history', async (req, res) => {
-  try {
-    if (!multiAccountExecutor) {
-      return res.status(503).json({ error: 'MT5 connection not available' });
-    }
-
-    const history = await multiAccountExecutor.getTradeHistory();
-    
-    res.json({
-      success: true,
-      history: history || { summary: {}, recentDeals: [] }
-    });
-
-  } catch (error) {
-    console.error('Error getting trade history:', error);
-    res.status(500).json({ error: 'Failed to get trade history: ' + error });
   }
 });
 

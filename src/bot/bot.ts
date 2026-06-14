@@ -401,9 +401,13 @@ export class TelegramBot {
           
           if (file.file_path) {
             const response = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
-            imageBuffer = Buffer.from(await response.arrayBuffer());
-            hasChartImage = true;
-            logger.info(`✅ Chart image downloaded: ${imageBuffer.length} bytes`);
+            if (!response.ok) {
+              logger.warn(`⚠️ Telegram file download failed (HTTP ${response.status}) — skipping image`);
+            } else {
+              imageBuffer = Buffer.from(await response.arrayBuffer());
+              hasChartImage = true;
+              logger.info(`✅ Chart image downloaded: ${imageBuffer.length} bytes`);
+            }
           }
         } catch (error) {
           logger.warn('⚠️ Failed to download chart image:', error);

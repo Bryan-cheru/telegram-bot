@@ -331,24 +331,7 @@ async function main(): Promise<void> {
     logger.info(`✅ ${config.instanceType.toUpperCase()} instance is running. Press Ctrl+C to stop.`);
     logger.info(`📊 Components: Bot=${config.botEnabled ? 'ON' : 'OFF'}, Dashboard=${config.dashboardEnabled ? 'ON' : 'OFF'}`);
     
-    // Graceful shutdown
-    process.on('SIGTERM', async () => {
-      logger.info('Received SIGTERM, shutting down gracefully...');
-      if (server) {
-        addLog({ level: 'info', message: 'Shutting down gracefully...' });
-        server.close();
-      }
-      process.exit(0);
-    });
-    
-    process.on('SIGINT', async () => {
-      logger.info('Received SIGINT, shutting down gracefully...');
-      if (server) {
-        addLog({ level: 'info', message: 'Shutting down gracefully...' });
-        server.close();
-      }
-      process.exit(0);
-    });
+    // Graceful shutdown is handled by the module-level process.on('SIGTERM/SIGINT') above.
     
   } catch (error) {
     logger.error('Failed to start application:', error);
@@ -363,8 +346,4 @@ main().catch(error => {
   process.exit(1);
 });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
+// uncaughtException is handled by the module-level handler above.

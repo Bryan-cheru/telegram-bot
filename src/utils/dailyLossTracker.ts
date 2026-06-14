@@ -34,7 +34,10 @@ export class DailyLossTracker {
       return { allowed: false, reason: `daily trade limit reached (${this.tradesCount}/${this.maxDailyTrades})` };
     }
 
-    if (this.openingBalance !== null && this.realizedLoss >= this.dailyLossLimitUsd) {
+    // Check loss limit regardless of whether opening balance was captured.
+    // If openingBalance is null (MetaAPI never connected), realizedLoss stays 0
+    // and the guard is a no-op — but it will engage correctly once balance updates flow in.
+    if (this.realizedLoss >= this.dailyLossLimitUsd) {
       return { allowed: false, reason: `daily loss limit reached ($${this.realizedLoss.toFixed(2)} / $${this.dailyLossLimitUsd})` };
     }
 

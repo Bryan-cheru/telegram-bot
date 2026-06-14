@@ -791,22 +791,23 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const currentStopDistance = Math.abs(entryPrice - signal.stopLoss);
       if (currentStopDistance < minStopPrice) {
         logger.warn(
-          `⚠️ Stop distance ${currentStopDistance.toFixed(5)} < broker minimum ${minStopPrice.toFixed(5)} (${minStopPoints} pts) — widening`
+          `⚠️ Stop distance ${currentStopDistance.toFixed(5)} < broker minimum ${minStopPrice.toFixed(5)} (${minStopPoints} pts) — widening SL`
         );
 
         if (signal.action === 'BUY') {
           signal.stopLoss = entryPrice - minStopPrice;
-          finalTakeProfit = entryPrice + minStopPrice * rr;
+          // Only recompute TP when the signal did not supply one — preserve explicit TP targets.
+          if (!hasSignalTP) finalTakeProfit = entryPrice + minStopPrice * rr;
         } else {
           signal.stopLoss = entryPrice + minStopPrice;
-          finalTakeProfit = entryPrice - minStopPrice * rr;
+          if (!hasSignalTP) finalTakeProfit = entryPrice - minStopPrice * rr;
         }
 
         signal.stopLoss = formatPriceForInstrument(signal.stopLoss, signal.symbol);
         finalTakeProfit = formatPriceForInstrument(finalTakeProfit, signal.symbol);
 
         logger.info(
-          `✅ Adjusted to broker minimum — SL: ${signal.stopLoss}, TP: ${finalTakeProfit} (RR ${rr})`
+          `✅ Adjusted to broker minimum — SL: ${signal.stopLoss}, TP: ${finalTakeProfit}${hasSignalTP ? ' (signal TP preserved)' : ` (RR ${rr})`}`
         );
       }
 
@@ -946,7 +947,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       let calculatedLotSize = fixedRiskAmount / dollarRiskPerLot;
 
       calculatedLotSize = Math.max(0.01, calculatedLotSize);
-      calculatedLotSize = Math.min(10.0, calculatedLotSize);
       const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
       const maxVol =
         isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
@@ -1149,13 +1149,9 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         throw new Error(`Position ${positionId} not found`);
       }
       
-      // Close using opposite market order
-      let result;
-      if (position.type === 'POSITION_TYPE_BUY') {
-        result = await accountConfig.connection.createMarketSellOrder(position.symbol, position.volume);
-      } else {
-        result = await accountConfig.connection.createMarketBuyOrder(position.symbol, position.volume);
-      }
+      // Close the position by its ID — the correct MetaAPI RPC call.
+      // createMarketSellOrder/BuyOrder would open a new opposing position on hedging accounts.
+      const result = await accountConfig.connection.closePosition(positionId);
       
       logger.info(`✅ Position ${positionId} closed on ${accountConfig.brokerName}`);
       return result;
