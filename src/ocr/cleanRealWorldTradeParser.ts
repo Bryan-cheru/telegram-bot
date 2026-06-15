@@ -93,6 +93,21 @@ export class CleanRealWorldTradeParser {
       if (hasChartImage && imageBuffer) {
         const mlResult = await CleanMLIntegration.parseWithML(cleanText, cleanCaption, hasChartImage, imageBuffer);
         if (mlResult) {
+          // Text keywords establish direction with higher confidence than ML visual analysis.
+          // ML supplies price levels but must not invert a direction the text already determined
+          // (e.g. "support" → BUY must not become SELL because the chart looks bearish visually).
+          const textDirection = this.detectAction(fullText);
+          if (textDirection && textDirection !== mlResult.action) {
+            logger.warn(`⚠️ ML direction (${mlResult.action}) conflicts with text direction (${textDirection}) — correcting to text`);
+            mlResult.action = textDirection;
+            // ML's SL and TP are geometrically valid for the wrong direction.
+            // Swapping them places them on the correct sides of entry for the flipped direction.
+            if (mlResult.targets && mlResult.targets.length > 0) {
+              const oldSL = mlResult.stopLoss;
+              mlResult.stopLoss = mlResult.targets[0];
+              mlResult.targets = [oldSL];
+            }
+          }
           logger.info('✅ ML parsing successful');
           return mlResult;
         }

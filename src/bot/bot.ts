@@ -7,7 +7,7 @@ import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 import { ValidationService } from '../shared';
 import { ManualSignalParser } from '../services/ManualSignalParser';
-import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
+import { ClaudeSignalParser } from '../ml/claudeSignalParser';
 import { addSignal, updateSignalStatus } from '../dashboard/server';
 import { SignalDeduplicator } from '../utils/signalDeduplicator';
 import { TradeNotifier } from '../utils/tradeNotifier';
@@ -554,150 +554,61 @@ export class TelegramBot {
 
   private async handleChartImage(ctx: any): Promise<void> {
     try {
-      logger.info('🖼️ Starting chart image analysis...');
-      
-      // Check if message is from allowed channel
-      const chatId = ctx.chat?.id.toString();
-      const isFromAllowedChannel = chatId === config.allowedChannelId;
-      
-      if (!isFromAllowedChannel) {
+      logger.info('🖼️ Photo-only signal received — routing to Claude AI...');
+
+      if (ctx.chat?.id.toString() !== config.allowedChannelId) {
         logger.info('❌ Image not from configured channel, ignoring');
         return;
       }
 
-      // Get the highest resolution photo
       const photo = ctx.channelPost.photo;
       if (!photo || photo.length === 0) {
         logger.warn('No photo found in message');
         return;
       }
 
-      const highestResPhoto = photo[photo.length - 1]; // Last element is highest resolution
+      const highestResPhoto = photo[photo.length - 1];
       logger.info(`📷 Processing photo: ${highestResPhoto.width}x${highestResPhoto.height}`);
 
-      // Download the image
       const fileLink = await ctx.telegram.getFileLink(highestResPhoto.file_id);
-      logger.info(`🔗 Downloading image from: ${fileLink.href}`);
-      
       const response = await fetch(fileLink.href);
+      if (!response.ok) {
+        logger.warn(`⚠️ Failed to download image (HTTP ${response.status}) — skipping`);
+        return;
+      }
       const imageBuffer = Buffer.from(await response.arrayBuffer());
-      logger.info(`📦 Downloaded ${imageBuffer.length} bytes`);
+      logger.info(`📦 Downloaded ${imageBuffer.length} bytes — sending to Claude AI`);
 
-      // Analyze the chart using Visual Chart Analysis ML
-      const { VisualChartAnalysisML } = await import('../ml/visualChartAnalysisML');
-      const chartAnalyzer = new VisualChartAnalysisML();
-      
-      logger.info('🔍 Analyzing chart for trading signals...');
-      const analysisResult = await chartAnalyzer.analyzeChartImage(imageBuffer);
+      const tradeSignal = await ClaudeSignalParser.parse('', undefined, imageBuffer);
 
-      logger.info(`📊 Visual analysis results:
-        - Symbol: ${analysisResult.symbol}
-        - Direction: ${analysisResult.direction} 
-        - Confidence: ${analysisResult.confidence}%
-        - Grey entry zones: ${analysisResult.greyEntryZones.length}
-        - Green target zones: ${analysisResult.greenTargetZones.length}  
-        - Red stop zones: ${analysisResult.redStopZones.length}`);
+      if (!tradeSignal) {
+        logger.info('ℹ️ Claude found no trade signal in this image');
+        return;
+      }
 
-      // Convert visual analysis to trade signal
-      if (analysisResult.greyEntryZones.length > 0 && analysisResult.symbol && analysisResult.direction) {
-        const tradeSignal = await this.convertVisualAnalysisToTradeSignal(analysisResult);
-        
-        if (tradeSignal) {
-          logger.info('✅ Generated trade signal from chart analysis:', {
-            symbol: tradeSignal.symbol,
-            action: tradeSignal.action,
-            entry: `${tradeSignal.entryZone.min}-${tradeSignal.entryZone.max}`,
-            targets: tradeSignal.targets,
-            stopLoss: tradeSignal.stopLoss
-          });
+      logger.info('✅ Claude extracted signal from image:', {
+        symbol: tradeSignal.symbol,
+        action: tradeSignal.action,
+        entry: `${tradeSignal.entryZone.min}–${tradeSignal.entryZone.max}`,
+        stopLoss: tradeSignal.stopLoss,
+        targets: tradeSignal.targets
+      });
 
-          // Execute the trade
-          const isConnected = await this.tradeExecutor.isConnected();
-          if (!isConnected) {
-            logger.error('❌ Trade executor not connected - cannot execute chart-based trade');
-            return;
-          }
+      const isConnected = await this.tradeExecutor.isConnected();
+      if (!isConnected) {
+        logger.error('❌ Trade executor not connected — cannot execute image-based signal');
+        return;
+      }
 
-          logger.info('🚀 Executing trade from chart analysis...');
-          const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
-          
-          if (result.success) {
-            logger.info(`✅ Chart-based trade executed successfully! Signal ID: ${result.signalId || 'N/A'}`);
-          } else {
-            logger.error(`❌ Chart-based trade execution failed: ${result.error || result.message}`);
-          }
-        } else {
-          logger.warn('❌ Could not convert visual analysis to valid trade signal');
-        }
+      const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+      if (result.success) {
+        logger.info('✅ Image-based trade executed successfully');
       } else {
-        logger.warn('❌ Insufficient chart analysis data for trade generation');
-        logger.warn(`Missing: ${!analysisResult.symbol ? 'symbol ' : ''}${!analysisResult.direction ? 'direction ' : ''}${analysisResult.greyEntryZones.length === 0 ? 'entry zones' : ''}`);
+        logger.error(`❌ Image-based trade failed: ${result.error || result.message}`);
       }
 
     } catch (error) {
-      logger.error('💥 Error analyzing chart image:', error);
-    }
-  }
-
-  private async convertVisualAnalysisToTradeSignal(analysis: any): Promise<any> {
-    try {
-      if (!analysis.greyEntryZones.length || !analysis.symbol || !analysis.direction) {
-        return null;
-      }
-
-      // Use the first (most confident) grey zone as entry
-      const entryZone = analysis.greyEntryZones[0];
-      
-      // Calculate entry range (add some buffer around detected zone)
-      const entryBuffer = entryZone.price * 0.0005; // 0.05% buffer
-      const entryMin = entryZone.price - entryBuffer;
-      const entryMax = entryZone.price + entryBuffer;
-
-      // Set targets based on fixed-$ risk model (fallback when zones missing)
-      const entryMidPoint = (entryMin + entryMax) / 2;
-      const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
-      const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
-      const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
-
-      let targets: number[] = [];
-      let stopLoss: number;
-
-      if (analysis.greenTargetZones.length > 0) {
-        targets = analysis.greenTargetZones.map((zone: any) => zone.price);
-      }
-
-      if (analysis.redStopZones.length > 0) {
-        stopLoss = analysis.redStopZones[0].price;
-      } else {
-        const computed = calculateFixedDollarStopsAndTargets({
-          symbol: analysis.symbol,
-          entryPrice: entryMidPoint,
-          direction: analysis.direction,
-          config: { lotSize: fixedLotSize, riskAmount: fixedRiskAmount, riskRewardRatio: rr }
-        });
-        stopLoss = computed.stopLoss;
-        if (targets.length === 0) targets = computed.targets;
-      }
-
-      // Normalize formatting for instrument precision
-      stopLoss = formatPriceForInstrument(stopLoss, analysis.symbol);
-      targets = targets.map((t: number) => formatPriceForInstrument(t, analysis.symbol));
-
-      return {
-        symbol: analysis.symbol,
-        action: analysis.direction,
-        entryZone: { min: entryMin, max: entryMax },
-        targets: targets.slice(0, 3), // Max 3 targets
-        stopLoss,
-        riskPercentage: 2, // Default 2% risk
-        orderType: 'MARKET' as const,
-        confidence: analysis.confidence,
-        source: 'VISUAL_CHART_ANALYSIS'
-      };
-
-    } catch (error) {
-      logger.error('Error converting visual analysis to trade signal:', error);
-      return null;
+      logger.error('💥 Error handling chart image:', error);
     }
   }
 
