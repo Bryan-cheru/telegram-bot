@@ -11,8 +11,9 @@
 import { TradeSignal, TradeAction, OrderType } from '../types';
 import { logger } from '../utils/logger';
 import { CleanMLIntegration } from '../ml/core/CleanMLIntegration';
-import { SymbolParser, ValidationService, FormatService } from '../shared';
+import { SymbolParser } from '../shared';
 import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
+import { config } from '../utils/config';
 
 /**
  * CLEAN Real World Trade Parser
@@ -20,20 +21,6 @@ import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '.
  * Enhanced with visual chart analysis capability and ML integration
  */
 export class CleanRealWorldTradeParser {
-  private static readonly SYMBOL_PATTERNS = [
-    // Hashtag patterns - highest priority (with optional .x suffix for InstantFunding)
-    /#(XAUUSD|GOLD|XAGUSD|SILVER)(?:\.x)?/i,
-    /#(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)(?:\.x)?/i,
-    /#(EURCHF|EURGBP|EURJPY|EURAUD|EURCAD|EURNZD|GBPCHF|GBPJPY|GBPAUD|GBPCAD|GBPNZD)(?:\.x)?/i,
-    /#(CHFJPY|CADCHF|AUDCHF|NZDCHF|CADJPY|AUDJPY|NZDJPY|AUDCAD|AUDNZD|CADNZD)(?:\.x)?/i,
-    /#(US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|DOW|NASDAQ)(?:\.x)?/i,
-    /#(USOIL|UKOIL|WTI|BRENT|OIL)(?:\.x)?/i,
-    /#(BTCUSD|ETHUSD|BITCOIN|ETHEREUM)(?:\.x)?/i,
-    /#(ESXEUR|F40EUR|HSIHED)(?:\.x)?/i,
-    // Word boundaries without hashtag (with optional .x suffix)
-    /\b(XAUUSD|GOLD|EURUSD|GBPUSD|EURCHF|EURGBP|EURJPY|GBPCHF|GBPJPY|CHFJPY|US30|NAS100|SPX500|UK100|GER30|US100|AUS200|JPN225|BTCUSD|ETHUSD|BITCOIN)(?:\.x)?\b/i
-  ];
-
   private static readonly ACTION_PATTERNS = {
     BUY: [
       /instant\s+buy/i,
@@ -207,8 +194,8 @@ export class CleanRealWorldTradeParser {
     const explicitStop = explicitStopEarly;
     const explicitTps = explicitTpsEarly;
 
-    const fixedLotSize = parseFloat(process.env.FIXED_LOT_SIZE || '0.45');
-    const fixedRiskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
+    const fixedLotSize = config.trading.fixedLotSize;
+    const fixedRiskAmount = config.trading.fixedRiskAmount;
     const rr = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
     const computed = calculateFixedDollarStopsAndTargets({
       symbol,
@@ -392,34 +379,30 @@ export class CleanRealWorldTradeParser {
   }
 
   /**
-   * Extract single price from text
+   * Extract single price from text.
+   * Tries large-number patterns first (crypto/indices/gold) then standard decimal
+   * patterns (forex). Accepts any positive finite value so forex prices like 1.0850
+   * are not filtered out.
    */
   private static extractSinglePrice(text: string): number | null {
-    // Enhanced patterns for various price formats including BTCUSD
     const pricePatterns = [
-      // Comma-separated numbers: 126,000.00, 124,547.30
+      // Comma-separated: 126,000.00
       /\b(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)\b/g,
-      // Large numbers without commas: 126000.00, 124547.30  
-      /\b(\d{5,6}(?:\.\d{1,2})?)\b/g,
-      // Standard 4-5 digit numbers: 2650.50, 35400
-      /\b(\d{4,5}(?:\.\d{1,2})?)\b/g
+      // Large integers/decimals: 126000.00, 2650.50
+      /\b(\d{4,6}(?:\.\d{1,5})?)\b/g,
+      // Forex / JPY / small decimals: 1.08500, 145.234
+      /\b(\d{1,3}\.\d{2,5})\b/g
     ];
 
     for (const pattern of pricePatterns) {
       const matches = Array.from(text.matchAll(pattern));
-      if (matches.length > 0) {
-        const prices = matches
-          .map(match => {
-            // Remove commas before parsing
-            const cleanPrice = match[1].replace(/,/g, '');
-            return parseFloat(cleanPrice);
-          })
-          .filter(p => !isNaN(p) && p > 1000); // Must be > 1000 to be a valid price
-        
-        if (prices.length > 0) {
-          logger.info(`💰 Found single price: ${prices[0]} (from pattern: ${pattern})`);
-          return prices[0]; // Return first valid price
-        }
+      const prices = matches
+        .map(m => parseFloat(m[1].replace(/,/g, '')))
+        .filter(p => isFinite(p) && p > 0);
+
+      if (prices.length > 0) {
+        logger.info(`💰 Found single price: ${prices[0]}`);
+        return prices[0];
       }
     }
 
@@ -455,21 +438,6 @@ export class CleanRealWorldTradeParser {
     if (text.includes('breakout')) return 'Breakout strategy';
     
     return 'Technical analysis signal';
-  }
-
-  /**
-   * Get appropriate decimal places for symbol
-   */
-  private static getDecimalPlaces(symbol: string): number {
-    if (symbol === 'XAUUSD' || symbol === 'XAGUSD') {
-      return 2; // Metals: 2526.50
-    } else if (symbol.includes('JPY')) {
-      return 3; // JPY pairs: 145.123
-    } else if (symbol.startsWith('US') || symbol.includes('NAS') || symbol.includes('SPX')) {
-      return 1; // Indices: 35234.5
-    } else {
-      return 5; // Most forex: 1.23456
-    }
   }
 
   /**
@@ -595,8 +563,7 @@ export class CleanRealWorldTradeParser {
         const cleanPrice = match[1].replace(/,/g, '');
         const price = parseFloat(cleanPrice);
         
-        // Filter out invalid prices and duplicates
-        if (!isNaN(price) && price > 1000 && !allPrices.includes(price)) {
+        if (isFinite(price) && price > 0 && !allPrices.includes(price)) {
           allPrices.push(price);
         }
       }
@@ -606,43 +573,34 @@ export class CleanRealWorldTradeParser {
   }
 
   /**
-   * Infer trading action from chart context when not explicitly stated
+   * Infer trading action from chart context when not explicitly stated.
+   * Returns null when direction cannot be determined — callers must not
+   * fall back to an arbitrary default, as a wrong direction places a live trade.
    */
   private static inferActionFromChart(text: string, symbol: string): TradeAction | null {
     logger.info('🔄 Attempting to infer action from chart context...');
-    
-    // For BTCUSD and crypto, often the chart shows resistance/support levels
+
     if (symbol.includes('BTC')) {
-      // Look for resistance level patterns (typically at high prices = SELL opportunity)
       const prices = this.extractAllPrices(text);
       if (prices.length >= 2) {
         const maxPrice = Math.max(...prices);
         const minPrice = Math.min(...prices);
         const currentPrice = prices[Math.floor(prices.length / 2)];
-        
-        // If current price is near the high, likely a SELL setup
-        if (currentPrice > (maxPrice * 0.95)) {
-          logger.info('🎯 Current price near highs - inferring SELL');
+
+        if (currentPrice > maxPrice * 0.95) {
+          logger.info('🎯 BTC: price near highs — inferring SELL');
           return 'SELL';
         }
-        
-        // If current price is near the low, likely a BUY setup
-        if (currentPrice < (minPrice * 1.05)) {
-          logger.info('🎯 Current price near lows - inferring BUY');
+        if (currentPrice < minPrice * 1.05) {
+          logger.info('🎯 BTC: price near lows — inferring BUY');
           return 'BUY';
         }
       }
     }
-    
-    // Default fallback - return SELL for high-value instruments like BTCUSD (often at resistance)
-    if (symbol.includes('BTC') || symbol.includes('XAU')) {
-      logger.info('🎯 High-value instrument - defaulting to SELL (resistance likely)');
-      return 'SELL';
-    }
-    
-    // For forex, default to BUY
-    logger.info('🎯 Forex instrument - defaulting to BUY');
-    return 'BUY';
+
+    // Cannot determine direction — do not guess; let the caller skip the trade.
+    logger.warn('⚠️ inferActionFromChart: direction ambiguous — skipping signal to avoid incorrect trade');
+    return null;
   }
 
 }

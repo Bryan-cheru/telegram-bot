@@ -32,9 +32,6 @@ export interface EnvironmentConfig {
   defaultRiskRewardRatio: number;
   maxDailyTrades: number;
   
-  // OCR Configuration  
-  tesseractDataPath?: string;
-  
   // Monitoring & Logging
   logLevel: string;
   enableMetrics: boolean;
@@ -101,9 +98,6 @@ export class EnvironmentConfigService {
       defaultRiskPercentage: parseFloat(process.env.DEFAULT_RISK_PERCENTAGE || '0.45'),
       defaultRiskRewardRatio: parseFloat(process.env.DEFAULT_RISK_REWARD_RATIO || '1.0'),
       maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || '10', 10),
-      
-      // OCR Configuration
-      tesseractDataPath: process.env.TESSDATA_PREFIX || './eng.traineddata',
       
       // Monitoring & Logging
       logLevel: process.env.LOG_LEVEL || 'info',

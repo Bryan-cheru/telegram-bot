@@ -6,7 +6,7 @@ import express from 'express';
 import app, { setSharedExecutor } from './dashboard/server';
 import { addLog, updateBotStatus } from './dashboard/server';
 import { HealthCheckService } from './monitoring/healthChecks';
-import { DistributedTracing, Traced } from './monitoring/distributedTracing';
+import { DistributedTracing } from './monitoring/distributedTracing';
 // import { startWebServer } from './api/server'; // Removed old API system
 
 // Prevent double initialization
@@ -162,15 +162,6 @@ const createServer = (): http.Server => {
       const statusCode = isReady ? 200 : 503;
       res.writeHead(statusCode, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ready: isReady }));
-    } else if (req.url === '/metrics') {
-      // Prometheus metrics endpoint (placeholder until prom-client is installed)
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(`# Enterprise metrics available after installing prom-client package
-# Current status: Basic monitoring active
-# Install: npm install prom-client
-trading_bot_status 1 ${Date.now()}
-trading_bot_uptime ${process.uptime()} ${Date.now()}
-      `.trim());
     } else {
       // Delegate to comprehensive dashboard app
       app(req, res);
@@ -272,7 +263,7 @@ async function main(): Promise<void> {
     healthCheckService.setupDefaultHealthChecks();
     logger.info('🏥 Health check service initialized');
     
-    const tracer = DistributedTracing.getInstance();
+    DistributedTracing.getInstance();
     logger.info('🔍 Distributed tracing initialized');
     
     let bot: TelegramBot | null = null;

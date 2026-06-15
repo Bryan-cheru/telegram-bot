@@ -1,15 +1,11 @@
 import { logger } from '../utils/logger';
+import { calculateFixedDollarStopsAndTargets, formatPriceForInstrument } from '../trading/riskMath';
+import { config } from '../utils/config';
 
 export interface ManualSignalConfig {
   fixedLotSize: number;
   maxRiskPerTrade: number;
-  targetReward: number;
   riskRewardRatio: number;
-  
-  // Pip values per 0.01 move per lot for each instrument
-  pipValues: {
-    [symbol: string]: number;
-  };
 }
 
 export interface ParsedManualSignal {
@@ -25,36 +21,10 @@ export interface ParsedManualSignal {
 }
 
 export class ManualSignalParser {
-  private config: ManualSignalConfig = {
-    fixedLotSize: 0.65,
-    maxRiskPerTrade: 1000,
-    targetReward: 1500,
-    riskRewardRatio: 1.5,
-    
-    pipValues: {
-      // Metals
-      'XAGUSD': 0.5,   // Silver: $0.50 per 0.01 move per lot
-      'XAUUSD': 1.0,   // Gold: $1.00 per 0.01 move per lot
-      
-      // Forex majors
-      'EURUSD': 10.0,  // $10 per 0.0001 (pip) per lot
-      'GBPUSD': 10.0,
-      'AUDUSD': 10.0,
-      'NZDUSD': 10.0,
-      'USDCAD': 10.0,
-      'USDCHF': 10.0,
-      
-      // JPY pairs
-      'USDJPY': 10.0,  // $10 per 0.01 (pip) per lot
-      'EURJPY': 10.0,
-      'GBPJPY': 10.0,
-      
-      // Crypto
-      'BTCUSD': 1.0,   // Bitcoin: $1 per $1 move per lot
-      
-      // Default fallback
-      'DEFAULT': 1.0
-    }
+  private cfg: ManualSignalConfig = {
+    fixedLotSize: config.trading.fixedLotSize,
+    maxRiskPerTrade: config.trading.fixedRiskAmount,
+    riskRewardRatio: parseFloat(process.env.RISK_REWARD_RATIO || '1.5')
   };
 
   /**
@@ -93,33 +63,33 @@ export class ManualSignalParser {
         return null;
       }
       
-      // Calculate stop loss and take profit
-      const { stopLoss, takeProfit } = this.calculateStopAndTarget(
+      const { stopLoss: rawSL, targets } = calculateFixedDollarStopsAndTargets({
         symbol,
+        entryPrice,
         direction,
-        entryPrice
-      );
-      
+        config: {
+          lotSize: this.cfg.fixedLotSize,
+          riskAmount: this.cfg.maxRiskPerTrade,
+          riskRewardRatio: this.cfg.riskRewardRatio
+        }
+      });
+      const stopLoss = formatPriceForInstrument(rawSL, symbol);
+      const takeProfit = formatPriceForInstrument(targets[0], symbol);
+      const rewardAmount = this.cfg.maxRiskPerTrade * this.cfg.riskRewardRatio;
+
       const parsedSignal: ParsedManualSignal = {
         symbol,
         direction,
         entryPrice,
         stopLoss,
         takeProfit,
-        lotSize: this.config.fixedLotSize,
-        riskAmount: this.config.maxRiskPerTrade,
-        rewardAmount: this.config.targetReward,
+        lotSize: this.cfg.fixedLotSize,
+        riskAmount: this.cfg.maxRiskPerTrade,
+        rewardAmount,
         source: 'MANUAL'
       };
-      
-      logger.info(`✅ Manual signal parsed successfully:`);
-      logger.info(`   Symbol: ${symbol}`);
-      logger.info(`   Direction: ${direction}`);
-      logger.info(`   Entry: ${entryPrice}`);
-      logger.info(`   Stop Loss: ${stopLoss} (Risk: $${this.config.maxRiskPerTrade})`);
-      logger.info(`   Take Profit: ${takeProfit} (Reward: $${this.config.targetReward})`);
-      logger.info(`   Lot Size: ${this.config.fixedLotSize}`);
-      logger.info(`   Risk/Reward: 1:${this.config.riskRewardRatio}`);
+
+      logger.info(`✅ Manual signal parsed: ${direction} ${symbol} @ ${entryPrice} | SL ${stopLoss} | TP ${takeProfit} | lot ${this.cfg.fixedLotSize} | risk $${this.cfg.maxRiskPerTrade}`);
       
       return parsedSignal;
       
@@ -213,81 +183,6 @@ export class ManualSignalParser {
   }
 
   /**
-   * Calculate stop loss and take profit based on fixed risk/reward
-   */
-  private calculateStopAndTarget(
-    symbol: string,
-    direction: 'BUY' | 'SELL',
-    entryPrice: number
-  ): { stopLoss: number; takeProfit: number } {
-    // Get pip value for this symbol
-    const pipValue = this.config.pipValues[symbol] || this.config.pipValues['DEFAULT'];
-    
-    // Determine pip size based on symbol type
-    let pipSize: number;
-    if (symbol.includes('JPY')) {
-      pipSize = 0.01;    // JPY pairs: 1 pip = 0.01
-    } else if (symbol.includes('XAU') || symbol.includes('XAG')) {
-      pipSize = 0.01;    // Metals: 1 pip = 0.01
-    } else {
-      pipSize = 0.0001;  // Forex majors: 1 pip = 0.0001
-    }
-    
-    logger.info(`💰 Calculating SL/TP for ${symbol}:`);
-    logger.info(`   Entry: ${entryPrice}`);
-    logger.info(`   Pip Value: $${pipValue} per pip per lot`);
-    logger.info(`   Pip Size: ${pipSize}`);
-    logger.info(`   Lot Size: ${this.config.fixedLotSize}`);
-    
-    // Calculate the pip distance needed to risk $1000
-    // Formula: Risk $ = Pip Value × Lots × Distance (in pips)
-    // Rearranged: Distance (pips) = Risk $ / (Pip Value × Lots)
-    const stopDistanceInPips = this.config.maxRiskPerTrade / (pipValue * this.config.fixedLotSize);
-    
-    // Convert pip distance to actual price distance
-    const stopDistance = stopDistanceInPips * pipSize;
-    
-    logger.info(`   Stop Distance: ${stopDistanceInPips.toFixed(2)} pips (${stopDistance.toFixed(6)} price units)`);
-    
-    // Calculate target distance (1.5x the stop distance for 1:1.5 RR)
-    const targetDistance = stopDistance * this.config.riskRewardRatio;
-    
-    logger.info(`   Target Distance: ${(stopDistanceInPips * this.config.riskRewardRatio).toFixed(2)} pips (${targetDistance.toFixed(6)} price units)`);
-    
-    let stopLoss: number;
-    let takeProfit: number;
-    
-    if (direction === 'BUY') {
-      stopLoss = entryPrice - stopDistance;
-      takeProfit = entryPrice + targetDistance;
-    } else {
-      stopLoss = entryPrice + stopDistance;
-      takeProfit = entryPrice - targetDistance;
-    }
-    
-    // Round to appropriate decimal places based on symbol
-    const decimals = this.getDecimalPlaces(symbol);
-    stopLoss = parseFloat(stopLoss.toFixed(decimals));
-    takeProfit = parseFloat(takeProfit.toFixed(decimals));
-    
-    logger.info(`   Final SL: ${stopLoss}`);
-    logger.info(`   Final TP: ${takeProfit}`);
-    
-    return { stopLoss, takeProfit };
-  }
-
-  /**
-   * Get appropriate decimal places for a symbol
-   */
-  private getDecimalPlaces(symbol: string): number {
-    if (symbol.includes('JPY')) return 3;      // JPY pairs: 198.500
-    if (symbol.includes('XAU')) return 2;      // Gold: 3590.50
-    if (symbol.includes('XAG')) return 4;      // Silver: 50.9207
-    if (symbol.includes('BTC')) return 2;      // Bitcoin: 108105.64
-    return 5;                                   // Forex: 1.08500
-  }
-
-  /**
    * Generate a user-friendly confirmation message
    */
   generateConfirmationMessage(signal: ParsedManualSignal): string {
@@ -295,41 +190,34 @@ export class ManualSignalParser {
     const tpDistance = Math.abs(signal.takeProfit - signal.entryPrice);
     
     return `
-📊 Manual Signal Parsed
+📊 *Manual Signal Parsed*
 
-🎯 **Trade Setup:**
+🎯 *Trade Setup:*
 Symbol: ${signal.symbol}
 Direction: ${signal.direction}
 Entry: ${signal.entryPrice}
 
-📉 **Risk Management:**
-Stop Loss: ${signal.stopLoss}
-Take Profit: ${signal.takeProfit}
+📉 *Risk Management:*
+Stop Loss: ${signal.stopLoss} (distance: ${slDistance.toFixed(4)})
+Take Profit: ${signal.takeProfit} (distance: ${tpDistance.toFixed(4)})
 Lot Size: ${signal.lotSize}
 
-💰 **P&L Expectations:**
-Risk: $${signal.riskAmount} (SL distance: ${slDistance.toFixed(4)})
-Reward: $${signal.rewardAmount} (TP distance: ${tpDistance.toFixed(4)})
-Risk/Reward: 1:${this.config.riskRewardRatio}
+💰 *P&L Expectations:*
+Risk: $${signal.riskAmount}  |  Reward: $${signal.rewardAmount.toFixed(0)}
+Risk/Reward: 1:${this.cfg.riskRewardRatio}
 
 Reply with:
-✅ **CONFIRM** to execute
-❌ **CANCEL** to abort
+✅ *CONFIRM* to execute
+❌ *CANCEL* to abort
     `.trim();
   }
 
-  /**
-   * Update configuration (for admin commands)
-   */
   updateConfig(updates: Partial<ManualSignalConfig>): void {
-    this.config = { ...this.config, ...updates };
+    this.cfg = { ...this.cfg, ...updates };
     logger.info('✅ Manual signal config updated:', updates);
   }
 
-  /**
-   * Get current configuration
-   */
   getConfig(): ManualSignalConfig {
-    return { ...this.config };
+    return { ...this.cfg };
   }
 }

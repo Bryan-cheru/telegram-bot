@@ -6,7 +6,7 @@ import { ITradeExecutor } from '../types/ITradeExecutor';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 import { ValidationService } from '../shared';
-import { ManualSignalParser } from '../services/ManualSignalParser';
+import { ManualSignalParser, ParsedManualSignal } from '../services/ManualSignalParser';
 import { ClaudeSignalParser } from '../ml/claudeSignalParser';
 import { addSignal, updateSignalStatus } from '../dashboard/server';
 import { SignalDeduplicator } from '../utils/signalDeduplicator';
@@ -21,6 +21,7 @@ export class TelegramBot {
   private tradeExecutor: ITradeExecutor;
   private manualSignalParser: ManualSignalParser;
   private deduplicator = new SignalDeduplicator();
+  private pendingManualSignals = new Map<string, ParsedManualSignal>();
   private notifier!: TradeNotifier;
   private dailyTracker = new DailyLossTracker(
     config.limits.maxDailyTrades,
@@ -287,10 +288,120 @@ export class TelegramBot {
   
 
 
+  private convertManualToTradeSignal(manual: ParsedManualSignal): import('../types').TradeSignal {
+    const half = manual.entryPrice * 0.001;
+    return {
+      symbol: manual.symbol,
+      action: manual.direction,
+      entryZone: { min: manual.entryPrice - half, max: manual.entryPrice + half },
+      stopLoss: manual.stopLoss,
+      targets: [manual.takeProfit],
+      orderType: 'LIMIT',
+      reason: 'Manual signal (confirmed)',
+      plan: 'Manual entry',
+      confidence: 1.0
+    };
+  }
+
+  private async executeSignal(ctx: any, tradeSignal: import('../types').TradeSignal, rawText: string): Promise<void> {
+    const validation = ValidationService.validateTradeSignal(tradeSignal);
+    if (!validation.isValid) {
+      logger.warn('Invalid trade signal:', validation.errors, tradeSignal);
+      await ctx.reply(`❌ Signal validation failed: ${validation.errors.join(', ')}`);
+      return;
+    }
+
+    const signalId = addSignal({
+      symbol: tradeSignal.symbol,
+      action: tradeSignal.action,
+      entryMin: tradeSignal.entryZone.min,
+      entryMax: tradeSignal.entryZone.max,
+      stopLoss: tradeSignal.stopLoss,
+      targets: tradeSignal.targets,
+      orderType: tradeSignal.orderType,
+      status: 'pending',
+      rawText: rawText?.substring(0, 500)
+    });
+
+    const limitCheck = this.dailyTracker.canTrade();
+    if (!limitCheck.allowed) {
+      logger.warn(`🛑 Trade blocked by daily limit: ${limitCheck.reason}`);
+      updateSignalStatus(signalId, 'failed', { executionMessage: `Blocked: ${limitCheck.reason}` });
+      const stats = this.dailyTracker.getStats();
+      if (stats.tradesCount >= stats.maxTrades) {
+        await this.notifier.dailyLimitHit(stats.tradesCount, stats.maxTrades);
+      } else {
+        await this.notifier.dailyLossLimitHit(stats.realizedLoss, stats.lossLimit);
+      }
+      return;
+    }
+
+    try {
+      const isConnected = await this.tradeExecutor.isConnected();
+      if (!isConnected) {
+        logger.error('❌ Trade executor not connected');
+        await this.notifier.tradeFailed(tradeSignal, 'Not connected to broker', 'MetaAPI');
+        return;
+      }
+
+      const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
+      updateSignalStatus(signalId, result.success ? 'executed' : 'failed', {
+        executionMessage: result.message || result.error,
+        ticket: result.ticket
+      });
+
+      if (result.success) {
+        this.dailyTracker.recordTrade();
+        logger.info(`✅ Trade executed! Ticket: ${result.ticket}`);
+        await this.notifier.tradeOpened(
+          tradeSignal,
+          result.ticket ?? 'N/A',
+          'Pepperstone',
+          result.volume ?? config.trading.fixedLotSize
+        );
+        try {
+          const executor = this.tradeExecutor as any;
+          const info = await executor.getAccountInfo?.();
+          if (info?.balance) this.dailyTracker.updateBalance(info.balance);
+        } catch { /* non-critical */ }
+      } else {
+        const reason = result.error || result.message || 'Unknown error';
+        logger.error(`❌ Trade execution failed: ${reason}`);
+        await this.notifier.tradeFailed(tradeSignal, reason, 'Pepperstone');
+      }
+    } catch (error: any) {
+      logger.error('💥 Trade execution threw an exception:', error);
+      await this.notifier.tradeFailed(tradeSignal, error?.message ?? String(error), 'Pepperstone');
+    }
+  }
+
   private async handleTextMessage(ctx: any): Promise<void> {
     try {
-      if (process.env.BOT_ENABLED === 'false') {
-        logger.info('🚫 Trading disabled (BOT_ENABLED=false) — ignoring signal message');
+      if (!config.botEnabled) {
+        logger.info('🚫 Trading disabled — ignoring signal message');
+        return;
+      }
+
+      // CONFIRM/CANCEL replies for pending manual signals — checked before the channel
+      // guard because admin sends these from a private/admin chat, not the signal channel.
+      const earlyMsg = (ctx.message || ctx.channelPost) as any;
+      const earlyText = (earlyMsg?.text || earlyMsg?.caption || '').trim();
+      const chatIdKey = ctx.chat?.id?.toString() ?? '';
+
+      if (/^confirm$/i.test(earlyText)) {
+        if (this.pendingManualSignals.has(chatIdKey)) {
+          const manual = this.pendingManualSignals.get(chatIdKey)!;
+          this.pendingManualSignals.delete(chatIdKey);
+          logger.info('✅ CONFIRM received — executing manual signal');
+          await ctx.reply('⏳ Executing trade…');
+          await this.executeSignal(ctx, this.convertManualToTradeSignal(manual), earlyText);
+          return;
+        }
+      }
+
+      if (/^cancel$/i.test(earlyText) && this.pendingManualSignals.has(chatIdKey)) {
+        this.pendingManualSignals.delete(chatIdKey);
+        await ctx.reply('❌ Trade cancelled.');
         return;
       }
 
@@ -357,8 +468,9 @@ export class TelegramBot {
         if (manualSignal) {
           logger.info('✅ Manual signal detected - requesting confirmation');
           const confirmationMsg = this.manualSignalParser.generateConfirmationMessage(manualSignal);
-          await ctx.reply(confirmationMsg);
-          logger.info(`📋 Manual signal ready for execution:`, manualSignal);
+          await ctx.reply(confirmationMsg, { parse_mode: 'Markdown' });
+          this.pendingManualSignals.set(chatId, manualSignal);
+          logger.info(`📋 Manual signal stored for confirmation from chat ${chatId}`);
           return;
         }
       }
@@ -459,93 +571,10 @@ export class TelegramBot {
         return;
       }
 
-      // Validate trade signal  
-      if (!ValidationService.validateTradeSignal(tradeSignal)) {
-        logger.warn('Invalid trade signal in text message:', tradeSignal);
-        return;
-      }
-
-      // Log the detected signal
       const signalInfo = `Symbol: ${tradeSignal.symbol}, Action: ${tradeSignal.action}, Entry: ${tradeSignal.entryZone.min}-${tradeSignal.entryZone.max}, Targets: ${tradeSignal.targets.join(', ')}`;
       logger.info('Trade signal detected from text:', signalInfo);
 
-      // Record in signal history for the dashboard
-      const signalId = addSignal({
-        symbol: tradeSignal.symbol,
-        action: tradeSignal.action,
-        entryMin: tradeSignal.entryZone.min,
-        entryMax: tradeSignal.entryZone.max,
-        stopLoss: tradeSignal.stopLoss,
-        targets: tradeSignal.targets,
-        orderType: tradeSignal.orderType,
-        status: 'pending',
-        rawText: text?.substring(0, 500)
-      });
-
-      // Circuit breaker — daily limits
-      const limitCheck = this.dailyTracker.canTrade();
-      if (!limitCheck.allowed) {
-        logger.warn(`🛑 Trade blocked by daily limit: ${limitCheck.reason}`);
-        updateSignalStatus(signalId, 'failed', { executionMessage: `Blocked: ${limitCheck.reason}` });
-        const stats = this.dailyTracker.getStats();
-        if (stats.tradesCount >= stats.maxTrades) {
-          await this.notifier.dailyLimitHit(stats.tradesCount, stats.maxTrades);
-        } else {
-          await this.notifier.dailyLossLimitHit(stats.realizedLoss, stats.lossLimit);
-        }
-        return;
-      }
-
-      // Execute trade
-      try {
-        const isConnected = await this.tradeExecutor.isConnected();
-        logger.info(`🔗 Trade executor connection status: ${isConnected}`);
-
-        if (!isConnected) {
-          logger.error('❌ Trade executor is not connected - cannot execute trades');
-          await this.notifier.tradeFailed(tradeSignal, 'Not connected to broker', 'MetaAPI');
-          return;
-        }
-
-        logger.info('🚀 Executing trade signal...');
-        const result = await this.tradeExecutor.executeTradeSignal(tradeSignal);
-
-        logger.info('📊 Trade execution result received:', {
-          success: result.success,
-          message: result.message,
-          error: result.error,
-          signalId: result.signalId
-        });
-
-        updateSignalStatus(signalId, result.success ? 'executed' : 'failed', {
-          executionMessage: result.message || result.error,
-          ticket: result.ticket
-        });
-
-        if (result.success) {
-          this.dailyTracker.recordTrade();
-          logger.info(`✅ Trade executed! Ticket: ${result.ticket}`);
-          await this.notifier.tradeOpened(
-            tradeSignal,
-            result.ticket ?? 'N/A',
-            'Pepperstone',
-            result.volume ?? config.trading.fixedLotSize
-          );
-          // Update balance for loss tracking
-          try {
-            const executor = this.tradeExecutor as any;
-            const info = await executor.getAccountInfo?.();
-            if (info?.balance) this.dailyTracker.updateBalance(info.balance);
-          } catch { /* non-critical */ }
-        } else {
-          const reason = result.error || result.message || 'Unknown error';
-          logger.error(`❌ Trade execution failed: ${reason}`);
-          await this.notifier.tradeFailed(tradeSignal, reason, 'Pepperstone');
-        }
-      } catch (error: any) {
-        logger.error('💥 Trade execution threw an exception:', error);
-        await this.notifier.tradeFailed(tradeSignal, error?.message ?? String(error), 'Pepperstone');
-      }
+      await this.executeSignal(ctx, tradeSignal, text);
 
     } catch (error) {
       logger.error('Error handling text message:', error);
@@ -556,7 +585,12 @@ export class TelegramBot {
     try {
       logger.info('🖼️ Photo-only signal received — routing to Claude AI...');
 
-      if (ctx.chat?.id.toString() !== config.allowedChannelId) {
+      const imgChatId = ctx.chat?.id?.toString();
+      const imgChatUsername = (ctx.chat as any)?.username;
+      const isAllowedImageSource =
+        (config.allowedChannelId && imgChatId === config.allowedChannelId) ||
+        (config.allowedChannelUsername && imgChatUsername === config.allowedChannelUsername);
+      if (!isAllowedImageSource) {
         logger.info('❌ Image not from configured channel, ignoring');
         return;
       }

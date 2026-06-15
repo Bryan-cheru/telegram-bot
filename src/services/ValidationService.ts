@@ -301,14 +301,18 @@ export class InputValidationService {
 
   private validateTradingSymbol(symbol: string): string | null {
     const sanitized = symbol.toUpperCase().trim();
-    
-    // Common trading pairs validation
+
     const validPatterns = [
-      /^[A-Z]{3}USD$/, // EURUSD, GBPUSD, etc.
-      /^USD[A-Z]{3}$/, // USDCAD, USDCHF, etc.
-      /^[A-Z]{6}$/,    // EURJPY, GBPJPY, etc.
-      /^XAU[A-Z]{3}$/, // XAUUSD (Gold)
-      /^XAG[A-Z]{3}$/, // XAGUSD (Silver)
+      /^[A-Z]{3}USD$/,       // EURUSD, GBPUSD, etc.
+      /^USD[A-Z]{3}$/,       // USDCAD, USDCHF, etc.
+      /^[A-Z]{6}$/,          // EURJPY, GBPJPY, etc.
+      /^XAU[A-Z]{3}$/,       // XAUUSD (Gold)
+      /^XAG[A-Z]{3}$/,       // XAGUSD (Silver)
+      /^(US|UK|GER|AUS|JPN)\d{2,3}$/, // US30, UK100, GER30, AUS200, JPN225
+      /^NAS100$/,            // NAS100
+      /^SPX500$/,            // SPX500
+      /^(BTC|ETH|LTC|XRP)USD$/, // Crypto pairs
+      /^V\d{1,3}$/,          // Synthetic indices V10, V25, V75, V100
     ];
 
     if (!validPatterns.some(pattern => pattern.test(sanitized))) {

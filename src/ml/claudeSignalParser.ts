@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { TradeSignal } from '../types';
 import { SymbolParser } from '../shared/SymbolParser';
 import { calculateFixedDollarStopsAndTargets } from '../trading/riskMath';
+import { config } from '../utils/config';
 
 // Compressed image dimensions sent to Claude — balances accuracy vs API latency/cost.
 // Claude vision charges per 1600-token tile; keeping width ≤ 1024 fits in one tile.
@@ -221,8 +222,8 @@ export class ClaudeSignalParser {
       (!stopLoss || isNaN(stopLoss) || targets.length === 0) && entryMidPrice > 0;
 
     if (needsCalc) {
-      const lotSize    = parseFloat(process.env.FIXED_LOT_SIZE    ?? '0.65');
-      const riskAmount = parseFloat(process.env.FIXED_RISK_AMOUNT ?? '1000');
+      const lotSize    = config.trading.fixedLotSize;
+      const riskAmount = config.trading.fixedRiskAmount;
       const rr         = parseFloat(process.env.RISK_REWARD_RATIO ?? '1.5');
 
       const calc = calculateFixedDollarStopsAndTargets({

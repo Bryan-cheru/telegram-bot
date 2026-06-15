@@ -152,8 +152,14 @@ export class ValidationService {
     } else {
       if (typeof signal.entryZone.min !== 'number' || typeof signal.entryZone.max !== 'number') {
         errors.push('Entry zone must have valid min and max prices');
-      } else if (signal.entryZone.min >= signal.entryZone.max) {
-        errors.push('Entry zone min must be less than max');
+      } else {
+        // Allow min === max === 0: this is a valid MARKET order (no specific entry price).
+        // Only reject when min > max (inverted zone) or when min equals max at a non-zero
+        // price (which would mean a zero-width limit zone — likely a parsing error).
+        const isMarket = signal.entryZone.min === 0 && signal.entryZone.max === 0;
+        if (!isMarket && signal.entryZone.min >= signal.entryZone.max) {
+          errors.push('Entry zone min must be less than max');
+        }
       }
     }
 

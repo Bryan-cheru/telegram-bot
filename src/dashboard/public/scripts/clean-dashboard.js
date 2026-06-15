@@ -494,8 +494,8 @@ class CleanTradingDashboard {
 
     const summary = this.accountData.summary;
     
-    // Update account stats (summary provides totalAccounts/connectedAccounts)
-    this.updateStatCard('total-accounts', summary.totalAccounts ?? 0);
+    // Update account stats (API uses accountCount; totalAccounts kept as fallback)
+    this.updateStatCard('total-accounts', summary.accountCount ?? summary.totalAccounts ?? 0);
     this.updateStatCard('connected-accounts', summary.connectedAccounts ?? 0);
     this.updateStatCard('total-balance', Utils.formatCurrency(summary.totalBalance || 0));
     this.updateStatCard('total-equity', Utils.formatCurrency(summary.totalEquity || 0));

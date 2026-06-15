@@ -576,20 +576,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   private getBrokerMinimumStopDistance(symbol: string, brokerName: string): number {
     const upperSymbol = symbol.toUpperCase();
     
-    // IFPRO-Trade specific requirements
-    if (brokerName === 'IFPRO-TRADE' || brokerName === 'IFPro-Trade') {
-      if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
-        return 50; // 50 points minimum for Gold
-      }
-      if (upperSymbol.includes('JPY')) {
-        return 30; // 3 pips minimum for JPY pairs
-      }
-      if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
-        return 30; // 3 pips minimum for major pairs
-      }
-      return 30; // Default 30 points
-    }
-    
     // General broker defaults
     if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
       return 30; // 30 points minimum for Gold
@@ -598,111 +584,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       return 20; // 2 pips minimum for JPY pairs
     }
     return 20; // Default 20 points
-  }
-
-  /**
-   * Validate if SL is realistic for the symbol type
-   */
-  private validateRealisticSL(symbol: string, entryPrice: number, stopLoss: number, action: string): boolean {
-    if (!stopLoss || stopLoss <= 0) return false;
-    
-    const upperSymbol = symbol.toUpperCase();
-    const slDistance = Math.abs(entryPrice - stopLoss);
-    const slPercentage = (slDistance / entryPrice) * 100;
-    
-    // Check if SL is on correct side
-    if (action === 'BUY' && stopLoss >= entryPrice) return false;
-    if (action === 'SELL' && stopLoss <= entryPrice) return false;
-    
-    // Symbol-specific realistic SL validation
-    if (upperSymbol.includes('JPY')) {
-      // JPY pairs: SL should be 0.5% - 3% away from entry
-      return slPercentage >= 0.5 && slPercentage <= 3.0 && slDistance >= 0.5 && slDistance <= 5.0;
-    }
-    
-    if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
-      // Gold: SL should be $10-$100 away from entry
-      return slDistance >= 10 && slDistance <= 100;
-    }
-    
-    if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
-      // Major forex: SL should be 20-500 pips away
-      return slDistance >= 0.0020 && slDistance <= 0.0500;
-    }
-    
-    // General: 0.5% - 5% range
-    return slPercentage >= 0.5 && slPercentage <= 5.0;
-  }
-
-  /**
-   * Calculate realistic SL within proper limits
-   */
-  private calculateRealisticSL(symbol: string, entryPrice: number, action: string): number {
-    const upperSymbol = symbol.toUpperCase();
-    let slDistance: number;
-    
-    // Symbol-specific realistic SL distances
-    if (upperSymbol.includes('JPY')) {
-      // JPY pairs: Use 1% (conservative but realistic)
-      slDistance = entryPrice * 0.01;
-    } else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
-      // Gold: Use $30 distance (realistic for gold trading)
-      slDistance = 30;
-    } else if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
-      // Major forex: Use 100 pips (0.01)
-      slDistance = 0.01;
-    } else {
-      // General: Use 1.5%
-      slDistance = entryPrice * 0.015;
-    }
-    
-    // Calculate SL based on direction
-    let stopLoss: number;
-    if (action === 'BUY') {
-      stopLoss = entryPrice - slDistance;
-    } else {
-      stopLoss = entryPrice + slDistance;
-    }
-    
-    return stopLoss;
-  }
-
-  /**
-   * Ensure TP is within realistic limits
-   */
-  private ensureRealisticTP(symbol: string, entryPrice: number, takeProfit: number, action: string): number {
-    const upperSymbol = symbol.toUpperCase();
-    const tpDistance = Math.abs(takeProfit - entryPrice);
-    
-    // Symbol-specific TP limits
-    let maxTpDistance: number;
-    
-    if (upperSymbol.includes('JPY')) {
-      // JPY pairs: Max 5 yen move
-      maxTpDistance = 5.0;
-    } else if (upperSymbol.includes('XAUUSD') || upperSymbol.includes('GOLD')) {
-      // Gold: Max $150 move
-      maxTpDistance = 150;
-    } else if (upperSymbol.includes('EUR') || upperSymbol.includes('GBP') || upperSymbol.includes('USD')) {
-      // Major forex: Max 500 pips
-      maxTpDistance = 0.05;
-    } else {
-      // General: Max 10% move
-      maxTpDistance = entryPrice * 0.10;
-    }
-    
-    // If TP is too far, cap it at max distance
-    if (tpDistance > maxTpDistance) {
-      logger.warn(`⚠️ Capping TP distance from ${tpDistance.toFixed(5)} to ${maxTpDistance.toFixed(5)} for ${symbol}`);
-      
-      if (action === 'BUY') {
-        takeProfit = entryPrice + maxTpDistance;
-      } else {
-        takeProfit = entryPrice - maxTpDistance;
-      }
-    }
-    
-    return takeProfit;
   }
 
   /**
@@ -717,28 +598,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
       if (!accountConfig.connection) {
         throw new Error('Connection not available');
-      }
-
-      // Enhanced connection status check for IFPro-Trade debugging
-      if (accountConfig.brokerName === 'IFPro-Trade') {
-        try {
-          const accountInfo = await accountConfig.connection.getAccountInformation();
-          logger.info(`🔍 IFPro-Trade connection status:`);
-          logger.info(`   - Connected: ${!!accountInfo}`);
-          logger.info(`   - Account Info Available: ${!!accountInfo}`);
-          if (accountInfo) {
-            logger.info(`   - Balance: ${accountInfo.balance}`);
-            logger.info(`   - Equity: ${accountInfo.equity}`);
-            logger.info(`   - Trade Allowed: ${accountInfo.tradeAllowed}`);
-            logger.info(`   - Margin Mode: ${accountInfo.marginMode}`);
-            logger.info(`   - Currency: ${accountInfo.currency}`);
-            logger.info(`   - Server: ${accountInfo.server}`);
-            logger.info(`   - Name: ${accountInfo.name}`);
-            logger.info(`   - Login: ${accountInfo.login}`);
-          }
-        } catch (error) {
-          logger.error(`Error getting IFPro-Trade connection status: ${error}`);
-        }
       }
 
       // Step 1: Resolve canonical symbol → broker symbol
@@ -892,7 +751,6 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       };
 
     } catch (error: any) {
-      // Enhanced error logging for IFPro-Trade debugging
       logger.error(`❌ Trade failed on ${accountConfig.brokerName}:`);
       logger.error(`❌ Error message: ${error.message}`);
       logger.error(`❌ Error details: ${JSON.stringify(error.details || {}, null, 2)}`);
@@ -1098,6 +956,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         // Format positions with essential info for dashboard
         const formattedPositions = positions.map((pos: any) => ({
           id: pos.id,
+          accountId: acc.id,
           symbol: pos.symbol,
           type: pos.type,
           volume: pos.volume,
