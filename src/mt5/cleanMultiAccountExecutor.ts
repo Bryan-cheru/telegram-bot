@@ -15,6 +15,11 @@ import {
   getPipValuePerLot
 } from '../trading/riskMath';
 
+interface AccountRiskOverrides {
+  useFixedLotSize?: boolean;
+  fixedLotSize?: number;
+}
+
 interface AccountConfig {
   id: string;
   brokerName: string;
@@ -24,6 +29,7 @@ interface AccountConfig {
   connection?: any;
   status: 'CONNECTING' | 'CONNECTED' | 'FAILED';
   symbolCache: Map<string, string>; // canonical → broker symbol
+  riskOverrides?: AccountRiskOverrides; // per-account overrides, falls back to global .env when unset
 }
 
 interface TradeExecutionResult {
@@ -111,6 +117,17 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       throw new Error('METAAPI_ACCOUNTS environment variable is required');
     }
 
+    // Parse per-account risk overrides, e.g. ACCOUNT_RISK_OVERRIDES={"<accountId>":{"useFixedLotSize":true,"fixedLotSize":0.2}}
+    let riskOverridesById: Record<string, AccountRiskOverrides> = {};
+    const riskOverridesRaw = process.env.ACCOUNT_RISK_OVERRIDES;
+    if (riskOverridesRaw) {
+      try {
+        riskOverridesById = JSON.parse(riskOverridesRaw);
+      } catch (err: any) {
+        logger.error(`❌ Failed to parse ACCOUNT_RISK_OVERRIDES JSON: ${err.message}`);
+      }
+    }
+
     // Parse account configurations
     const accountStrings = accountsConfig.split(',');
     for (const accountString of accountStrings) {
@@ -138,13 +155,19 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         logger.info(`🔑 ${brokerName.trim()} will use its own token from ${tokenEnvName.trim()}`);
       }
 
+      const riskOverrides = riskOverridesById[id.trim()];
+      if (riskOverrides) {
+        logger.info(`⚙️ ${brokerName.trim()} has risk overrides: ${JSON.stringify(riskOverrides)}`);
+      }
+
       const accountConfig: AccountConfig = {
         id: id.trim(),
         brokerName: brokerName.trim(),
         accountType: accountType.trim().toUpperCase() as 'DEMO' | 'LIVE',
         token,
         status: 'CONNECTING',
-        symbolCache: new Map()
+        symbolCache: new Map(),
+        riskOverrides
       };
 
       this.accounts.set(accountConfig.id, accountConfig);
@@ -366,8 +389,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     return parseFloat(process.env.FIXED_RISK_AMOUNT || '900');
   }
 
-  /** Lot size for risk-distance math: FIXED_LOT_SIZE env or config default. */
-  private getEffectiveLotSize(): number {
+  /** Lot size for risk-distance math: per-account override, else FIXED_LOT_SIZE env, else config default. */
+  private getEffectiveLotSize(accountConfig?: AccountConfig): number {
+    const override = accountConfig?.riskOverrides?.fixedLotSize;
+    if (typeof override === 'number' && isFinite(override) && override > 0) return override;
     const fromEnv = parseFloat(process.env.FIXED_LOT_SIZE || '');
     if (isFinite(fromEnv) && fromEnv > 0) return fromEnv;
     return config.trading.fixedLotSize;
@@ -380,9 +405,10 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   private applyUserRiskLevels(
     signal: TradeSignal,
     entryPrice: number,
-    connection: any
+    connection: any,
+    accountConfig?: AccountConfig
   ): { stopLoss: number; takeProfit: number } {
-    const lotSize = this.getEffectiveLotSize();
+    const lotSize = this.getEffectiveLotSize(accountConfig);
     const riskAmount = this.getEffectiveRiskUsd(connection);
     const riskRewardRatio = parseFloat(process.env.RISK_REWARD_RATIO || '1.5');
 
@@ -635,13 +661,13 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       } else {
         // Signal has no SL/TP — fall back to user risk config
         logger.warn('⚠️ Signal missing SL/TP — falling back to user risk config');
-        const levels = this.applyUserRiskLevels(signal, entryPrice, accountConfig.connection);
+        const levels = this.applyUserRiskLevels(signal, entryPrice, accountConfig.connection, accountConfig);
         signal.stopLoss = levels.stopLoss;
         finalTakeProfit = levels.takeProfit;
         logger.info(`📌 SL: ${signal.stopLoss} | TP: ${finalTakeProfit} (user risk config)`);
       }
 
-      const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice);
+      const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice, accountConfig);
 
       // Step 3.6: Validate and adjust stops for broker minimum distance (preserve RR on TP).
       // getBrokerMinimumStopDistance returns a value in POINTS — convert to price distance
@@ -781,11 +807,14 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   /**
    * Volume sized to approximate target risk USD given entry→SL distance (aligned with riskMath pip model).
    */
-  private calculateVolume(connection: any, signal: TradeSignal, entryPrice: number): number {
-    // Fixed-lot mode: trade exactly the user-set FIXED_LOT_SIZE, ignoring risk/balance.
-    // Only clamped to the broker minimum (0.01) and the MAX_TRADE_SIZE safety ceiling.
-    if ((process.env.USE_FIXED_LOT_SIZE || '').toLowerCase() === 'true') {
-      const fixed = this.getEffectiveLotSize();
+  private calculateVolume(connection: any, signal: TradeSignal, entryPrice: number, accountConfig?: AccountConfig): number {
+    // Fixed-lot mode: trade exactly the user-set FIXED_LOT_SIZE (or per-account override),
+    // ignoring risk/balance. Only clamped to the broker minimum (0.01) and the MAX_TRADE_SIZE safety ceiling.
+    const useFixedLotSize =
+      accountConfig?.riskOverrides?.useFixedLotSize ??
+      (process.env.USE_FIXED_LOT_SIZE || '').toLowerCase() === 'true';
+    if (useFixedLotSize) {
+      const fixed = this.getEffectiveLotSize(accountConfig);
       const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
       const maxVol = isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
       const lot = Math.round(Math.min(Math.max(0.01, fixed), maxVol) * 100) / 100;
@@ -806,7 +835,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
       if (!entryPrice || !signal.stopLoss || riskDistance === 0) {
         logger.warn('⚠️ Invalid entry/stop for volume — using configured lot size');
-        return Math.min(this.getEffectiveLotSize(), config.trading.maxTradeSize);
+        return Math.min(this.getEffectiveLotSize(accountConfig), config.trading.maxTradeSize);
       }
 
       const sym = signal.symbol.toUpperCase();
@@ -816,7 +845,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       const dollarRiskPerLot = riskPips * pipValuePerLot;
 
       if (!isFinite(dollarRiskPerLot) || dollarRiskPerLot <= 0) {
-        return Math.min(this.getEffectiveLotSize(), config.trading.maxTradeSize);
+        return Math.min(this.getEffectiveLotSize(accountConfig), config.trading.maxTradeSize);
       }
 
       let calculatedLotSize = fixedRiskAmount / dollarRiskPerLot;
@@ -842,7 +871,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       return calculatedLotSize;
     } catch (error) {
       logger.error('Volume calculation error:', error);
-      return Math.min(this.getEffectiveLotSize(), config.trading.maxTradeSize);
+      return Math.min(this.getEffectiveLotSize(accountConfig), config.trading.maxTradeSize);
     }
   }
 
