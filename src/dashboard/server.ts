@@ -15,6 +15,7 @@ import { generalRateLimit, tradingRateLimit } from '../middleware/rateLimit';
 import { InputValidator, ValidationRules } from '../middleware/validation';
 import { globalErrorHandler, notFoundHandler, ApiError } from '../middleware/errorHandler';
 import { requireApiKey } from '../middleware/apiKeyAuth';
+import { getBuildInfo } from '../utils/buildInfo';
 // import { UserAccountManagementService } from '../services/UserAccountManagementService'; // REMOVED - No database needed
 
 const app = express();
@@ -582,7 +583,7 @@ app.get('/api/logs/stream', (req, res) => {
 
 // API endpoints
 app.get('/api/status', (req, res) => {
-  res.json(botStatus);
+  res.json({ ...botStatus, build: getBuildInfo() });
 });
 
 // Mount Trading Management API

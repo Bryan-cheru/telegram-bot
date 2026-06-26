@@ -23,14 +23,14 @@ export class TelegramBot {
   private deduplicator = new SignalDeduplicator();
   private pendingManualSignals = new Map<string, ParsedManualSignal>();
   private notifier!: TradeNotifier;
-  private dailyTracker = new DailyLossTracker(
-    config.limits.maxDailyTrades,
-    config.limits.dailyLossLimit
-  );
+  // Shared with the executor's pre-trade guard so the bot and executor enforce
+  // ONE daily counter — the bot reads stats / feeds balance, the executor records.
+  private dailyTracker!: DailyLossTracker;
 
   constructor() {
     this.bot = new Telegraf(config.botToken);
     this.tradeExecutor = new CleanMultiAccountExecutor();
+    this.dailyTracker = this.getTradeExecutor().getGuard().daily;
     this.messageHandler = new MessageHandler();
     this.manualSignalParser = new ManualSignalParser();
     this.notifier = new TradeNotifier(this.bot);
@@ -351,7 +351,8 @@ export class TelegramBot {
       });
 
       if (result.success) {
-        this.dailyTracker.recordTrade();
+        // Daily trade count is recorded by the executor's pre-trade guard (single
+        // source of truth for all paths) — do not double-count here.
         logger.info(`✅ Trade executed! Ticket: ${result.ticket}`);
         await this.notifier.tradeOpened(
           tradeSignal,

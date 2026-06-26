@@ -7,6 +7,7 @@ import app, { setSharedExecutor } from './dashboard/server';
 import { addLog, updateBotStatus } from './dashboard/server';
 import { HealthCheckService } from './monitoring/healthChecks';
 import { DistributedTracing } from './monitoring/distributedTracing';
+import { getBuildInfo, logBuildBanner } from './utils/buildInfo';
 // import { startWebServer } from './api/server'; // Removed old API system
 
 // Prevent double initialization
@@ -135,7 +136,7 @@ const createServer = (): http.Server => {
         const healthStatus = await healthCheckService.getOverallHealth();
         const statusCode = healthStatus.status === 'healthy' ? 200 : 503;
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(healthStatus));
+        res.end(JSON.stringify({ ...healthStatus, build: getBuildInfo() }));
       } catch (error) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
@@ -148,7 +149,7 @@ const createServer = (): http.Server => {
       try {
         const detailedHealth = await healthCheckService.getDetailedHealth();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(detailedHealth));
+        res.end(JSON.stringify({ ...detailedHealth, build: getBuildInfo() }));
       } catch (error) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
@@ -201,6 +202,7 @@ async function main(): Promise<void> {
   
   try {
     logger.info(`🚀 Starting Telegram Trading Bot [${config.instanceType.toUpperCase()}]...`);
+    logBuildBanner();
     logger.info(`📊 Instance Configuration:`);
     logger.info(`   - Environment: ${config.nodeEnv}`);
     logger.info(`   - Instance Type: ${config.instanceType}`);

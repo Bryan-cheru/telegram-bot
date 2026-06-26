@@ -14,6 +14,8 @@ import {
   getPipSize,
   getPipValuePerLot
 } from '../trading/riskMath';
+import { getBrokerSymbolSpec, normalizeVolume } from '../trading/brokerSpec';
+import { PreTradeGuard } from '../trading/preTradeGuard';
 
 interface AccountRiskOverrides {
   useFixedLotSize?: boolean;
@@ -51,6 +53,13 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
   private accounts = new Map<string, AccountConfig>();
   private initialized = false;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+  // Centralized pre-trade safety. Every execution path funnels through
+  // executeTradeSignal, so guarding it here protects text, image, manual, and
+  // dashboard-API trades alike (they previously bypassed dedup + daily limits).
+  private readonly guard = new PreTradeGuard(
+    config.limits.maxDailyTrades,
+    config.limits.dailyLossLimit
+  );
 
   constructor() {
     const token = process.env.METAAPI_TOKEN;
@@ -59,6 +68,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     }
 
     this.defaultToken = token;
+  }
+
+  /** Shared pre-trade guard — the bot/dashboard read its daily stats and feed it balance updates. */
+  getGuard(): PreTradeGuard {
+    return this.guard;
   }
 
   /**
@@ -333,6 +347,19 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       entryZone: signal.entryZone
     });
 
+    // Centralized pre-trade guard — runs for EVERY path (text, image, manual,
+    // dashboard API) since they all funnel through here. Blocks duplicates,
+    // daily-limit breaches, and structurally inverted signals before any order.
+    const decision = this.guard.check(signal);
+    if (!decision.allowed) {
+      logger.warn(`🛑 Trade blocked by pre-trade guard: ${decision.reason}`);
+      return {
+        success: false,
+        error: `Blocked: ${decision.reason}`,
+        message: `Blocked by pre-trade guard: ${decision.reason}`
+      };
+    }
+
     const results: TradeExecutionResult[] = [];
     const connectedAccounts = Array.from(this.accounts.values())
       .filter(acc => acc.status === 'CONNECTED');
@@ -348,7 +375,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     for (const accountConfig of connectedAccounts) {
       const result = await this.executeOnAccount(signal, accountConfig);
       results.push(result);
-      
+
       // Delay between executions to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
@@ -356,6 +383,11 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     const successCount = results.filter(r => r.success).length;
     const totalAccounts = results.length;
     const firstSuccess = results.find(r => r.success);
+
+    // Count the signal once (not per account) against the daily trade limit.
+    if (successCount > 0) {
+      this.guard.recordExecuted();
+    }
 
     return {
       success: successCount > 0,
@@ -667,7 +699,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
         logger.info(`📌 SL: ${signal.stopLoss} | TP: ${finalTakeProfit} (user risk config)`);
       }
 
-      const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice, accountConfig);
+      const volume = this.calculateVolume(accountConfig.connection, signal, entryPrice, validSymbol, accountConfig);
 
       // Step 3.6: Validate and adjust stops for broker minimum distance (preserve RR on TP).
       // getBrokerMinimumStopDistance returns a value in POINTS — convert to price distance
@@ -804,20 +836,57 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
     return entryPrice;
   }
 
+  /** MAX_TRADE_SIZE env override, else config default — the hard safety ceiling on volume. */
+  private getMaxTradeSize(): number {
+    const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
+    return isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
+  }
+
   /**
-   * Volume sized to approximate target risk USD given entry→SL distance (aligned with riskMath pip model).
+   * Snap a volume to the broker's volume step (when the spec is available) and clamp it
+   * to [brokerMin, min(brokerMax, MAX_TRADE_SIZE)]. Falls back to a 0.01 grid + 0.01 floor
+   * when no broker spec is available (RPC connection or symbol not yet synced).
    */
-  private calculateVolume(connection: any, signal: TradeSignal, entryPrice: number, accountConfig?: AccountConfig): number {
+  private clampVolume(volume: number, spec: ReturnType<typeof getBrokerSymbolSpec>, maxVol: number): number {
+    if (spec) {
+      return normalizeVolume(volume, {
+        minVolume: spec.minVolume,
+        maxVolume: Math.min(spec.maxVolume, maxVol),
+        volumeStep: spec.volumeStep
+      });
+    }
+    const clamped = Math.max(0.01, Math.min(volume, maxVol));
+    return Math.round(clamped * 100) / 100;
+  }
+
+  /**
+   * Volume sized to approximate target risk USD given entry→SL distance.
+   *
+   * Sizing source priority:
+   *   1. Broker symbol specification (tickSize × tickValue) — authoritative, handles
+   *      crypto/indices/metals correctly per the actual contract.
+   *   2. riskMath heuristic pip model — fallback when the spec isn't available.
+   * Volume is always snapped to the broker's volumeStep and clamped to its min/max
+   * and the MAX_TRADE_SIZE safety ceiling.
+   */
+  private calculateVolume(
+    connection: any,
+    signal: TradeSignal,
+    entryPrice: number,
+    brokerSymbol: string,
+    accountConfig?: AccountConfig
+  ): number {
+    const spec = getBrokerSymbolSpec(connection, brokerSymbol);
+    const maxVol = this.getMaxTradeSize();
+
     // Fixed-lot mode: trade exactly the user-set FIXED_LOT_SIZE (or per-account override),
-    // ignoring risk/balance. Only clamped to the broker minimum (0.01) and the MAX_TRADE_SIZE safety ceiling.
+    // ignoring risk/balance. Still snapped to the broker volume step and MAX_TRADE_SIZE.
     const useFixedLotSize =
       accountConfig?.riskOverrides?.useFixedLotSize ??
       (process.env.USE_FIXED_LOT_SIZE || '').toLowerCase() === 'true';
     if (useFixedLotSize) {
       const fixed = this.getEffectiveLotSize(accountConfig);
-      const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
-      const maxVol = isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
-      const lot = Math.round(Math.min(Math.max(0.01, fixed), maxVol) * 100) / 100;
+      const lot = this.clampVolume(fixed, spec, maxVol);
       logger.info(`📦 Fixed-lot mode: trading ${lot} lots (FIXED_LOT_SIZE=${fixed}) — ignores balance/risk`);
       return lot;
     }
@@ -835,32 +904,41 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
 
       if (!entryPrice || !signal.stopLoss || riskDistance === 0) {
         logger.warn('⚠️ Invalid entry/stop for volume — using configured lot size');
-        return Math.min(this.getEffectiveLotSize(accountConfig), config.trading.maxTradeSize);
+        return this.clampVolume(this.getEffectiveLotSize(accountConfig), spec, maxVol);
       }
 
-      const sym = signal.symbol.toUpperCase();
-      const pipSize = getPipSize(sym);
-      const pipValuePerLot = getPipValuePerLot(sym);
-      const riskPips = riskDistance / pipSize;
-      const dollarRiskPerLot = riskPips * pipValuePerLot;
-
-      if (!isFinite(dollarRiskPerLot) || dollarRiskPerLot <= 0) {
-        return Math.min(this.getEffectiveLotSize(accountConfig), config.trading.maxTradeSize);
+      // Money risk per 1.0 lot for this stop distance.
+      let moneyRiskPerLot: number;
+      if (spec && isFinite(spec.tickValue) && spec.tickValue > 0) {
+        // Broker-accurate: ticks of adverse movement × value per tick per lot.
+        moneyRiskPerLot = (riskDistance / spec.tickSize) * spec.tickValue;
+        logger.info(
+          `   📐 Sizing via broker spec: tickSize=${spec.tickSize}, tickValue=$${spec.tickValue}, ` +
+          `risk/lot=$${moneyRiskPerLot.toFixed(2)}`
+        );
+      } else {
+        // Heuristic fallback (now crypto-aware in riskMath).
+        const sym = signal.symbol.toUpperCase();
+        const pipSize = getPipSize(sym);
+        const pipValuePerLot = getPipValuePerLot(sym);
+        moneyRiskPerLot = (riskDistance / pipSize) * pipValuePerLot;
+        logger.info(
+          `   📐 Sizing via heuristic pip model (broker spec unavailable): ` +
+          `pipSize=${pipSize}, pipValue=$${pipValuePerLot}, risk/lot=$${moneyRiskPerLot.toFixed(2)}`
+        );
       }
 
-      let calculatedLotSize = fixedRiskAmount / dollarRiskPerLot;
-
-      calculatedLotSize = Math.max(0.01, calculatedLotSize);
-      const maxTradeCap = parseFloat(process.env.MAX_TRADE_SIZE || '');
-      const maxVol =
-        isFinite(maxTradeCap) && maxTradeCap > 0 ? maxTradeCap : config.trading.maxTradeSize;
-      if (calculatedLotSize > maxVol) {
-        logger.warn(`⚠️ Lot size ${calculatedLotSize.toFixed(2)} capped to MAX_TRADE_SIZE ${maxVol} — raise MAX_TRADE_SIZE if this is wrong`);
+      if (!isFinite(moneyRiskPerLot) || moneyRiskPerLot <= 0) {
+        return this.clampVolume(this.getEffectiveLotSize(accountConfig), spec, maxVol);
       }
-      calculatedLotSize = Math.min(calculatedLotSize, maxVol);
-      calculatedLotSize = Math.round(calculatedLotSize * 100) / 100;
 
-      const actualRisk = calculatedLotSize * dollarRiskPerLot;
+      const rawLotSize = fixedRiskAmount / moneyRiskPerLot;
+      if (rawLotSize > maxVol) {
+        logger.warn(`⚠️ Lot size ${rawLotSize.toFixed(2)} capped to MAX_TRADE_SIZE ${maxVol} — raise MAX_TRADE_SIZE if this is wrong`);
+      }
+      const calculatedLotSize = this.clampVolume(rawLotSize, spec, maxVol);
+
+      const actualRisk = calculatedLotSize * moneyRiskPerLot;
       const actualRiskPercentage = balance > 0 ? (actualRisk / balance) * 100 : 0;
 
       logger.info(`💰 Risk-target volume (${signal.symbol}):`);
@@ -871,7 +949,7 @@ export class CleanMultiAccountExecutor implements ITradeExecutor {
       return calculatedLotSize;
     } catch (error) {
       logger.error('Volume calculation error:', error);
-      return Math.min(this.getEffectiveLotSize(accountConfig), config.trading.maxTradeSize);
+      return this.clampVolume(this.getEffectiveLotSize(accountConfig), spec, maxVol);
     }
   }
 

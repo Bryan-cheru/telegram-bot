@@ -2,6 +2,11 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
+# .dockerignore excludes .git, so pass the commit in:
+#   docker build --build-arg GIT_SHA=$(git rev-parse --short=12 HEAD) .
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 COPY package*.json ./
 RUN npm ci
 

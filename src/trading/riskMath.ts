@@ -13,8 +13,26 @@ export function isForexPair(symbol: string): boolean {
   return s.length === 6 && /^[A-Z]{6}$/.test(s);
 }
 
+// Crypto bases that, like metals, are 6-letter symbols (BTCUSD, ETHUSD) and would
+// otherwise be misclassified as forex by isForexPair — giving a 0.0001 pip size and
+// $10/pip value, which overstates per-lot risk ~6,000,000× and collapses risk-based
+// sizing to the 0.01 floor. This is a heuristic fallback only; the executor prefers
+// the broker's symbol specification (see trading/brokerSpec.ts) when available.
+const CRYPTO_BASES = [
+  'BTC', 'XBT', 'ETH', 'LTC', 'BCH', 'XRP', 'ADA', 'DOT', 'SOL', 'DOGE',
+  'BNB', 'LINK', 'AVAX', 'MATIC', 'UNI', 'ATOM', 'ETC', 'XLM', 'TRX'
+];
+
+export function isCrypto(symbol: string): boolean {
+  const s = symbol.toUpperCase().replace(/[^A-Z]/g, '');
+  return CRYPTO_BASES.some(base => s.startsWith(base));
+}
+
 export function getPipSize(symbol: string): number {
   const s = symbol.toUpperCase();
+  // Crypto first — BTCUSD/ETHUSD are 6 letters and would otherwise hit isForexPair.
+  // Treat 1.0 price unit as one "pip" (1 lot ≈ 1 coin, so $1 move ≈ $1/lot P&L).
+  if (isCrypto(s)) return 1.0;
   if (s.includes('JPY')) return 0.01;
   // Metals must be checked before isForexPair — XAUUSD/XAGUSD are 6-letter symbols
   // and would otherwise fall through to the forex 0.0001 pip size
@@ -30,6 +48,10 @@ export function getPipSize(symbol: string): number {
 export function getPipValuePerLot(symbol: string): number {
   const s = symbol.toUpperCase();
 
+  // Crypto first — must precede isForexPair (BTCUSD/ETHUSD are 6 letters).
+  // With pipSize 1.0 above, $1 of price move on 1.0 lot ≈ $1 P&L (contractSize ≈ 1).
+  if (isCrypto(s)) return 1;
+
   // Metals must be checked before isForexPair — same reason as getPipSize
   if (['XAUUSD', 'GOLD'].includes(s)) return 100;
   if (['XAGUSD', 'SILVER'].includes(s)) return 5000;
@@ -38,7 +60,7 @@ export function getPipValuePerLot(symbol: string): number {
   if (s.includes('JPY')) return 10;
   if (isForexPair(s)) return 10;
 
-  // Indices / crypto (fallback)
+  // Indices (fallback)
   return 1;
 }
 
@@ -49,10 +71,13 @@ function isSyntheticVolIndex(symbol: string): boolean {
 export function formatPriceForInstrument(price: number, symbol: string): number {
   const s = symbol.toUpperCase();
   if (s.includes('JPY')) return Number(price.toFixed(3));
-  if (isForexPair(s)) return Number(price.toFixed(5));
+  // Crypto & metals must precede isForexPair — they are also 6-letter symbols and
+  // would otherwise be formatted to 5 decimals, which brokers reject for these
+  // instruments (e.g. gold/BTC quote to 2 decimals).
+  if (isCrypto(s)) return Number(price.toFixed(2));
   if (['XAUUSD', 'GOLD', 'XAGUSD', 'SILVER'].includes(s)) return Number(price.toFixed(2));
+  if (isForexPair(s)) return Number(price.toFixed(5));
   if (isSyntheticVolIndex(s)) return Number(price.toFixed(2));
-  if (s.includes('BTC') || s.includes('ETH')) return Number(price.toFixed(2));
   return Number(price.toFixed(5));
 }
 
